@@ -1,6 +1,8 @@
-# TemperCI dashboard (Vite + React)
+# TemperCI dashboard (Vite + React + Tailwind CSS)
 
 Operator console embedded into `temperci-control`.
+
+Styling uses **Tailwind CSS v4** via `@tailwindcss/vite`. Theme tokens and shared component classes live in `src/styles.css` (`@theme` + `@layer components`).
 
 ## Scripts
 

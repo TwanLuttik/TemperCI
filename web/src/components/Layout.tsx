@@ -62,7 +62,7 @@ export function Layout({ setup, me, overview, onLogout, children }: Props) {
           <div className="pill">
             <span className="live" /> self-hosted
           </div>
-          <div style={{ marginTop: 10, lineHeight: 1.4 }}>
+          <div className="mt-2.5 leading-snug">
             Fleet control for your runners — not a SaaS tenant.
           </div>
         </div>

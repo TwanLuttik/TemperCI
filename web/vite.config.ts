@@ -1,10 +1,11 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+import tailwindcss from "@tailwindcss/vite";
 
 // Production build is embedded into temperci-control via go:embed.
 // Output: internal/webui/dist/{index.html,assets/*}
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), tailwindcss()],
   base: "/",
   build: {
     outDir: "../internal/webui/dist",
