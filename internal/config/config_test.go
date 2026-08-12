@@ -38,6 +38,7 @@ func TestLoadControlFile_MissingAppID(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "control.toml")
 	content := `
+setup_completed = true
 github_app_private_key_path = "/tmp/key.pem"
 github_webhook_secret = "s3cret"
 github_org = "acme"
@@ -49,6 +50,26 @@ agent_token = "shared-secret"
 	_, err := LoadControlFile(path)
 	if err == nil {
 		t.Fatal("expected validation error")
+	}
+}
+
+func TestLoadControlFile_SetupModeOptionalGitHub(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "control.toml")
+	content := `
+setup_completed = false
+listen_addr = "127.0.0.1:8080"
+auth_mode = "open"
+`
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadControlFile(path)
+	if err != nil {
+		t.Fatalf("LoadControlFile: %v", err)
+	}
+	if !cfg.NeedsSetup() {
+		t.Fatal("expected NeedsSetup")
 	}
 }
 
@@ -130,6 +151,7 @@ func TestLoadControlFile_MissingAgentToken(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "control.toml")
 	content := `
+setup_completed = true
 github_app_id = 1
 github_app_private_key_path = "/tmp/key.pem"
 github_webhook_secret = "s3cret"

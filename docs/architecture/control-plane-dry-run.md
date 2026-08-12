@@ -8,19 +8,32 @@ This guide walks through Phase 2 of TemperCI: receive a `workflow_job` webhook a
 - A machine reachable by GitHub webhooks (or [smee.io](https://smee.io) / `ngrok` for local dev)
 - Go 1.22+ and a built `temperci-control` binary (`make build`)
 
-## 1. Create a GitHub App
+## 1. Create a GitHub App (organization-owned)
 
-1. Org settings → **Developer settings** → **GitHub Apps** → **New GitHub App**.
+Prefer creating the App **under the organization** so Install App targets that org by default:
+
+```text
+https://github.com/organizations/<ORG_LOGIN>/settings/apps/new
+```
+
+Example: `https://github.com/organizations/coatcheckapp/settings/apps/new`
+
+(User-owned apps often only install on the personal account and never receive `workflow_job` for org repos. The org **Installed GitHub Apps** page has no “Add app” button — create at the URL above, then Install.)
+
+1. As an **org owner**, open the org apps page (or the `…/apps/new` URL above).
 2. Suggested settings:
-   - **Webhook URL:** `https://<your-host>/webhooks/github` (or your tunnel URL)
+   - **Webhook URL:** `https://<your-host>/webhooks/github` (or your tunnel / Funnel URL)
    - **Webhook secret:** generate a long random string; save it for config
-   - **Repository permissions:** none required for org-level JIT MVP
+   - **Repository permissions → Actions:** Read-only (unlocks **Workflow job** in the event list)
    - **Organization permissions:**
      - **Self-hosted runners:** Read and write
    - **Subscribe to events:** **Workflow job**
 3. Create the app and note the **App ID**.
 4. Generate and download a **private key** (`.pem`). Store it outside git, e.g. `/etc/temperci/github-app.pem` (`chmod 600`).
-5. Install the app on the test organization (Install App → only that org).
+5. **Install App** on the **organization** (not only your user). Include all repos that use `runs-on: temperci-…`, or select those repos explicitly.
+6. After a job runs, App → **Recent Deliveries** should show `workflow_job` (not only `ping`).
+
+The dashboard setup wizard and Settings page include the same operator guide.
 
 ## 2. Configure TemperCI control
 

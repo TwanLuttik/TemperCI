@@ -5,6 +5,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/pelletier/go-toml/v2"
@@ -35,12 +36,29 @@ type ControlConfig struct {
 	StaleMintedSeconds int `toml:"stale_minted_seconds"`
 	// ReconcileIntervalSeconds is how often stuck-assignment reconciliation runs (default 30).
 	ReconcileIntervalSeconds int `toml:"reconcile_interval_seconds"`
+
+	// Dashboard / setup (operator UI).
+	// AuthMode is "open" (no login) or "password" (local users in SQLite).
+	AuthMode string `toml:"auth_mode"`
+	// SQLitePath is the dashboard database (users/sessions). Default: /var/lib/temperci/control.db
+	SQLitePath string `toml:"sqlite_path"`
+	// SetupCompleted is true after the first-run wizard (or manual install).
+	// When false, GitHub fields may be omitted and setup mode is enabled.
+	SetupCompleted bool `toml:"setup_completed"`
+	// HostctlPath is the optional temperci-hostctl binary for systemctl restarts.
+	HostctlPath string `toml:"hostctl_path"`
+	// DataDir is used for default sqlite path parent and PEM writes during setup.
+	DataDir string `toml:"data_dir"`
 }
 
 // LoadControlFile reads and validates a control-plane TOML config file.
 func LoadControlFile(path string) (*ControlConfig, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
+		// Preserve os.ErrNotExist for callers that bootstrap missing configs.
+		if os.IsNotExist(err) {
+			return nil, err
+		}
 		return nil, fmt.Errorf("config: read %s: %w", path, err)
 	}
 	var cfg ControlConfig
@@ -54,21 +72,26 @@ func LoadControlFile(path string) (*ControlConfig, error) {
 }
 
 // Validate checks required control-plane fields.
+// When SetupCompleted is false, GitHub credentials and agent_token are optional (setup wizard mode).
 func (c *ControlConfig) Validate() error {
 	if strings.TrimSpace(c.ListenAddr) == "" {
 		c.ListenAddr = "0.0.0.0:8080"
 	}
-	if c.GitHubAppID == 0 {
-		return fmt.Errorf("config: github_app_id is required")
+	if strings.TrimSpace(c.DataDir) == "" {
+		c.DataDir = "/var/lib/temperci"
 	}
-	if strings.TrimSpace(c.GitHubAppPrivateKeyPath) == "" {
-		return fmt.Errorf("config: github_app_private_key_path is required")
+	if strings.TrimSpace(c.SQLitePath) == "" {
+		c.SQLitePath = filepath.Join(c.DataDir, "control.db")
 	}
-	if strings.TrimSpace(c.GitHubWebhookSecret) == "" {
-		return fmt.Errorf("config: github_webhook_secret is required")
+	if strings.TrimSpace(c.AuthMode) == "" {
+		c.AuthMode = "open"
 	}
-	if strings.TrimSpace(c.GitHubOrg) == "" {
-		return fmt.Errorf("config: github_org is required")
+	c.AuthMode = strings.ToLower(strings.TrimSpace(c.AuthMode))
+	if c.AuthMode != "open" && c.AuthMode != "password" {
+		return fmt.Errorf("config: auth_mode must be open or password")
+	}
+	if strings.TrimSpace(c.HostctlPath) == "" {
+		c.HostctlPath = "/usr/local/bin/temperci-hostctl"
 	}
 	if c.LabelPrefix == "" {
 		c.LabelPrefix = "temperci-"
@@ -76,9 +99,27 @@ func (c *ControlConfig) Validate() error {
 	if c.RunnerGroupID == 0 {
 		c.RunnerGroupID = 1
 	}
-	if strings.TrimSpace(c.AgentToken) == "" {
-		return fmt.Errorf("config: agent_token is required")
+	if strings.TrimSpace(c.GitHubAppPrivateKeyPath) == "" {
+		c.GitHubAppPrivateKeyPath = "/etc/temperci/github-app.pem"
 	}
+
+	// Full GitHub validation when setup is done, or when a legacy config already
+	// has credentials (missing setup_completed flag).
+	if c.SetupCompleted || c.looksFullyConfigured() {
+		if c.GitHubAppID == 0 {
+			return fmt.Errorf("config: github_app_id is required")
+		}
+		if strings.TrimSpace(c.GitHubWebhookSecret) == "" {
+			return fmt.Errorf("config: github_webhook_secret is required")
+		}
+		if strings.TrimSpace(c.GitHubOrg) == "" {
+			return fmt.Errorf("config: github_org is required")
+		}
+		if strings.TrimSpace(c.AgentToken) == "" {
+			return fmt.Errorf("config: agent_token is required")
+		}
+	}
+
 	cert := strings.TrimSpace(c.TLSCertFile)
 	key := strings.TrimSpace(c.TLSKeyFile)
 	c.TLSCertFile = cert
@@ -100,6 +141,23 @@ func (c *ControlConfig) Validate() error {
 		c.ReconcileIntervalSeconds = 30
 	}
 	return nil
+}
+
+// looksFullyConfigured reports whether GitHub + agent credentials are present
+// (used for legacy installs without setup_completed = true).
+func (c *ControlConfig) looksFullyConfigured() bool {
+	return c.GitHubAppID != 0 &&
+		strings.TrimSpace(c.GitHubOrg) != "" &&
+		strings.TrimSpace(c.AgentToken) != "" &&
+		strings.TrimSpace(c.GitHubWebhookSecret) != ""
+}
+
+// NeedsSetup reports whether the control plane should run the first-run wizard.
+func (c *ControlConfig) NeedsSetup() bool {
+	if c.SetupCompleted || c.looksFullyConfigured() {
+		return false
+	}
+	return true
 }
 
 // AgentConfig is the host-agent runtime configuration.

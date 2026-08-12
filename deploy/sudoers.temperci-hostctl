@@ -1,0 +1,3 @@
+# Allow temperci-control (root) or a dedicated user to run only temperci-hostctl.
+# Install: copy to /etc/sudoers.d/temperci-hostctl && chmod 440
+# root ALL=(root) NOPASSWD: /usr/local/bin/temperci-hostctl

@@ -28,11 +28,13 @@ Phase 6 complete on the documentation path: same agent semantics on Proxmox VE (
 
 ## Local development
 
-Requirements: **Go 1.22+**.
+Requirements: **Go 1.22+** and **Node.js 20+** (Vite dashboard under `web/`).
 
 ```bash
-# Build both binaries into ./bin/
+# Build dashboard (Vite) + all binaries into ./bin/
 make build
+# UI only: make build-ui
+# Go only (after UI): make build-go
 
 # Run unit tests
 make test
@@ -46,6 +48,8 @@ make test
 ```
 
 Example operator configs live under [`deploy/`](deploy/) (`control.example.toml`, `agent.example.toml`, systemd units). Copy them to `/etc/temperci/` when installing on a host — do not commit real secrets.
+
+**Operator dashboard** (embedded in control plane): open `http://<control>:8080/` after install — setup wizard, hosts, jobs, optional password users. See [deploy/dashboard.md](deploy/dashboard.md).
 
 - Webhook + JIT dry-run: [docs/architecture/control-plane-dry-run.md](docs/architecture/control-plane-dry-run.md)
 - Single-node Ubuntu quickstart: [deploy/ubuntu/quickstart.md](deploy/ubuntu/quickstart.md)

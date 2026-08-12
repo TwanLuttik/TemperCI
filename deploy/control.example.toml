@@ -38,3 +38,12 @@ agent_token = "replace-with-long-random-string"
 # stale_minted_seconds = 7200
 # How often to run reconciliation (default 30).
 # reconcile_interval_seconds = 30
+
+# Operator dashboard (embedded UI at /).
+# auth_mode: "open" (no login; private network only) or "password" (local users in SQLite).
+auth_mode = "open"
+# setup_completed = false runs the first-run wizard; set true after manual install.
+setup_completed = true
+# sqlite_path = "/var/lib/temperci/control.db"
+# data_dir = "/var/lib/temperci"
+# hostctl_path = "/usr/local/bin/temperci-hostctl"

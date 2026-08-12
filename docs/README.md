@@ -15,6 +15,8 @@ Start here when onboarding to the project.
 | [../deploy/ubuntu/guest-image.md](../deploy/ubuntu/guest-image.md) | Guest rootfs + official actions/runner image pipeline |
 | [../deploy/proxmox/README.md](../deploy/proxmox/README.md) | Proxmox VE host install (Firecracker on host KVM) |
 | [../deploy/proxmox/quickstart.md](../deploy/proxmox/quickstart.md) | Proxmox operator smoke checklist (Phase 6) |
+| [../deploy/dashboard.md](../deploy/dashboard.md) | Operator dashboard (setup wizard, fleet UI) |
+| [superpowers/specs/2026-08-12-temperci-operator-dashboard-design.md](superpowers/specs/2026-08-12-temperci-operator-dashboard-design.md) | Dashboard design (approach 1b) |
 | [../deploy/proxmox/nested-virt.md](../deploy/proxmox/nested-virt.md) | Nested virt / policy limitations |
 | [../deploy/proxmox/storage.md](../deploy/proxmox/storage.md) | `data_dir` / images / instances on PVE nodes |
 

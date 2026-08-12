@@ -209,6 +209,34 @@ func (s *AssignmentStore) MarkFailed(jobID int64, errMsg string) {
 	s.removePendingLocked(jobID)
 }
 
+// ListRecent returns up to limit assignments (most recently created first).
+// EncodedJITConfig is cleared in copies.
+func (s *AssignmentStore) ListRecent(limit int) []*Assignment {
+	if limit <= 0 {
+		limit = 50
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	all := make([]*Assignment, 0, len(s.byID))
+	for _, a := range s.byID {
+		cp := *a
+		cp.EncodedJITConfig = ""
+		all = append(all, &cp)
+	}
+	// Simple insertion order by CreatedAt desc.
+	for i := 0; i < len(all); i++ {
+		for j := i + 1; j < len(all); j++ {
+			if all[j].CreatedAt.After(all[i].CreatedAt) {
+				all[i], all[j] = all[j], all[i]
+			}
+		}
+	}
+	if len(all) > limit {
+		all = all[:limit]
+	}
+	return all
+}
+
 // CountByStatus returns assignment counts by status.
 func (s *AssignmentStore) CountByStatus() StatusCounts {
 	s.mu.RLock()

@@ -12,7 +12,7 @@ import (
 	"github.com/TwanLuttik/TemperCI/internal/github"
 )
 
-// Server is the control-plane HTTP API (webhooks + agent + health + metrics).
+// Server is the control-plane HTTP API (webhooks + agent + health + metrics + dashboard).
 type Server struct {
 	handler       *Handler
 	store         *AssignmentStore
@@ -21,6 +21,7 @@ type Server struct {
 	agentToken    string
 	log           *slog.Logger
 	mux           *http.ServeMux
+	dash          *DashboardConfig
 }
 
 // ServerConfig configures the HTTP server.
@@ -32,6 +33,8 @@ type ServerConfig struct {
 	// AgentToken is the shared secret for agent API auth (Bearer). Required for agent routes.
 	AgentToken string
 	Logger     *slog.Logger
+	// Dashboard enables the operator UI and /api/v1 routes when non-nil Config is set.
+	Dashboard *DashboardConfig
 }
 
 // NewServer builds an HTTP handler serving health, GitHub webhooks, agent APIs, and metrics.
@@ -71,6 +74,10 @@ func NewServer(cfg ServerConfig) *Server {
 	s.mux.HandleFunc("POST /v1/agent/jobs/claim", s.withAgentAuth(s.handleJobClaim))
 	s.mux.HandleFunc("POST /v1/agent/jobs/started", s.withAgentAuth(s.handleJobStarted))
 	s.mux.HandleFunc("POST /v1/agent/jobs/finished", s.withAgentAuth(s.handleJobFinished))
+
+	if cfg.Dashboard != nil && cfg.Dashboard.Config != nil {
+		s.mountDashboard(*cfg.Dashboard)
+	}
 	return s
 }
 
