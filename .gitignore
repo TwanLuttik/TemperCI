@@ -16,3 +16,6 @@
 .env.*
 *.pem
 /etc/
+
+# Local agent/session scratch
+.superpowers/

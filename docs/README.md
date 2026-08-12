@@ -7,8 +7,16 @@ Start here when onboarding to the project.
 | Document | Description |
 |----------|-------------|
 | [architecture/overview.md](architecture/overview.md) | Components, GitHub integration, comparison to classic self-hosted runners |
+| [architecture/security-review-mvp.md](architecture/security-review-mvp.md) | Phase 7 security review vs design §7; residual risks |
 | [architecture/job-lifecycle.md](architecture/job-lifecycle.md) | Warm pool, JIT bind, job execution, teardown, orphan sweep |
 | [architecture/install-targets.md](architecture/install-targets.md) | Proxmox and bare Ubuntu deployment model |
+| [architecture/control-plane-dry-run.md](architecture/control-plane-dry-run.md) | Manual Phase 2 dry-run: GitHub App, webhooks, JIT mint |
+| [../deploy/ubuntu/quickstart.md](../deploy/ubuntu/quickstart.md) | Single-node Ubuntu operator quickstart (Phase 5) |
+| [../deploy/ubuntu/guest-image.md](../deploy/ubuntu/guest-image.md) | Guest rootfs + official actions/runner image pipeline |
+| [../deploy/proxmox/README.md](../deploy/proxmox/README.md) | Proxmox VE host install (Firecracker on host KVM) |
+| [../deploy/proxmox/quickstart.md](../deploy/proxmox/quickstart.md) | Proxmox operator smoke checklist (Phase 6) |
+| [../deploy/proxmox/nested-virt.md](../deploy/proxmox/nested-virt.md) | Nested virt / policy limitations |
+| [../deploy/proxmox/storage.md](../deploy/proxmox/storage.md) | `data_dir` / images / instances on PVE nodes |
 
 ## Decisions
 
@@ -17,6 +25,7 @@ Start here when onboarding to the project.
 | [decisions/language.md](decisions/language.md) | Why Go (and what else is allowed) |
 | [decisions/repository-structure.md](decisions/repository-structure.md) | Monorepo layout and package boundaries |
 | [decisions/module-path.md](decisions/module-path.md) | Go module path and Apache-2.0 license |
+| [decisions/hypervisor.md](decisions/hypervisor.md) | Firecracker for MVP; fake VMM for macOS/dev |
 
 ## Specs and plans
 

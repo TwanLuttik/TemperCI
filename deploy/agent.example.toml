@@ -1,20 +1,62 @@
 # Example host-agent config.
 # Copy to /etc/temperci/agent.toml and adjust for the host.
 
-# Control plane base URL (single-node MVP may be localhost).
+# Control plane base URL (use https:// when control TLS is enabled).
 control_url = "http://127.0.0.1:8080"
 
-# Warm pool sizing.
+# Identity + shared token (must match control agent_token).
+# agent_id defaults to hostname when omitted.
+# agent_id = "ubuntu-kvm-1"
+agent_token = "replace-with-long-random-string"
+
+# Optional TLS when talking to control over HTTPS.
+# tls_ca_file = "/etc/temperci/tls/control-ca.crt"
+# Client cert for mTLS (when control has tls_client_ca_file set):
+# tls_cert_file = "/etc/temperci/tls/agent.crt"
+# tls_key_file = "/etc/temperci/tls/agent.key"
+# tls_insecure_skip_verify = false
+
+# Claim poll interval when idle (seconds).
+poll_interval_seconds = 1
+
+# After bind, wait this many seconds then destroy (fake/dev without real runner wait).
+# On real Ubuntu guests with runner process wait, set 0 and rely on runner exit (future).
+# For local fake demos, a small value is fine.
+job_simulate_seconds = 2
+
+# Force destroy + report timeout if a job exceeds this many seconds (0 = disabled).
+# job_deadline_seconds = 7200
+
+# Warm pool sizing. max_ready is also the max concurrent job capacity reported to control.
 min_ready = 1
 max_ready = 2
 
-# Guest image and host scratch roots (paths are host-local).
-image_path = "/var/lib/temperci/images/ubuntu-2404-runner.qcow2"
-scratch_dir = "/var/lib/temperci/instances"
+# Hard cap on tracked VMs (warm+busy+destroying+pool_boot). Prevents unbounded
+# growth if destroy fails. Default: max_ready + 32.
+# max_total_vms = 34
+
+# Guest image, optional kernel, and host data root.
+# Same paths on Ubuntu and Proxmox host installs (prefer local NVMe; see deploy/proxmox/storage.md).
+image_path = "/var/lib/temperci/images/ubuntu-2404-runner.ext4"
+# kernel_path = "/var/lib/temperci/images/vmlinux"
+data_dir = "/var/lib/temperci"
+# scratch_dir is accepted for compatibility; parent of .../instances becomes data_dir.
+# scratch_dir = "/var/lib/temperci/instances"
 
 # Default VM resources for pool members.
 vcpu = 4
 memory_mib = 8192
 
-# Idle warm VM recycle after this many seconds (0 = disabled until implemented).
-# idle_recycle_seconds = 3600
+# Idle warm VM recycle after this many seconds (0 = disabled).
+idle_recycle_seconds = 3600
+
+# VMM backend: "fake" (tests / macOS) or "firecracker" (Linux + KVM, Ubuntu or Proxmox host).
+vmm_backend = "fake"
+
+# How often the pool reconciler runs (seconds).
+reconcile_interval_seconds = 1
+
+# Local metrics + admin (drain/reload). Prefer loopback.
+# GET /metrics  POST /v1/admin/pool/drain  POST /v1/admin/pool/reload
+# Admin routes use agent_token as Bearer.
+# metrics_listen_addr = "127.0.0.1:9091"

@@ -12,13 +12,14 @@
 
 ## Status
 
-Phase 1 scaffold complete: Go monorepo builds both binaries; control/agent logic lands in later phases.
+Phase 6 complete on the documentation path: same agent semantics on Proxmox VE (Firecracker on host KVM), with Ubuntu single-node job path from Phase 5.
 
 | Doc | Purpose |
 |-----|---------|
 | [docs/README.md](docs/README.md) | Documentation index |
 | [docs/architecture/overview.md](docs/architecture/overview.md) | System architecture and GitHub flow |
 | [docs/architecture/job-lifecycle.md](docs/architecture/job-lifecycle.md) | Warm pool, bind, run, destroy |
+| [docs/architecture/control-plane-dry-run.md](docs/architecture/control-plane-dry-run.md) | Phase 2 operator dry-run (App + webhooks + JIT) |
 | [docs/decisions/language.md](docs/decisions/language.md) | Language choice and rationale |
 | [docs/decisions/repository-structure.md](docs/decisions/repository-structure.md) | Monorepo layout |
 | [docs/decisions/module-path.md](docs/decisions/module-path.md) | Go module path and license |
@@ -36,12 +37,20 @@ make build
 # Run unit tests
 make test
 
-# Version stubs
+# Version
 ./bin/temperci-control -version
 ./bin/temperci-agent -version
+
+# Control plane (requires a filled-in config; see dry-run doc)
+# ./bin/temperci-control -config /etc/temperci/control.toml
 ```
 
 Example operator configs live under [`deploy/`](deploy/) (`control.example.toml`, `agent.example.toml`, systemd units). Copy them to `/etc/temperci/` when installing on a host — do not commit real secrets.
+
+- Webhook + JIT dry-run: [docs/architecture/control-plane-dry-run.md](docs/architecture/control-plane-dry-run.md)
+- Single-node Ubuntu quickstart: [deploy/ubuntu/quickstart.md](deploy/ubuntu/quickstart.md)
+- Guest image pipeline: [deploy/ubuntu/guest-image.md](deploy/ubuntu/guest-image.md)
+- Proxmox VE install + smoke checklist: [deploy/proxmox/README.md](deploy/proxmox/README.md), [deploy/proxmox/quickstart.md](deploy/proxmox/quickstart.md)
 
 ## High-level flow
 

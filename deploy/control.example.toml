@@ -1,7 +1,7 @@
 # Example control-plane config.
 # Copy to /etc/temperci/control.toml and fill in secrets (do not commit real keys).
 
-# HTTP listen address for webhooks and health checks.
+# HTTP listen address for webhooks, agent API, health, and /metrics.
 listen_addr = "0.0.0.0:8080"
 
 # GitHub App credentials.
@@ -16,3 +16,25 @@ github_org = "your-org"
 # Optional: restrict which labels TemperCI will mint JIT configs for.
 # Empty means only labels with the default temperci- prefix.
 # label_prefix = "temperci-"
+
+# Org runner group id for generate-jitconfig (Default group is usually 1).
+# runner_group_id = 1
+
+# Shared bearer token for host agents. Must match agent.toml agent_token.
+# Treat as a secret. Prefer enabling TLS below for production.
+agent_token = "replace-with-long-random-string"
+
+# Optional HTTPS for the control-plane listener.
+# tls_cert_file = "/etc/temperci/tls/server.crt"
+# tls_key_file = "/etc/temperci/tls/server.key"
+# Optional mTLS: require agent client certs signed by this CA (in addition to agent_token).
+# tls_client_ca_file = "/etc/temperci/tls/agent-client-ca.crt"
+
+# Stuck assignment reconciliation (control-side).
+# Mark assigned/started jobs as stuck after this many seconds (default 3600).
+# Set negative to disable.
+# assignment_stuck_seconds = 3600
+# Fail unclaimed minted jobs after this many seconds (default 7200). Negative disables.
+# stale_minted_seconds = 7200
+# How often to run reconciliation (default 30).
+# reconcile_interval_seconds = 30

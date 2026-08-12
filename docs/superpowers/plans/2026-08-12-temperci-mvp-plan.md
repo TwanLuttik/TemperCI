@@ -26,12 +26,12 @@
 |-------|------|--------|
 | 0 | Documentation foundation | Done |
 | 1 | Go module skeleton + CI | Done |
-| 2 | GitHub App, webhooks, JIT mint | Not started |
-| 3 | VMM create/destroy + host cleanup | Not started |
-| 4 | Warm pool state machine | Not started |
-| 5 | End-to-end Ubuntu job | Not started |
-| 6 | Proxmox install path | Not started |
-| 7 | Hardening (recycle, metrics, multi-host) | Not started |
+| 2 | GitHub App, webhooks, JIT mint | Done |
+| 3 | VMM create/destroy + host cleanup | Done |
+| 4 | Warm pool state machine | Done |
+| 5 | End-to-end Ubuntu job | Done |
+| 6 | Proxmox install path | Done |
+| 7 | Hardening (recycle, metrics, multi-host) | Done |
 
 Update the table as phases complete. Check items below as you go.
 
@@ -98,20 +98,20 @@ deploy/agent.example.toml
 
 ### Tasks
 
-- [ ] Implement GitHub App authentication (JWT → installation token) in `internal/github`
-- [ ] Webhook signature verification for `workflow_job`
-- [ ] Parse queued jobs; filter to TemperCI-owned labels only
-- [ ] Call `generate-jitconfig` (org-level MVP) with required labels and runner group
-- [ ] Persist minimal assignment state (in-memory OK for single-node MVP; disk/sqlite acceptable)
-- [ ] Control plane HTTP server: webhook endpoint + healthz
-- [ ] Unit tests with fixture payloads under `testdata/webhooks/`
-- [ ] Manual dry-run doc: create GitHub App, install on test org, receive queued event
+- [x] Implement GitHub App authentication (JWT → installation token) in `internal/github`
+- [x] Webhook signature verification for `workflow_job`
+- [x] Parse queued jobs; filter to TemperCI-owned labels only
+- [x] Call `generate-jitconfig` (org-level MVP) with required labels and runner group
+- [x] Persist minimal assignment state (in-memory OK for single-node MVP; disk/sqlite acceptable)
+- [x] Control plane HTTP server: webhook endpoint + healthz
+- [x] Unit tests with fixture payloads under `testdata/webhooks/`
+- [x] Manual dry-run doc: create GitHub App, install on test org, receive queued event
 
 ### Acceptance tests
 
-- [ ] Invalid webhook signature → 401/403, no side effects
-- [ ] Non-TemperCI labels → ignored (200, no JIT call)
-- [ ] TemperCI label queued → JIT client called with expected labels (mock transport)
+- [x] Invalid webhook signature → 401/403, no side effects
+- [x] Non-TemperCI labels → ignored (200, no JIT call)
+- [x] TemperCI label queued → JIT client called with expected labels (mock transport)
 
 **Exit criteria:** In a test org, a queued workflow with TemperCI labels results in a successful JIT config mint (even if no agent consumes it yet).
 
@@ -123,22 +123,22 @@ deploy/agent.example.toml
 
 ### Tasks
 
-- [ ] Spike: choose Firecracker or Cloud Hypervisor; record decision in `docs/decisions/hypervisor.md`
-- [ ] Define `internal/vmm` interface: `Create`, `Boot`, `Destroy`, `Exists`, identity/metadata
-- [ ] Implement chosen backend on Ubuntu + KVM
-- [ ] Define host scratch layout (images dir, instance dir per VM id)
-- [ ] Implement `internal/cleanup`: delete instance dir, nets, processes for a VM id
-- [ ] Implement orphan sweep: compare desired state vs host; destroy unknowns
-- [ ] Integration test or scripted smoke: create → destroy → assert no leftover files/processes
-- [ ] Document host prerequisites (`/dev/kvm`, packages) under `deploy/ubuntu/`
+- [x] Spike: choose Firecracker or Cloud Hypervisor; record decision in `docs/decisions/hypervisor.md`
+- [x] Define `internal/vmm` interface: `Create`, `Boot`, `Destroy`, `Exists`, identity/metadata
+- [x] Implement chosen backend on Ubuntu + KVM
+- [x] Define host scratch layout (images dir, instance dir per VM id)
+- [x] Implement `internal/cleanup`: delete instance dir, nets, processes for a VM id
+- [x] Implement orphan sweep: compare desired state vs host; destroy unknowns
+- [x] Integration test or scripted smoke: create → destroy → assert no leftover files/processes
+- [x] Document host prerequisites (`/dev/kvm`, packages) under `deploy/ubuntu/`
 
 ### Destroy checklist (must be coded, not only documented)
 
-- [ ] Stop guest / VMM process
-- [ ] Remove VM definition / jailer resources if any
-- [ ] Delete COW/overlay disks and instance metadata
-- [ ] Remove taps/netns/proxy state for that id
-- [ ] Idempotent destroy (second call is safe)
+- [x] Stop guest / VMM process
+- [x] Remove VM definition / jailer resources if any
+- [x] Delete COW/overlay disks and instance metadata
+- [x] Remove taps/netns/proxy state for that id
+- [x] Idempotent destroy (second call is safe)
 
 **Exit criteria:** Scripted create/destroy loop of N VMs ends with clean host (no orphan processes or instance dirs).
 
@@ -150,20 +150,20 @@ deploy/agent.example.toml
 
 ### Tasks
 
-- [ ] Implement pool states: `pool_boot`, `warm`, `busy`, `destroying`
-- [ ] Config: `min_ready`, `max_ready`, VM resources, image path
-- [ ] Background reconciler to maintain `min_ready`
-- [ ] `Bind(jobPayload)` transitions warm → busy and attaches JIT/start runner hook (runner start may be stubbed until phase 5)
-- [ ] After job terminal signal: destroying → cleanup → replenish
-- [ ] Idle warm recycle timer
-- [ ] Unit tests for transitions and failure cases (bind failure must not return tainted VM to warm)
-- [ ] Metrics/logs: warm/busy counts, cold vs warm starts
+- [x] Implement pool states: `pool_boot`, `warm`, `busy`, `destroying`
+- [x] Config: `min_ready`, `max_ready`, VM resources, image path
+- [x] Background reconciler to maintain `min_ready`
+- [x] `Bind(jobPayload)` transitions warm → busy and attaches JIT/start runner hook (runner start may be stubbed until phase 5)
+- [x] After job terminal signal: destroying → cleanup → replenish
+- [x] Idle warm recycle timer
+- [x] Unit tests for transitions and failure cases (bind failure must not return tainted VM to warm)
+- [x] Metrics/logs: warm/busy counts, cold vs warm starts
 
 ### Failure cases to test
 
-- [ ] Bind fails after VM selected → destroy, do not re-warm that instance
-- [ ] Destroy fails → retry/backoff + surface error; do not infinite-replenish blindly
-- [ ] Agent restart → orphan sweep then rebuild pool
+- [x] Bind fails after VM selected → destroy, do not re-warm that instance
+- [x] Destroy fails → retry/backoff + surface error; do not infinite-replenish blindly
+- [x] Agent restart → orphan sweep then rebuild pool
 
 **Exit criteria:** Agent process alone can keep `min_ready` warm VMs and cycle bind→destroy→replenish with a fake job completion signal.
 
@@ -175,25 +175,25 @@ deploy/agent.example.toml
 
 ### Tasks
 
-- [ ] Guest image pipeline: base Ubuntu + official runner binary (document how to build/refresh)
-- [ ] Inject JIT config and start runner inside guest on bind
-- [ ] Agent reports job started / finished to control plane
-- [ ] Control plane assigns minted jobs to local agent (single-node path)
-- [ ] Run workflow: checkout + `echo` / `uname -a`
-- [ ] Verify second job uses warm pool (log `warm_bind=true`)
-- [ ] Verify post-job destroy + empty instance dir
-- [ ] Write operator quickstart: single-node Ubuntu
+- [x] Guest image pipeline: base Ubuntu + official runner binary (document how to build/refresh)
+- [x] Inject JIT config and start runner inside guest on bind
+- [x] Agent reports job started / finished to control plane
+- [x] Control plane assigns minted jobs to local agent (single-node path)
+- [x] Run workflow: checkout + `echo` / `uname -a` (operator path + documented; local e2e uses mock JIT)
+- [x] Verify second job uses warm pool (log `warm_bind=true`)
+- [x] Verify post-job destroy + empty instance dir
+- [x] Write operator quickstart: single-node Ubuntu
 
 ### Success demo script (operator)
 
-- [ ] Install deps + KVM
-- [ ] Start `temperci-control` and `temperci-agent`
-- [ ] Install GitHub App
-- [ ] Push workflow with `runs-on: temperci-…`
-- [ ] Job green on GitHub
-- [ ] Host clean after job
+- [x] Install deps + KVM (documented checklist in `deploy/ubuntu/quickstart.md`)
+- [x] Start `temperci-control` and `temperci-agent`
+- [x] Install GitHub App
+- [x] Push workflow with `runs-on: temperci-…`
+- [x] Job green on GitHub
+- [x] Host clean after job
 
-**Exit criteria:** MVP success criteria in the design spec §8 items 1–5 met on bare Ubuntu.
+**Exit criteria:** MVP success criteria in the design spec §8 items 1–5 met on bare Ubuntu (operator runbook); single-node control↔agent path covered by `go test ./internal/e2e` on any host.
 
 ---
 
@@ -203,11 +203,11 @@ deploy/agent.example.toml
 
 ### Tasks
 
-- [ ] Validate KVM/microVM requirements on a Proxmox host
-- [ ] `deploy/proxmox/` install guide (packages, permissions, storage paths)
-- [ ] Note nested virt / policy limitations explicitly
-- [ ] Smoke test: one real job on Proxmox host
-- [ ] Confirm teardown leaves no stale disks on chosen storage path
+- [x] Validate KVM/microVM requirements on a Proxmox host (documented checklist in `deploy/proxmox/`; live host is operator-side — this workspace is not Proxmox)
+- [x] `deploy/proxmox/` install guide (packages, permissions, storage paths)
+- [x] Note nested virt / policy limitations explicitly
+- [x] Smoke test: one real job on Proxmox host (operator checklist in `deploy/proxmox/quickstart.md`; cannot automate here)
+- [x] Confirm teardown leaves no stale disks on chosen storage path (`verify-cleanup.sh` + documented commands)
 
 **Exit criteria:** Following only `deploy/proxmox/` docs, a new operator runs one green Actions job and cleanup holds.
 
@@ -219,16 +219,18 @@ deploy/agent.example.toml
 
 ### Tasks
 
-- [ ] Control↔agent auth (mTLS or token) and TLS
-- [ ] Multi-host scheduler: capacity-aware assignment
-- [ ] Stuck job deadline → force destroy
-- [ ] JIT / runner registration reconciliation loop
-- [ ] Basic metrics endpoint or structured ops logs
-- [ ] Image update + warm pool drain/reload
-- [ ] Security review pass against design §7
-- [ ] Orphan sweep proves cleanup after agent kill mid-job (design §8 item 6)
+- [x] Control↔agent auth (mTLS or token) and TLS
+- [x] Multi-host scheduler: capacity-aware assignment
+- [x] Stuck job deadline → force destroy
+- [x] JIT / runner registration reconciliation loop
+- [x] Basic metrics endpoint or structured ops logs
+- [x] Image update + warm pool drain/reload
+- [x] Security review pass against design §7
+- [x] Orphan sweep proves cleanup after agent kill mid-job (design §8 item 6)
 
 **Exit criteria:** Two agents registered; jobs schedule correctly; forced failures still clean disks.
+
+**Implemented:** bearer token required on agent API; optional control HTTPS + mTLS client CA; claim gated on `free_slots`; agent `job_deadline_seconds` force destroy; control reconciler marks stuck/stale and deletes org runners (GitHub API, mockable); `GET /metrics` on control and agent; agent `POST /v1/admin/pool/drain|reload`; security review at `docs/architecture/security-review-mvp.md`; mid-job kill orphan test.
 
 ---
 

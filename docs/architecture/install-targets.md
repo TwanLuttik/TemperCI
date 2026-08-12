@@ -39,10 +39,12 @@ Multi-host
 
 - Agent runs **on the Proxmox host** (or in a privileged context that can create KVM guests quickly).
 - Goal: same warm-pool semantics as bare Ubuntu.
-- Preferred approach: use the same microVM stack on the Proxmox host’s KVM, rather than inventing a separate “full Proxmox VM per job” path that is slower and harder to clean up.
-- Proxmox-specific packaging: install docs, maybe a helper to reserve CPU/RAM for the CI pool, storage location for base images and scratch on a chosen datastore/path.
+- Preferred approach: use the same microVM stack (Firecracker) on the Proxmox host’s KVM, rather than inventing a separate “full Proxmox VM per job” path that is slower and harder to clean up.
+- Proxmox-specific packaging: install docs, host prereq script, storage guidance, cleanup verification, and resource-budget notes for coexisting with PVE guests.
 
-If nested virtualization or policy blocks microVMs on a given Proxmox setup, document that limitation rather than silently falling back to unclean long-lived VMs.
+**Operator install path:** [deploy/proxmox/README.md](../../deploy/proxmox/README.md) · [quickstart.md](../../deploy/proxmox/quickstart.md) · [nested-virt.md](../../deploy/proxmox/nested-virt.md) · [storage.md](../../deploy/proxmox/storage.md)
+
+If nested virtualization or policy blocks microVMs on a given Proxmox setup, document that limitation rather than silently falling back to unclean long-lived VMs. See [nested-virt.md](../../deploy/proxmox/nested-virt.md).
 
 ## Resource layout on a host
 
@@ -52,7 +54,7 @@ Operators should be able to configure:
 |---------|---------|
 | `min_ready` / `max_ready` | Warm pool size |
 | vCPU / memory per VM | Job shape |
-| Disk path for images + scratch | Prefer fast local NVMe |
+| Disk path for images + scratch (`data_dir`) | Prefer fast **local** NVMe; avoid shared Ceph/NFS for `instances/` (see [storage.md](../../deploy/proxmox/storage.md)) |
 | Max concurrent busy VMs | Protect the host |
 
 ## Security notes for self-host
