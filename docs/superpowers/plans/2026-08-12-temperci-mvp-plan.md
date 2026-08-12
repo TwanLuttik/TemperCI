@@ -1,18 +1,18 @@
-# Kokanee MVP Implementation Plan
+# TemperCI MVP Implementation Plan
 
 > **For agentic workers:** Implement phase-by-phase. Use checkbox (`- [ ]` / `- [x]`) syntax for tracking. Do not skip teardown/orphan requirements when implementing agent work. Prefer TDD for state machines and cleanup logic.
 
 **Goal:** Ship a self-hostable GitHub Actions runner path (control plane + host agent) that uses JIT self-hosted runners, a warm microVM pool, and hard post-job cleanup on bare Ubuntu, with a documented Proxmox install path.
 
-**Architecture:** Go monorepo with `kokanee-control` (GitHub webhooks + JIT + scheduling) and `kokanee-agent` (warm pool + VMM + teardown). Guests run upstream `actions/runner` for a single job, then are destroyed.
+**Architecture:** Go monorepo with `temperci-control` (GitHub webhooks + JIT + scheduling) and `temperci-agent` (warm pool + VMM + teardown). Guests run upstream `actions/runner` for a single job, then are destroyed.
 
 **Tech stack:** Go 1.22+, GitHub App + REST JIT API, KVM microVMs (Firecracker or Cloud Hypervisor behind `internal/vmm`), systemd install, Markdown docs.
 
-**Spec:** [docs/superpowers/specs/2026-08-12-kokanee-platform-design.md](../specs/2026-08-12-kokanee-platform-design.md)
+**Spec:** [docs/superpowers/specs/2026-08-12-temperci-platform-design.md](../specs/2026-08-12-temperci-platform-design.md)
 
 ## Global constraints
 
-- Primary language is **Go**; binaries `kokanee-control` and `kokanee-agent`.
+- Primary language is **Go**; binaries `temperci-control` and `temperci-agent`.
 - Use **official** `actions/runner` + **JIT** registration only (no long-lived `config.sh` as the product path).
 - Warm VMs must have **no secrets / no JIT** until bind.
 - After every job: **destroy guest + delete host scratch**; never reuse guest disk for the next job.
@@ -24,8 +24,8 @@
 
 | Phase | Name | Status |
 |-------|------|--------|
-| 0 | Documentation foundation | In progress |
-| 1 | Go module skeleton + CI | Not started |
+| 0 | Documentation foundation | Done |
+| 1 | Go module skeleton + CI | Done |
 | 2 | GitHub App, webhooks, JIT mint | Not started |
 | 3 | VMM create/destroy + host cleanup | Not started |
 | 4 | Warm pool state machine | Not started |
@@ -48,10 +48,10 @@ Update the table as phases complete. Check items below as you go.
 - [x] Install targets (`docs/architecture/install-targets.md`)
 - [x] Language decision (`docs/decisions/language.md`)
 - [x] Repository structure decision (`docs/decisions/repository-structure.md`)
-- [x] Design spec (`docs/superpowers/specs/2026-08-12-kokanee-platform-design.md`)
+- [x] Design spec (`docs/superpowers/specs/2026-08-12-temperci-platform-design.md`)
 - [x] This plan file with checkboxes
-- [ ] Choose SPDX license (Apache-2.0 or MIT) and add `LICENSE`
-- [ ] Confirm public module path / GitHub org name for `go.mod`
+- [x] Choose SPDX license (Apache-2.0 or MIT) and add `LICENSE`
+- [x] Confirm public module path / GitHub org name for `go.mod`
 
 **Exit criteria:** Design + plan reviewed; license and module path decided or explicitly deferred with owners.
 
@@ -63,22 +63,22 @@ Update the table as phases complete. Check items below as you go.
 
 ### Tasks
 
-- [ ] Initialize `go.mod` with agreed module path
-- [ ] Create `cmd/kokanee-control/main.go` (version/help stub)
-- [ ] Create `cmd/kokanee-agent/main.go` (version/help stub)
-- [ ] Create placeholder packages under `internal/` (`config`, `logging`, `api`, `control`, `agent`, `github`, `vmm`, `cleanup`) with package docs
-- [ ] Add `Makefile` targets: `build`, `test`, `lint` (lint may no-op until linter config exists)
-- [ ] Add example configs under `deploy/` (`control.example.toml`, `agent.example.toml`)
-- [ ] Add systemd unit templates under `deploy/systemd/`
-- [ ] Add `.github/workflows/ci.yml`: `go test ./...`, `go build` both cmds
-- [ ] Document local dev build in `README.md` or `docs/`
+- [x] Initialize `go.mod` with agreed module path
+- [x] Create `cmd/temperci-control/main.go` (version/help stub)
+- [x] Create `cmd/temperci-agent/main.go` (version/help stub)
+- [x] Create placeholder packages under `internal/` (`config`, `logging`, `api`, `control`, `agent`, `github`, `vmm`, `cleanup`) with package docs
+- [x] Add `Makefile` targets: `build`, `test`, `lint` (lint may no-op until linter config exists)
+- [x] Add example configs under `deploy/` (`control.example.toml`, `agent.example.toml`)
+- [x] Add systemd unit templates under `deploy/systemd/`
+- [x] Add `.github/workflows/ci.yml`: `go test ./...`, `go build` both cmds
+- [x] Document local dev build in `README.md` or `docs/`
 
 ### Suggested first files
 
 ```text
 go.mod
-cmd/kokanee-control/main.go
-cmd/kokanee-agent/main.go
+cmd/temperci-control/main.go
+cmd/temperci-agent/main.go
 internal/config/config.go
 internal/logging/logging.go
 internal/api/types.go
@@ -94,13 +94,13 @@ deploy/agent.example.toml
 
 ## Phase 2 — GitHub App, webhooks, JIT mint
 
-**Outcome:** Control plane can verify webhooks and mint JIT configs for Kokanee labels.
+**Outcome:** Control plane can verify webhooks and mint JIT configs for TemperCI labels.
 
 ### Tasks
 
 - [ ] Implement GitHub App authentication (JWT → installation token) in `internal/github`
 - [ ] Webhook signature verification for `workflow_job`
-- [ ] Parse queued jobs; filter to Kokanee-owned labels only
+- [ ] Parse queued jobs; filter to TemperCI-owned labels only
 - [ ] Call `generate-jitconfig` (org-level MVP) with required labels and runner group
 - [ ] Persist minimal assignment state (in-memory OK for single-node MVP; disk/sqlite acceptable)
 - [ ] Control plane HTTP server: webhook endpoint + healthz
@@ -110,10 +110,10 @@ deploy/agent.example.toml
 ### Acceptance tests
 
 - [ ] Invalid webhook signature → 401/403, no side effects
-- [ ] Non-Kokanee labels → ignored (200, no JIT call)
-- [ ] Kokanee label queued → JIT client called with expected labels (mock transport)
+- [ ] Non-TemperCI labels → ignored (200, no JIT call)
+- [ ] TemperCI label queued → JIT client called with expected labels (mock transport)
 
-**Exit criteria:** In a test org, a queued workflow with Kokanee labels results in a successful JIT config mint (even if no agent consumes it yet).
+**Exit criteria:** In a test org, a queued workflow with TemperCI labels results in a successful JIT config mint (even if no agent consumes it yet).
 
 ---
 
@@ -187,9 +187,9 @@ deploy/agent.example.toml
 ### Success demo script (operator)
 
 - [ ] Install deps + KVM
-- [ ] Start `kokanee-control` and `kokanee-agent`
+- [ ] Start `temperci-control` and `temperci-agent`
 - [ ] Install GitHub App
-- [ ] Push workflow with `runs-on: kokanee-…`
+- [ ] Push workflow with `runs-on: temperci-…`
 - [ ] Job green on GitHub
 - [ ] Host clean after job
 

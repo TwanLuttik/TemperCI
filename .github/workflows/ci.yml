@@ -1,0 +1,31 @@
+name: ci
+
+on:
+  push:
+    branches: [main, master, temperci]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: go test
+        run: go test ./...
+
+      - name: go build
+        run: |
+          go build -o /tmp/temperci-control ./cmd/temperci-control
+          go build -o /tmp/temperci-agent ./cmd/temperci-agent
+          /tmp/temperci-control -version
+          /tmp/temperci-agent -version

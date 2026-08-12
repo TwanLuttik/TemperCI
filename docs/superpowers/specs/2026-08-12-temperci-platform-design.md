@@ -1,4 +1,4 @@
-# Kokanee platform design
+# TemperCI platform design
 
 **Date:** 2026-08-12  
 **Status:** Draft for implementation planning  
@@ -33,7 +33,7 @@ Teams that must keep CI on their own hardware (Proxmox, bare Ubuntu, regulated e
 
 ## 4. How GitHub integration works
 
-Kokanee uses the **same class of integration as Blacksmith**, not a proprietary job protocol.
+TemperCI uses the **same class of integration as Blacksmith**, not a proprietary job protocol.
 
 ### 4.1 Model
 
@@ -48,8 +48,8 @@ Kokanee uses the **same class of integration as Blacksmith**, not a proprietary 
 ### 4.2 Request path
 
 ```text
-1. Operator installs Kokanee GitHub App on org
-2. Workflow: runs-on: kokanee-4vcpu-ubuntu-2404
+1. Operator installs TemperCI GitHub App on org
+2. Workflow: runs-on: temperci-4vcpu-ubuntu-2404
 3. Job queued → workflow_job webhook → control plane
 4. Control plane mints JIT config (labels match runs-on)
 5. Control plane assigns job to a host agent
@@ -60,11 +60,11 @@ Kokanee uses the **same class of integration as Blacksmith**, not a proprietary 
 
 ### 4.3 Labels
 
-Default prefix: `kokanee-`.  
+Default prefix: `temperci-`.  
 MVP example labels (exact set can shrink for first release):
 
-- `kokanee-2vcpu-ubuntu-2404`
-- `kokanee-4vcpu-ubuntu-2404`
+- `temperci-2vcpu-ubuntu-2404`
+- `temperci-4vcpu-ubuntu-2404`
 
 Labels are registered on the JIT runner so GitHub’s scheduler can assign the queued job.
 
@@ -72,8 +72,8 @@ Labels are registered on the JIT runner so GitHub’s scheduler can assign the q
 
 ### 5.1 Components
 
-1. **`kokanee-control`** — GitHub App webhooks, JIT minting, scheduling, assignment to agents.
-2. **`kokanee-agent`** — per-host warm pool, bind, runner start, teardown, orphan sweep.
+1. **`temperci-control`** — GitHub App webhooks, JIT minting, scheduling, assignment to agents.
+2. **`temperci-agent`** — per-host warm pool, bind, runner start, teardown, orphan sweep.
 3. **MicroVM guests** — ephemeral Linux VMs running official runner + job steps.
 4. **Deploy assets** — systemd units, Ubuntu/Proxmox install docs and scripts.
 
@@ -115,7 +115,7 @@ Details: [docs/architecture/install-targets.md](../../architecture/install-targe
 | Repo layout | Go monorepo, `cmd/` + `internal/` | [repository-structure.md](../../decisions/repository-structure.md) |
 | Hypervisor | Spike: Firecracker vs Cloud Hypervisor; interface behind `internal/vmm` | Plan phase 1 |
 | Config | TOML examples under `deploy/` | repository-structure |
-| License | TBD (Apache-2.0 or MIT recommended) | — |
+| License | Apache-2.0 | Done |
 
 ## 7. Security properties
 
@@ -132,7 +132,7 @@ MVP is successful when an operator can:
 
 1. Install control plane + agent on a single Ubuntu KVM host.
 2. Install the GitHub App on a test organization.
-3. Run a workflow with `runs-on: kokanee-…` that executes `actions/checkout` and a simple step.
+3. Run a workflow with `runs-on: temperci-…` that executes `actions/checkout` and a simple step.
 4. Observe warm-bind (not only cold boot) under a second job after pool refill.
 5. Confirm after jobs that guest disks/processes for completed jobs are gone.
 6. Kill the agent mid-job / reboot host and see orphan sweep clean leftovers on restart.

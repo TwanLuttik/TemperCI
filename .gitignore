@@ -1,0 +1,18 @@
+# Build output
+/bin/
+*.exe
+*.test
+*.out
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*~
+
+# Local env / secrets (never commit)
+.env
+.env.*
+*.pem
+/etc/

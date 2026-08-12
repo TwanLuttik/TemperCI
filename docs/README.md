@@ -1,4 +1,4 @@
-# Kokanee documentation
+# TemperCI documentation
 
 Start here when onboarding to the project.
 
@@ -16,13 +16,14 @@ Start here when onboarding to the project.
 |----------|-------------|
 | [decisions/language.md](decisions/language.md) | Why Go (and what else is allowed) |
 | [decisions/repository-structure.md](decisions/repository-structure.md) | Monorepo layout and package boundaries |
+| [decisions/module-path.md](decisions/module-path.md) | Go module path and Apache-2.0 license |
 
 ## Specs and plans
 
 | Document | Description |
 |----------|-------------|
-| [superpowers/specs/2026-08-12-kokanee-platform-design.md](superpowers/specs/2026-08-12-kokanee-platform-design.md) | Approved product design |
-| [superpowers/plans/2026-08-12-kokanee-mvp-plan.md](superpowers/plans/2026-08-12-kokanee-mvp-plan.md) | MVP phases with checkboxes for progress tracking |
+| [superpowers/specs/2026-08-12-temperci-platform-design.md](superpowers/specs/2026-08-12-temperci-platform-design.md) | Approved product design |
+| [superpowers/plans/2026-08-12-temperci-mvp-plan.md](superpowers/plans/2026-08-12-temperci-mvp-plan.md) | MVP phases with checkboxes for progress tracking |
 
 ## Conventions
 

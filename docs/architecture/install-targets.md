@@ -1,13 +1,13 @@
 # Install targets
 
-Kokanee is designed to run on infrastructure you own. MVP targets:
+TemperCI is designed to run on infrastructure you own. MVP targets:
 
 1. **Bare Ubuntu server** (primary development target)
 2. **Proxmox VE host** (same agent model; host provides KVM)
 
 ## Shared model
 
-Regardless of install target, each physical (or nested) machine that runs jobs installs the **Kokanee host agent**. The **control plane** may run on the same machine for small labs, or on a separate small VM/container for multi-host fleets.
+Regardless of install target, each physical (or nested) machine that runs jobs installs the **TemperCI host agent**. The **control plane** may run on the same machine for small labs, or on a separate small VM/container for multi-host fleets.
 
 ```text
 Small lab (single box)

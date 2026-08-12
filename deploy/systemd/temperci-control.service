@@ -1,0 +1,24 @@
+[Unit]
+Description=TemperCI control plane
+Documentation=https://github.com/TwanLuttik/TemperCI
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=temperci
+Group=temperci
+ExecStart=/usr/local/bin/temperci-control -config /etc/temperci/control.toml
+Restart=on-failure
+RestartSec=5
+# Limit ambient capability; adjust when the service needs more privileges.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/temperci /var/log/temperci
+ConfigurationDirectory=temperci
+StateDirectory=temperci
+LogsDirectory=temperci
+
+[Install]
+WantedBy=multi-user.target

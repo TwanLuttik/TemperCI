@@ -4,7 +4,7 @@
 
 **Primary language: Go (1.22+).**
 
-All core Kokanee services are written in Go:
+All core TemperCI services are written in Go:
 
 - Control plane
 - Host agent
@@ -41,7 +41,7 @@ The **job workload** is not written by us in Go. Workloads run whatever the user
 
 ## Tooling expectations
 
-- Module path: set when the public module path is known (e.g. `github.com/temperci/kokanee` or org equivalent).
+- Module path: `github.com/TwanLuttik/TemperCI` (see [module-path.md](module-path.md)).
 - `go test ./...` for unit tests.
 - `golangci-lint` (or equivalent) once the module exists.
 - Pin Go version in `go.mod` and CI.

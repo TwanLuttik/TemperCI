@@ -1,6 +1,6 @@
 # Architecture overview
 
-Kokanee is a **self-hostable GitHub Actions runner platform**. It uses the same integration model as managed runner providers (for example [Blacksmith](https://blacksmith.sh)): jobs stay in GitHub Actions, and compute runs on infrastructure you control.
+TemperCI is a **self-hostable GitHub Actions runner platform**. It uses the same integration model as managed runner providers (for example [Blacksmith](https://blacksmith.sh)): jobs stay in GitHub Actions, and compute runs on infrastructure you control.
 
 ## Design principles
 
@@ -12,7 +12,7 @@ Kokanee is a **self-hostable GitHub Actions runner platform**. It uses the same 
 
 ## How this differs from “classic” self-hosted runners
 
-| Classic self-hosted | Kokanee |
+| Classic self-hosted | TemperCI |
 |---------------------|---------|
 | Manually run `config.sh` on a VM | GitHub App + API mints **JIT** runner config |
 | Long-lived runner process polls for jobs | Runner identity exists only for **one job** |
@@ -20,7 +20,7 @@ Kokanee is a **self-hostable GitHub Actions runner platform**. It uses the same 
 | You size a static pool yourself | Control plane + agent manage pool and labels |
 | Labels set at config time | Labels chosen per JIT registration to match `runs-on` |
 
-Kokanee **is** self-hosted runners under the hood. The product is the orchestration, isolation, warm pool, and cleanup around them.
+TemperCI **is** self-hosted runners under the hood. The product is the orchestration, isolation, warm pool, and cleanup around them.
 
 ## Components
 
@@ -28,11 +28,11 @@ Kokanee **is** self-hosted runners under the hood. The product is the orchestrat
 ┌──────────────────────────────────────────────────────────────┐
 │ GitHub                                                       │
 │  · Actions control plane (workflows, secrets, job queue)     │
-│  · Kokanee GitHub App (webhooks, JIT runner permissions)     │
+│  · TemperCI GitHub App (webhooks, JIT runner permissions)     │
 └────────────────────────────┬─────────────────────────────────┘
                              │ webhooks + REST (JIT config)
 ┌────────────────────────────▼─────────────────────────────────┐
-│ Kokanee control plane (self-hosted)                          │
+│ TemperCI control plane (self-hosted)                          │
 │  · App webhook receiver                                      │
 │  · Label matching / scheduling                               │
 │  · Mint generate-jitconfig for org (or repo)                 │
@@ -58,7 +58,7 @@ Kokanee **is** self-hosted runners under the hood. The product is the orchestrat
 Responsible for talking to GitHub and deciding **which host** should run a job.
 
 - Receives `workflow_job` webhooks (`queued`, `in_progress`, `completed`).
-- Ignores jobs whose `runs-on` labels are not Kokanee-owned.
+- Ignores jobs whose `runs-on` labels are not TemperCI-owned.
 - Calls GitHub’s **just-in-time runner** API to create a single-use runner config with the required labels.
 - Pushes a job payload (JIT config + metadata) to a host agent with capacity.
 - Tracks assignment state for retries and reconciliation.
@@ -81,13 +81,13 @@ Responsible for **compute isolation and lifecycle** on one machine.
 
 ## End-to-end request path
 
-1. Operator installs Kokanee and the GitHub App on a GitHub organization.
-2. Workflow uses a Kokanee label:
+1. Operator installs TemperCI and the GitHub App on a GitHub organization.
+2. Workflow uses a TemperCI label:
 
    ```yaml
    jobs:
      build:
-       runs-on: kokanee-4vcpu-ubuntu-2404
+       runs-on: temperci-4vcpu-ubuntu-2404
        steps:
          - uses: actions/checkout@v4
    ```
@@ -99,7 +99,7 @@ Responsible for **compute isolation and lifecycle** on one machine.
 7. Official runner adopts the single job and executes steps; secrets stay on the runner path GitHub already uses for self-hosted runners.
 8. Job finishes (success, failure, cancel, timeout) → agent destroys the microVM and host-side files → agent boots a replacement warm VM.
 
-## What Kokanee does **not** do (MVP)
+## What TemperCI does **not** do (MVP)
 
 - Replace GitHub Actions with another CI product.
 - Provide multi-tenant SaaS billing.

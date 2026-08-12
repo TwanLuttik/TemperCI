@@ -2,23 +2,23 @@
 
 ## Decision
 
-Kokanee is a **Go monorepo** with clear binaries, internal packages, docs, and deploy assets. No application code lives at the repo root except module metadata and top-level README.
+TemperCI is a **Go monorepo** with clear binaries, internal packages, docs, and deploy assets. No application code lives at the repo root except module metadata and top-level README.
 
 ## Target layout
 
 ```text
-kokanee/
+temperci/
 ├── README.md
 ├── LICENSE
 ├── go.mod
 ├── go.sum
 ├── Makefile                 # common targets: build, test, lint
-├── .github/workflows/       # CI for Kokanee itself
+├── .github/workflows/       # CI for TemperCI itself
 │
 ├── cmd/
-│   ├── kokanee-control/     # control plane binary
+│   ├── temperci-control/     # control plane binary
 │   │   └── main.go
-│   └── kokanee-agent/       # host agent binary
+│   └── temperci-agent/       # host agent binary
 │       └── main.go
 │
 ├── internal/                # not importable by external modules
@@ -75,8 +75,8 @@ Rules:
 
 | Binary | Runs where | Role |
 |--------|------------|------|
-| `kokanee-control` | Lab box, small VM, or container | GitHub webhooks, JIT, assignment |
-| `kokanee-agent` | Each job host (Ubuntu/Proxmox) | Warm pool, bind, teardown |
+| `temperci-control` | Lab box, small VM, or container | GitHub webhooks, JIT, assignment |
+| `temperci-agent` | Each job host (Ubuntu/Proxmox) | Warm pool, bind, teardown |
 
 MVP may allow both on one machine for single-node installs.
 
@@ -84,8 +84,8 @@ MVP may allow both on one machine for single-node installs.
 
 Examples of operator-local config (paths finalised in implementation):
 
-- `/etc/kokanee/control.toml` — App ID, private key path, webhook secret, listen addr
-- `/etc/kokanee/agent.toml` — control plane URL, pool sizes, image paths, resource limits
+- `/etc/temperci/control.toml` — App ID, private key path, webhook secret, listen addr
+- `/etc/temperci/agent.toml` — control plane URL, pool sizes, image paths, resource limits
 
 Ship **example** configs under `deploy/`.
 
@@ -100,7 +100,7 @@ Ship **example** configs under `deploy/`.
 
 ## Naming
 
-- Project: **Kokanee**
-- CLI/binaries: `kokanee-control`, `kokanee-agent`
-- Default runner label prefix: `kokanee-` (e.g. `kokanee-4vcpu-ubuntu-2404`)
+- Project: **TemperCI**
+- CLI/binaries: `temperci-control`, `temperci-agent`
+- Default runner label prefix: `temperci-` (e.g. `temperci-4vcpu-ubuntu-2404`)
 - Internal code names stay boring and domain-oriented

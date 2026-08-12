@@ -1,6 +1,6 @@
 # Job lifecycle: warm pool, bind, teardown
 
-This document defines how a GitHub Actions job moves through Kokanee, including the **warm pool** and **mandatory cleanup** behavior required for self-hosted installs.
+This document defines how a GitHub Actions job moves through TemperCI, including the **warm pool** and **mandatory cleanup** behavior required for self-hosted installs.
 
 ## States
 
@@ -54,7 +54,7 @@ If no warm VM is available, the agent may cold-boot (slower path). That is accep
 
 ## JIT registration
 
-Kokanee uses GitHub’s [just-in-time self-hosted runners](https://github.blog/changelog/2023-06-02-github-actions-just-in-time-self-hosted-runners/):
+TemperCI uses GitHub’s [just-in-time self-hosted runners](https://github.blog/changelog/2023-06-02-github-actions-just-in-time-self-hosted-runners/):
 
 - Control plane calls the org (or repo) `generate-jitconfig` REST endpoint.
 - Labels on the JIT config match the job’s `runs-on` requirements.

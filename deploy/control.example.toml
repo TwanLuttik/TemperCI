@@ -1,0 +1,18 @@
+# Example control-plane config.
+# Copy to /etc/temperci/control.toml and fill in secrets (do not commit real keys).
+
+# HTTP listen address for webhooks and health checks.
+listen_addr = "0.0.0.0:8080"
+
+# GitHub App credentials.
+# Create an App, install it on your org, then set these values.
+github_app_id = 0
+github_app_private_key_path = "/etc/temperci/github-app.pem"
+github_webhook_secret = "replace-me"
+
+# Org that owns the self-hosted runners (MVP: org-level JIT).
+github_org = "your-org"
+
+# Optional: restrict which labels TemperCI will mint JIT configs for.
+# Empty means only labels with the default temperci- prefix.
+# label_prefix = "temperci-"

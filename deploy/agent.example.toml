@@ -1,0 +1,20 @@
+# Example host-agent config.
+# Copy to /etc/temperci/agent.toml and adjust for the host.
+
+# Control plane base URL (single-node MVP may be localhost).
+control_url = "http://127.0.0.1:8080"
+
+# Warm pool sizing.
+min_ready = 1
+max_ready = 2
+
+# Guest image and host scratch roots (paths are host-local).
+image_path = "/var/lib/temperci/images/ubuntu-2404-runner.qcow2"
+scratch_dir = "/var/lib/temperci/instances"
+
+# Default VM resources for pool members.
+vcpu = 4
+memory_mib = 8192
+
+# Idle warm VM recycle after this many seconds (0 = disabled until implemented).
+# idle_recycle_seconds = 3600

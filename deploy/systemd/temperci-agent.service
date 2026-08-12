@@ -1,0 +1,20 @@
+[Unit]
+Description=TemperCI host agent
+Documentation=https://github.com/TwanLuttik/TemperCI
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Agent needs access to KVM and host networking for microVMs.
+# Run as root for MVP host setup; tighten later (device ACLs, capabilities).
+User=root
+Group=root
+ExecStart=/usr/local/bin/temperci-agent -config /etc/temperci/agent.toml
+Restart=on-failure
+RestartSec=5
+# Agent must manage VMs and scratch under /var/lib/temperci.
+# ProtectSystem left off for MVP; revisit in hardening.
+
+[Install]
+WantedBy=multi-user.target
