@@ -62,12 +62,66 @@ type RegisterRequest struct {
 	VMs []VMUsage `json:"vms,omitempty"`
 	// CachedRepos is org/repo namespaces present in this agent's local cache.
 	CachedRepos []string `json:"cached_repos,omitempty"`
+	// Cache is the latest host-local Actions cache inventory.
+	Cache *CacheUsage `json:"cache,omitempty"`
 }
 
 // RegisterResponse acknowledges registration.
 type RegisterResponse struct {
-	OK      bool   `json:"ok"`
-	AgentID string `json:"agent_id"`
+	OK      bool      `json:"ok"`
+	AgentID string    `json:"agent_id"`
+	// CacheOps are pending operator cache commands for this agent to apply.
+	CacheOps []CacheOp `json:"cache_ops,omitempty"`
+}
+
+// Cache usage / operator command types.
+
+const (
+	CacheOpPurgeAll  = "purge_all"
+	CacheOpPurgeRepo = "purge_repo"
+)
+
+// CacheRepoUsage is one org/repo on an agent.
+type CacheRepoUsage struct {
+	Repo       string    `json:"repo"`
+	Bytes      int64     `json:"bytes"`
+	Entries    int       `json:"entries"`
+	LastAccess time.Time `json:"last_access,omitempty"`
+}
+
+// CacheUsage is host-local Actions cache inventory.
+type CacheUsage struct {
+	Bytes    int64            `json:"bytes"`
+	MaxBytes int64            `json:"max_bytes"`
+	Entries  int              `json:"entries"`
+	Repos    []CacheRepoUsage `json:"repos,omitempty"`
+}
+
+// CacheOp is a pending purge the agent should apply.
+type CacheOp struct {
+	ID     string `json:"id"`
+	Action string `json:"action"`
+	Repo   string `json:"repo,omitempty"`
+}
+
+// CacheHost is dashboard view of one agent's cache.
+type CacheHost struct {
+	AgentID    string    `json:"agent_id"`
+	LastSeenAt time.Time `json:"last_seen_at,omitempty"`
+	CacheUsage
+}
+
+// CacheClearRequest is the dashboard purge request.
+type CacheClearRequest struct {
+	AgentID string `json:"agent_id,omitempty"`
+	Repo    string `json:"repo,omitempty"`
+}
+
+// CacheClearResponse reports how many agents were queued.
+type CacheClearResponse struct {
+	OK    bool   `json:"ok"`
+	Queued int   `json:"queued"`
+	Error string `json:"error,omitempty"`
 }
 
 // ClaimRequest asks the control plane for the next pending job.
@@ -178,6 +232,10 @@ type AgentInfo struct {
 	LastSeenAt   time.Time `json:"last_seen_at"`
 	// VMs is the latest microVM usage sample from the agent (may be empty).
 	VMs []VMUsage `json:"vms,omitempty"`
+	// CachedRepos last reported by the agent.
+	CachedRepos []string `json:"cached_repos,omitempty"`
+	// Cache last reported inventory (may be nil if the agent has no gateway).
+	Cache *CacheUsage `json:"cache,omitempty"`
 }
 
 // ControlMetrics is a scrapeable JSON metrics payload from temperci-control.

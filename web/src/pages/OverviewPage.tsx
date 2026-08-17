@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { api, formatDuration, type Overview } from "../api";
+import { api, formatBytes, formatDuration, type Overview } from "../api";
 import { useRealtime } from "../hooks/useRealtime";
 
 type Props = { onOverview: (o: Overview) => void };
@@ -92,7 +92,10 @@ export function OverviewPage({ onOverview }: Props) {
               ? "—"
               : `${o.cache_hits ?? 0}/${(o.cache_hits ?? 0) + (o.cache_misses ?? 0)}`}
           </div>
-          <div className="hint">hits / lookups</div>
+          <div className="hint">
+            hits / lookups
+            {o.cache_bytes ? ` · ${formatBytes(o.cache_bytes)} on disk` : ""}
+          </div>
         </div>
       </div>
       <div className="split">
@@ -130,6 +133,9 @@ export function OverviewPage({ onOverview }: Props) {
             </button>
             <button type="button" className="ghost" onClick={() => navigate("/jobs")}>
               View jobs
+            </button>
+            <button type="button" className="ghost" onClick={() => navigate("/cache")}>
+              View cache
             </button>
             <button type="button" className="secondary" onClick={() => navigate("/settings")}>
               Settings

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { api, type Me, type Overview, type SetupStatus } from "./api";
 import { Layout } from "./components/Layout";
+import { CachePage } from "./pages/CachePage";
 import { HostsPage } from "./pages/HostsPage";
 import { JobDetailPage } from "./pages/JobDetailPage";
 import { JobsPage } from "./pages/JobsPage";
@@ -112,6 +113,7 @@ export default function App() {
         <Route path="/hosts" element={<HostsPage />} />
         <Route path="/vms" element={<VMsPage />} />
         <Route path="/jobs" element={<JobsPage />} />
+        <Route path="/cache" element={<CachePage />} />
         <Route path="/jobs/:id" element={<JobDetailPage />} />
         <Route path="/settings" element={<SettingsPage onOverview={setOverview} />} />
         {me?.admin && setup.auth_mode === "password" ? (

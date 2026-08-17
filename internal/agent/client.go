@@ -85,10 +85,12 @@ type CapacitySnapshot struct {
 	Busy        int
 	VMs         []api.VMUsage
 	CachedRepos []string
+	Cache       *api.CacheUsage
 }
 
 // Register announces this agent to the control plane with capacity.
-func (c *ControlClient) Register(ctx context.Context, cap CapacitySnapshot) error {
+// Returned cache ops should be applied locally (may be empty).
+func (c *ControlClient) Register(ctx context.Context, cap CapacitySnapshot) ([]api.CacheOp, error) {
 	req := api.RegisterRequest{
 		AgentID:     c.AgentID,
 		MaxCapacity: cap.MaxCapacity,
@@ -97,15 +99,16 @@ func (c *ControlClient) Register(ctx context.Context, cap CapacitySnapshot) erro
 		Busy:        cap.Busy,
 		VMs:         cap.VMs,
 		CachedRepos: cap.CachedRepos,
+		Cache:       cap.Cache,
 	}
 	var resp api.RegisterResponse
 	if err := c.post(ctx, "/v1/agent/register", req, &resp); err != nil {
-		return err
+		return nil, err
 	}
 	if !resp.OK {
-		return fmt.Errorf("agent: register not ok")
+		return nil, fmt.Errorf("agent: register not ok")
 	}
-	return nil
+	return resp.CacheOps, nil
 }
 
 // Claim requests the next pending job when free slots remain. Returns nil,nil when no work.

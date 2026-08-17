@@ -73,6 +73,39 @@ export type Overview = {
   run_p95_ms?: number;
   cache_hits?: number;
   cache_misses?: number;
+  cache_bytes?: number;
+  cache_max_bytes?: number;
+};
+
+export type CacheRepo = {
+  repo: string;
+  bytes: number;
+  entries: number;
+  last_access?: string;
+};
+
+export type CacheHost = {
+  agent_id: string;
+  last_seen_at?: string;
+  bytes: number;
+  max_bytes: number;
+  entries: number;
+  repos?: CacheRepo[];
+};
+
+export type CacheInventory = {
+  ok: boolean;
+  bytes: number;
+  max_bytes: number;
+  entries: number;
+  repos: number;
+  hosts: CacheHost[];
+};
+
+export type CacheClearResponse = {
+  ok: boolean;
+  queued: number;
+  error?: string;
 };
 
 export type Host = {
@@ -119,6 +152,19 @@ export type Job = {
   cache_bytes_in?: number;
   cache_bytes_out?: number;
 };
+
+export function formatBytes(n?: number): string {
+  if (n == null || n < 0) return "—";
+  if (n < 1024) return `${Math.round(n)} B`;
+  const units = ["KiB", "MiB", "GiB", "TiB"];
+  let v = n / 1024;
+  let i = 0;
+  while (v >= 1024 && i < units.length - 1) {
+    v /= 1024;
+    i += 1;
+  }
+  return `${v < 10 ? v.toFixed(1) : Math.round(v)} ${units[i]}`;
+}
 
 export function formatDuration(ms?: number): string {
   if (ms == null || ms < 0) return "—";

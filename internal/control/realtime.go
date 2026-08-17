@@ -100,6 +100,13 @@ func (s *Server) BuildSnapshot() RealtimeSnapshot {
 	}
 	p50, p95 := recentRunPercentiles(list)
 	cacheHits, cacheMisses, _, _ := recentCacheTotals(list)
+	var cacheBytes, cacheMax int64
+	for _, a := range agents {
+		if a.Cache != nil {
+			cacheBytes += a.Cache.Bytes
+			cacheMax += a.Cache.MaxBytes
+		}
+	}
 	org := ""
 	fleetReady := false
 	if s.dash != nil && s.dash.Config != nil {
@@ -125,6 +132,8 @@ func (s *Server) BuildSnapshot() RealtimeSnapshot {
 			"run_p95_ms":        p95,
 			"cache_hits":        cacheHits,
 			"cache_misses":      cacheMisses,
+			"cache_bytes":       cacheBytes,
+			"cache_max_bytes":   cacheMax,
 			"ws_clients":        0,
 		},
 		Hosts: agents,

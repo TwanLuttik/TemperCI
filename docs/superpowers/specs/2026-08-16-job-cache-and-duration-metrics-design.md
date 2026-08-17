@@ -112,3 +112,14 @@ cache_listen_addr = "127.0.0.1:8743"
 ```
 
 Empty `cache_listen_addr` disables the gateway (tests / hosts without cache).
+
+## 10. Dashboard cache management
+
+Operators can see and purge host-local cache from the control UI (`/cache`).
+
+- Agents include `cache` inventory on every register/heartbeat.
+- `GET /api/v1/cache` aggregates bytes, entries, and per-repo rows per host.
+- `POST /api/v1/cache/clear` `{agent_id?, repo?}` (admin) enqueues `purge_all` or `purge_repo`.
+- The next agent heartbeat applies the op and the following inventory report reflects the new size.
+
+Pending clears are in-memory on the control process (lost on control restart if not yet applied).

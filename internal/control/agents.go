@@ -44,6 +44,16 @@ func (r *AgentRegistry) Register(req api.RegisterRequest) api.AgentInfo {
 	if req.VMs != nil {
 		info.VMs = append([]api.VMUsage(nil), req.VMs...)
 	}
+	if req.CachedRepos != nil {
+		info.CachedRepos = append([]string(nil), req.CachedRepos...)
+	}
+	if req.Cache != nil {
+		cp := *req.Cache
+		if req.Cache.Repos != nil {
+			cp.Repos = append([]api.CacheRepoUsage(nil), req.Cache.Repos...)
+		}
+		info.Cache = &cp
+	}
 	info.LastSeenAt = now
 	cp := *info
 	return cp

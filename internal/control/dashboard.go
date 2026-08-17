@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/TwanLuttik/TemperCI/internal/api"
 	"github.com/TwanLuttik/TemperCI/internal/config"
 	"github.com/TwanLuttik/TemperCI/internal/store"
 	"github.com/TwanLuttik/TemperCI/internal/webui"
@@ -56,6 +57,8 @@ func (s *Server) mountDashboard(d DashboardConfig) {
 	s.mux.HandleFunc("POST /api/v1/system/restart", s.withUIAuth(s.handleSystemRestart, true))
 	s.mux.HandleFunc("GET /api/v1/ws", s.handleDashboardWS)
 	s.mux.HandleFunc("GET /api/v1/vms", s.withUIAuth(s.handleVMs, false))
+	s.mux.HandleFunc("GET /api/v1/cache", s.withUIAuth(s.handleCache, false))
+	s.mux.HandleFunc("POST /api/v1/cache/clear", s.withUIAuth(s.handleCacheClear, true))
 	// Vite SPA (embedded dist/). More specific /api and /v1 routes take precedence.
 	s.mux.Handle("/", webui.SPAHandler())
 }
@@ -382,6 +385,13 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request, _ *uiPri
 	recent := s.store.ListRecent(100)
 	p50, p95 := recentRunPercentiles(recent)
 	cacheHits, cacheMisses, _, _ := recentCacheTotals(recent)
+	var cacheBytes, cacheMax int64
+	for _, a := range agents {
+		if a.Cache != nil {
+			cacheBytes += a.Cache.Bytes
+			cacheMax += a.Cache.MaxBytes
+		}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":                 true,
 		"fleet_ready":        s.dash != nil && s.dash.FleetReady,
@@ -401,6 +411,8 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request, _ *uiPri
 		"run_p95_ms":         p95,
 		"cache_hits":         cacheHits,
 		"cache_misses":       cacheMisses,
+		"cache_bytes":        cacheBytes,
+		"cache_max_bytes":    cacheMax,
 	})
 }
 
@@ -743,6 +755,73 @@ func (s *Server) handleHosts(w http.ResponseWriter, r *http.Request, _ *uiPrinci
 		"ok":    true,
 		"hosts": s.agents.List(),
 	})
+}
+
+func (s *Server) handleCache(w http.ResponseWriter, r *http.Request, _ *uiPrincipal) {
+	writeJSON(w, http.StatusOK, s.cacheSnapshot())
+}
+
+func (s *Server) cacheSnapshot() map[string]any {
+	agents := s.agents.List()
+	hosts := make([]api.CacheHost, 0, len(agents))
+	var bytes, maxBytes int64
+	var entries int
+	var repos int
+	for _, a := range agents {
+		h := api.CacheHost{AgentID: a.AgentID, LastSeenAt: a.LastSeenAt}
+		if a.Cache != nil {
+			h.CacheUsage = *a.Cache
+			if h.Repos != nil {
+				h.Repos = append([]api.CacheRepoUsage(nil), h.Repos...)
+			}
+		}
+		hosts = append(hosts, h)
+		bytes += h.Bytes
+		maxBytes += h.MaxBytes
+		entries += h.Entries
+		repos += len(h.Repos)
+	}
+	return map[string]any{
+		"ok":        true,
+		"bytes":     bytes,
+		"max_bytes": maxBytes,
+		"entries":   entries,
+		"repos":     repos,
+		"hosts":     hosts,
+	}
+}
+
+func (s *Server) handleCacheClear(w http.ResponseWriter, r *http.Request, _ *uiPrincipal) {
+	var req api.CacheClearRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeAPIError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	if err := validateCacheRepo(req.Repo); err != nil {
+		writeAPIError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	action := cacheAction(req.Repo)
+	var ids []string
+	if strings.TrimSpace(req.AgentID) != "" {
+		if s.agents.Get(req.AgentID) == nil {
+			writeAPIError(w, http.StatusNotFound, "agent not registered")
+			return
+		}
+		ids = []string{req.AgentID}
+	} else {
+		for _, a := range s.agents.List() {
+			ids = append(ids, a.AgentID)
+		}
+	}
+	if len(ids) == 0 {
+		writeAPIError(w, http.StatusBadRequest, "no agents registered")
+		return
+	}
+	n := s.cacheq.enqueue(ids, action, strings.TrimSpace(req.Repo))
+	s.log.Info("cache clear queued", "action", action, "repo", req.Repo, "agents", n)
+	s.PublishSnapshot()
+	writeJSON(w, http.StatusOK, api.CacheClearResponse{OK: true, Queued: n})
 }
 
 func (s *Server) handleJobs(w http.ResponseWriter, r *http.Request, _ *uiPrincipal) {

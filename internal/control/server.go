@@ -24,6 +24,7 @@ type Server struct {
 	mux           *http.ServeMux
 	dash          *DashboardConfig
 	hub           *Hub
+	cacheq        *cacheQueue
 }
 
 // ServerConfig configures the HTTP server.
@@ -71,6 +72,7 @@ func NewServer(cfg ServerConfig) *Server {
 		log:           log,
 		mux:           http.NewServeMux(),
 		hub:           hub,
+		cacheq:        newCacheQueue(),
 	}
 	s.mux.HandleFunc("GET /healthz", s.handleHealthz)
 	s.mux.HandleFunc("GET /metrics", s.handleMetrics)
@@ -238,7 +240,11 @@ func (s *Server) handleAgentRegister(w http.ResponseWriter, r *http.Request) {
 		"vms", len(info.VMs),
 	)
 	s.PublishSnapshot()
-	writeJSON(w, http.StatusOK, api.RegisterResponse{OK: true, AgentID: info.AgentID})
+	writeJSON(w, http.StatusOK, api.RegisterResponse{
+		OK:       true,
+		AgentID:  info.AgentID,
+		CacheOps: s.cacheq.take(info.AgentID),
+	})
 }
 
 func (s *Server) handleJobClaim(w http.ResponseWriter, r *http.Request) {

@@ -46,6 +46,22 @@ type Entry struct {
 	LastAccess time.Time
 }
 
+// RepoUsage is disk usage for one org/repo namespace.
+type RepoUsage struct {
+	Repo       string    `json:"repo"`
+	Bytes      int64     `json:"bytes"`
+	Entries    int       `json:"entries"`
+	LastAccess time.Time `json:"last_access,omitempty"`
+}
+
+// Usage is a point-in-time inventory of the host cache.
+type Usage struct {
+	Bytes    int64       `json:"bytes"`
+	MaxBytes int64       `json:"max_bytes"`
+	Entries  int         `json:"entries"`
+	Repos    []RepoUsage `json:"repos,omitempty"`
+}
+
 type meta struct {
 	ID         string    `json:"id"`
 	Repo       string    `json:"repo"`
@@ -99,6 +115,101 @@ func (s *Store) Repos() []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// Usage returns finalized cache inventory (ready entries only).
+func (s *Store) Usage() Usage {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.usageLocked()
+}
+
+func (s *Store) usageLocked() Usage {
+	byRepo := map[string]*RepoUsage{}
+	var total int64
+	var entries int
+	_ = filepath.WalkDir(s.root, func(path string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() || d.Name() != "meta.json" {
+			return nil
+		}
+		m, err := readMeta(path)
+		if err != nil || m.State != "ready" || m.Repo == "" {
+			return nil
+		}
+		entries++
+		total += m.Size
+		ru := byRepo[m.Repo]
+		if ru == nil {
+			ru = &RepoUsage{Repo: m.Repo}
+			byRepo[m.Repo] = ru
+		}
+		ru.Bytes += m.Size
+		ru.Entries++
+		if m.LastAccess.After(ru.LastAccess) {
+			ru.LastAccess = m.LastAccess
+		}
+		return nil
+	})
+	out := Usage{Bytes: total, MaxBytes: s.maxBytes, Entries: entries}
+	for _, ru := range byRepo {
+		out.Repos = append(out.Repos, *ru)
+	}
+	sort.Slice(out.Repos, func(i, j int) bool { return out.Repos[i].Repo < out.Repos[j].Repo })
+	return out
+}
+
+// DeleteRepo removes finalized entries for one org/repo. In-flight uploads are left alone.
+func (s *Store) DeleteRepo(repo string) (entries int, bytes int64, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := validateRepo(repo); err != nil {
+		return 0, 0, err
+	}
+	dir := filepath.Join(s.repoDir(repo), "entries")
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, 0, nil
+		}
+		return 0, 0, err
+	}
+	for _, e := range ents {
+		if !e.IsDir() {
+			continue
+		}
+		metaPath := filepath.Join(dir, e.Name(), "meta.json")
+		m, rerr := readMeta(metaPath)
+		if rerr == nil && m.State == "ready" {
+			entries++
+			bytes += m.Size
+		}
+		if err := os.RemoveAll(filepath.Join(dir, e.Name())); err != nil {
+			return entries, bytes, err
+		}
+	}
+	return entries, bytes, nil
+}
+
+// DeleteAll removes every finalized entry and leftover upload. The CA dir is kept.
+func (s *Store) DeleteAll() (entries int, bytes int64, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	u := s.usageLocked()
+	entries, bytes = u.Entries, u.Bytes
+	rootEnts, err := os.ReadDir(s.root)
+	if err != nil {
+		return 0, 0, err
+	}
+	for _, e := range rootEnts {
+		name := e.Name()
+		if name == "ca" {
+			continue
+		}
+		if err := os.RemoveAll(filepath.Join(s.root, name)); err != nil {
+			return entries, bytes, err
+		}
+	}
+	return entries, bytes, nil
 }
 
 // Create starts an upload for key+version. Returns ErrExists if already finalized.

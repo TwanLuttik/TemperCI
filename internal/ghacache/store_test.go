@@ -77,6 +77,59 @@ func TestStore_RepoIsolation(t *testing.T) {
 	}
 }
 
+func TestStore_UsageAndDeleteRepo(t *testing.T) {
+	s := openTestStore(t, 1<<20)
+	writeEntry(t, s, "acme/app", "node-modules", "v1", []byte("12345"))
+	writeEntry(t, s, "acme/other", "pip", "v1", []byte("abc"))
+
+	u := s.Usage()
+	if u.Entries != 2 || u.Bytes != 8 || u.MaxBytes != 1<<20 {
+		t.Fatalf("usage=%+v", u)
+	}
+	if len(u.Repos) != 2 {
+		t.Fatalf("repos=%+v", u.Repos)
+	}
+	byRepo := map[string]RepoUsage{}
+	for _, r := range u.Repos {
+		byRepo[r.Repo] = r
+	}
+	if byRepo["acme/app"].Bytes != 5 || byRepo["acme/app"].Entries != 1 {
+		t.Fatalf("app repo=%+v", byRepo["acme/app"])
+	}
+
+	n, bytes, err := s.DeleteRepo("acme/app")
+	if err != nil || n != 1 || bytes != 5 {
+		t.Fatalf("delete repo n=%d bytes=%d err=%v", n, bytes, err)
+	}
+	if _, ok, _ := s.Get("acme/app", "node-modules", nil, "v1"); ok {
+		t.Fatal("expected acme/app gone")
+	}
+	if _, ok, _ := s.Get("acme/other", "pip", nil, "v1"); !ok {
+		t.Fatal("expected other repo kept")
+	}
+	u = s.Usage()
+	if u.Entries != 1 || u.Bytes != 3 {
+		t.Fatalf("after delete usage=%+v", u)
+	}
+}
+
+func TestStore_DeleteAll(t *testing.T) {
+	s := openTestStore(t, 1<<20)
+	writeEntry(t, s, "acme/app", "a", "v1", []byte("xx"))
+	writeEntry(t, s, "acme/b", "b", "v1", []byte("yy"))
+	n, bytes, err := s.DeleteAll()
+	if err != nil || n != 2 || bytes != 4 {
+		t.Fatalf("delete all n=%d bytes=%d err=%v", n, bytes, err)
+	}
+	u := s.Usage()
+	if u.Entries != 0 || u.Bytes != 0 || len(u.Repos) != 0 {
+		t.Fatalf("usage after delete all=%+v", u)
+	}
+	if repos := s.Repos(); len(repos) != 0 {
+		t.Fatalf("repos=%v", repos)
+	}
+}
+
 func TestStore_LRUEviction(t *testing.T) {
 	s := openTestStore(t, 20)
 	writeEntry(t, s, "acme/app", "old", "v1", []byte("1234567890")) // 10

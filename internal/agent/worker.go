@@ -58,7 +58,7 @@ func (w *Worker) Run(ctx context.Context) error {
 		w.Capacity = 1
 	}
 
-	if err := w.Client.Register(ctx, w.snapshot()); err != nil {
+	if err := w.register(ctx); err != nil {
 		return fmt.Errorf("agent: register: %w", err)
 	}
 	log.Info("agent worker registered",
@@ -124,7 +124,7 @@ func (w *Worker) heartbeat(ctx context.Context, log *slog.Logger) {
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			if err := w.Client.Register(ctx, w.snapshot()); err != nil {
+			if err := w.register(ctx); err != nil {
 				log.Error("heartbeat register failed", "err", err)
 			}
 		}
@@ -158,8 +158,10 @@ func (w *Worker) snapshot() CapacitySnapshot {
 		free = 0
 	}
 	var repos []string
+	var cache *api.CacheUsage
 	if w.Cache != nil && w.Cache.Store != nil {
 		repos = w.Cache.Store.Repos()
+		cache = CacheUsageFromStore(w.Cache.Store)
 	}
 	return CapacitySnapshot{
 		MaxCapacity: w.Capacity,
@@ -168,7 +170,29 @@ func (w *Worker) snapshot() CapacitySnapshot {
 		Busy:        c.Busy,
 		VMs:         w.Pool.ListUsage(),
 		CachedRepos: repos,
+		Cache:       cache,
 	}
+}
+
+func (w *Worker) register(ctx context.Context) error {
+	ops, err := w.Client.Register(ctx, w.snapshot())
+	if err != nil {
+		return err
+	}
+	if len(ops) == 0 || w.Cache == nil || w.Cache.Store == nil {
+		return nil
+	}
+	n, err := ApplyCacheOps(w.Cache.Store, ops)
+	if err != nil {
+		if w.Log != nil {
+			w.Log.Error("apply cache ops", "err", err, "applied", n)
+		}
+		return err
+	}
+	if w.Log != nil && n > 0 {
+		w.Log.Info("applied cache ops", "n", n)
+	}
+	return nil
 }
 
 func (w *Worker) handleJob(ctx context.Context, job *api.JobAssignment) error {
