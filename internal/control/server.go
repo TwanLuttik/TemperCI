@@ -260,7 +260,7 @@ func (s *Server) handleJobClaim(w http.ResponseWriter, r *http.Request) {
 	}
 	s.agents.UpdateCapacity(req.AgentID, req.FreeSlots, req.Warm, req.Busy)
 	s.agents.Touch(req.AgentID)
-	a := s.store.ClaimNext(req.AgentID)
+	a := s.store.ClaimNext(req.AgentID, req.CachedRepos)
 	if a == nil {
 		writeJSON(w, http.StatusOK, api.ClaimResponse{OK: true, Job: nil})
 		return
@@ -339,6 +339,9 @@ func (s *Server) handleJobFinished(w http.ResponseWriter, r *http.Request) {
 	if err := s.store.MarkFinished(req.JobID, req.AgentID, outcome, req.VMID, req.WarmBind, req.Error); err != nil {
 		writeAPIError(w, http.StatusConflict, err.Error())
 		return
+	}
+	if req.CacheHits != 0 || req.CacheMisses != 0 || req.CacheBytesIn != 0 || req.CacheBytesOut != 0 {
+		_ = s.store.SetCacheStats(req.JobID, req.CacheHits, req.CacheMisses, req.CacheBytesIn, req.CacheBytesOut)
 	}
 	s.mergeJobLogs(req.JobID, req.RunnerLog, req.AgentLog, req.ConsoleLog)
 	s.agents.Touch(req.AgentID)

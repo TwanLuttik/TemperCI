@@ -60,3 +60,9 @@ reconcile_interval_seconds = 1
 # GET /metrics  POST /v1/admin/pool/drain  POST /v1/admin/pool/reload
 # Admin routes use agent_token as Bearer.
 # metrics_listen_addr = "127.0.0.1:9091"
+
+# Host-local GitHub Actions cache (actions/cache, setup-node, setup-go).
+# Empty cache_listen_addr disables the gateway. Guest image must trust the
+# TemperCI cache CA (see deploy/ubuntu/install-cache-ca.sh).
+cache_listen_addr = "127.0.0.1:8743"
+# cache_max_bytes = 53687091200  # 50 GiB LRU across all repos on this host

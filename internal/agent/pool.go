@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -386,6 +388,19 @@ func (p *Pool) HostLayout() vmm.Layout {
 		return vmm.Layout{}
 	}
 	return p.cleaner.Layout
+}
+
+// GuestIP returns the guest address recorded at VM create, or empty.
+func (p *Pool) GuestIP(id vmm.ID) string {
+	layout := p.HostLayout()
+	if layout.Root == "" || id == "" {
+		return ""
+	}
+	raw, err := os.ReadFile(filepath.Join(layout.NetDir(id), "guest_ip"))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(raw))
 }
 
 // DrainWarm destroys all warm (idle) VMs so the pool can refill (e.g. after image update).

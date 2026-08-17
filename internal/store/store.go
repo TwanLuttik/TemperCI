@@ -110,7 +110,11 @@ CREATE TABLE IF NOT EXISTS assignments (
   vm_id TEXT NOT NULL DEFAULT '',
   warm_bind INTEGER NOT NULL DEFAULT 0,
   outcome TEXT NOT NULL DEFAULT '',
-  error TEXT NOT NULL DEFAULT ''
+  error TEXT NOT NULL DEFAULT '',
+  cache_hits INTEGER NOT NULL DEFAULT 0,
+  cache_misses INTEGER NOT NULL DEFAULT 0,
+  cache_bytes_in INTEGER NOT NULL DEFAULT 0,
+  cache_bytes_out INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_assignments_status ON assignments(status);
 CREATE INDEX IF NOT EXISTS idx_assignments_created ON assignments(created_at);
@@ -125,6 +129,16 @@ CREATE TABLE IF NOT EXISTS job_logs (
 `)
 	if err != nil {
 		return fmt.Errorf("store: migrate: %w", err)
+	}
+	for _, q := range []string{
+		`ALTER TABLE assignments ADD COLUMN cache_hits INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE assignments ADD COLUMN cache_misses INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE assignments ADD COLUMN cache_bytes_in INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE assignments ADD COLUMN cache_bytes_out INTEGER NOT NULL DEFAULT 0`,
+	} {
+		if _, err := s.db.Exec(q); err != nil && !strings.Contains(err.Error(), "duplicate column") {
+			return fmt.Errorf("store: migrate alter: %w", err)
+		}
 	}
 	return nil
 }

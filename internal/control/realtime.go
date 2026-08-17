@@ -28,6 +28,12 @@ type jobRowWS struct {
 	WarmBind        bool      `json:"warm_bind,omitempty"`
 	Outcome         string    `json:"outcome,omitempty"`
 	CreatedAt       time.Time `json:"created_at"`
+	QueueMS         int64     `json:"queue_ms,omitempty"`
+	BindMS          int64     `json:"bind_ms,omitempty"`
+	RunMS           int64     `json:"run_ms,omitempty"`
+	TotalMS         int64     `json:"total_ms,omitempty"`
+	CacheHits       int       `json:"cache_hits,omitempty"`
+	CacheMisses     int       `json:"cache_misses,omitempty"`
 }
 
 type vmRowWS struct {
@@ -68,8 +74,10 @@ func (s *Server) BuildSnapshot() RealtimeSnapshot {
 		}
 	}
 	list := s.store.ListRecent(100)
+	now := time.Now().UTC()
 	jobs := make([]jobRowWS, 0, len(list))
 	for _, a := range list {
+		tm := timingsFromAssignment(a, now)
 		jobs = append(jobs, jobRowWS{
 			JobID:           a.JobID,
 			RunID:           a.RunID,
@@ -82,8 +90,16 @@ func (s *Server) BuildSnapshot() RealtimeSnapshot {
 			WarmBind:        a.WarmBind,
 			Outcome:         a.Outcome,
 			CreatedAt:       a.CreatedAt,
+			QueueMS:         tm.QueueMS,
+			BindMS:          tm.BindMS,
+			RunMS:           tm.RunMS,
+			TotalMS:         tm.TotalMS,
+			CacheHits:       a.CacheHits,
+			CacheMisses:     a.CacheMisses,
 		})
 	}
+	p50, p95 := recentRunPercentiles(list)
+	cacheHits, cacheMisses, _, _ := recentCacheTotals(list)
 	org := ""
 	fleetReady := false
 	if s.dash != nil && s.dash.Config != nil {
@@ -105,6 +121,10 @@ func (s *Server) BuildSnapshot() RealtimeSnapshot {
 			"jobs_started":      counts.Started,
 			"jobs_finished":     counts.Finished,
 			"jobs_failed":       counts.Failed,
+			"run_p50_ms":        p50,
+			"run_p95_ms":        p95,
+			"cache_hits":        cacheHits,
+			"cache_misses":      cacheMisses,
 			"ws_clients":        0,
 		},
 		Hosts: agents,

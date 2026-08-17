@@ -379,6 +379,9 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request, _ *uiPri
 		warm += a.Warm
 		busy += a.Busy
 	}
+	recent := s.store.ListRecent(100)
+	p50, p95 := recentRunPercentiles(recent)
+	cacheHits, cacheMisses, _, _ := recentCacheTotals(recent)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":                 true,
 		"fleet_ready":        s.dash != nil && s.dash.FleetReady,
@@ -394,6 +397,10 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request, _ *uiPri
 		"jobs_finished":      counts.Finished,
 		"jobs_failed":        counts.Failed,
 		"hostctl_configured": s.hostctlAvailable(),
+		"run_p50_ms":         p50,
+		"run_p95_ms":         p95,
+		"cache_hits":         cacheHits,
+		"cache_misses":       cacheMisses,
 	})
 }
 
@@ -755,9 +762,17 @@ func (s *Server) handleJobs(w http.ResponseWriter, r *http.Request, _ *uiPrincip
 		CreatedAt       time.Time `json:"created_at"`
 		StartedAt       time.Time `json:"started_at,omitempty"`
 		FinishedAt      time.Time `json:"finished_at,omitempty"`
+		QueueMS         int64     `json:"queue_ms,omitempty"`
+		BindMS          int64     `json:"bind_ms,omitempty"`
+		RunMS           int64     `json:"run_ms,omitempty"`
+		TotalMS         int64     `json:"total_ms,omitempty"`
+		CacheHits       int       `json:"cache_hits,omitempty"`
+		CacheMisses     int       `json:"cache_misses,omitempty"`
 	}
+	now := time.Now().UTC()
 	rows := make([]jobRow, 0, len(list))
 	for _, a := range list {
+		tm := timingsFromAssignment(a, now)
 		rows = append(rows, jobRow{
 			JobID:           a.JobID,
 			RunID:           a.RunID,
@@ -773,6 +788,12 @@ func (s *Server) handleJobs(w http.ResponseWriter, r *http.Request, _ *uiPrincip
 			CreatedAt:       a.CreatedAt,
 			StartedAt:       a.StartedAt,
 			FinishedAt:      a.FinishedAt,
+			QueueMS:         tm.QueueMS,
+			BindMS:          tm.BindMS,
+			RunMS:           tm.RunMS,
+			TotalMS:         tm.TotalMS,
+			CacheHits:       a.CacheHits,
+			CacheMisses:     a.CacheMisses,
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "jobs": rows})
@@ -796,8 +817,9 @@ func (s *Server) handleJobDetail(w http.ResponseWriter, r *http.Request, _ *uiPr
 	if logs == nil {
 		logs = &store.JobLog{JobID: id, Events: []store.JobEvent{}}
 	}
+	tm := timingsFromAssignment(a, time.Now().UTC())
 	writeJSON(w, http.StatusOK, map[string]any{
-		"ok":   true,
+		"ok": true,
 		"job": map[string]any{
 			"job_id":            a.JobID,
 			"run_id":            a.RunID,
@@ -816,6 +838,14 @@ func (s *Server) handleJobDetail(w http.ResponseWriter, r *http.Request, _ *uiPr
 			"finished_at":       a.FinishedAt,
 			"runner_name":       a.RunnerName,
 			"runner_id":         a.RunnerID,
+			"queue_ms":          tm.QueueMS,
+			"bind_ms":           tm.BindMS,
+			"run_ms":            tm.RunMS,
+			"total_ms":          tm.TotalMS,
+			"cache_hits":        a.CacheHits,
+			"cache_misses":      a.CacheMisses,
+			"cache_bytes_in":    a.CacheBytesIn,
+			"cache_bytes_out":   a.CacheBytesOut,
 		},
 		"logs": logs,
 	})

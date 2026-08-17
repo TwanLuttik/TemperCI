@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { api, type Job } from "../api";
+import { api, formatDuration, type Job } from "../api";
 import { useRealtime } from "../hooks/useRealtime";
 
 function statusBadge(status?: string) {
@@ -46,6 +46,7 @@ export function JobsPage() {
               <th>Repository</th>
               <th>Status</th>
               <th>Agent</th>
+              <th>Duration</th>
               <th>Labels</th>
               <th>Outcome</th>
             </tr>
@@ -53,7 +54,7 @@ export function JobsPage() {
           <tbody>
             {jobs.length === 0 ? (
               <tr>
-                <td colSpan={6}>
+                <td colSpan={7}>
                   <div className="empty">
                     <strong>No jobs in memory</strong>
                     Dispatch a workflow with runs-on: temperci-…
@@ -73,6 +74,9 @@ export function JobsPage() {
                     <span className={`badge ${statusBadge(j.status)}`}>{j.status}</span>
                   </td>
                   <td className="mono">{j.assigned_agent_id || "—"}</td>
+                  <td className="mono" title={`queue ${formatDuration(j.queue_ms)} · bind ${formatDuration(j.bind_ms)}`}>
+                    {formatDuration(j.run_ms || j.total_ms)}
+                  </td>
                   <td
                     style={{
                       color: "var(--muted)",

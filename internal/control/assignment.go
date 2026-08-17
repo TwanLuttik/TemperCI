@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -41,6 +42,10 @@ type Assignment struct {
 	WarmBind         bool
 	Outcome          string
 	Error            string
+	CacheHits        int
+	CacheMisses      int
+	CacheBytesIn     int64
+	CacheBytesOut    int64
 }
 
 // AssignmentPersister is optional durability for AssignmentStore mutations.
@@ -140,30 +145,96 @@ func (s *AssignmentStore) PendingLen() int {
 	return len(s.pending)
 }
 
-// ClaimNext assigns the oldest minted job to agentID.
-// Returns a copy of the assignment, or nil when the queue is empty.
-func (s *AssignmentStore) ClaimNext(agentID string) *Assignment {
+// ClaimNext assigns a minted job to agentID.
+// If cachedRepos is non-empty, the oldest pending job whose RepoFullName is in
+// that list is preferred; otherwise FIFO. Returns nil when the queue is empty.
+func (s *AssignmentStore) ClaimNext(agentID string, cachedRepos []string) *Assignment {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if agentID == "" {
 		return nil
 	}
-	for len(s.pending) > 0 {
-		jobID := s.pending[0]
-		s.pending = s.pending[1:]
-		a, ok := s.byID[jobID]
-		if !ok || a.Status != AssignmentMinted {
-			continue
-		}
-		now := time.Now().UTC()
-		a.Status = AssignmentAssigned
-		a.AssignedAgentID = agentID
-		a.AssignedAt = now
-		cp := *a
-		_ = s.persistLocked(a)
-		return &cp
+	idx := s.pickPendingLocked(cachedRepos)
+	if idx < 0 {
+		return nil
 	}
-	return nil
+	jobID := s.pending[idx]
+	s.pending = append(s.pending[:idx], s.pending[idx+1:]...)
+	a, ok := s.byID[jobID]
+	if !ok || a.Status != AssignmentMinted {
+		return s.claimNextUnlocked(agentID, cachedRepos)
+	}
+	now := time.Now().UTC()
+	a.Status = AssignmentAssigned
+	a.AssignedAgentID = agentID
+	a.AssignedAt = now
+	cp := *a
+	_ = s.persistLocked(a)
+	return &cp
+}
+
+func (s *AssignmentStore) claimNextUnlocked(agentID string, cachedRepos []string) *Assignment {
+	// pending already mutated; recurse without taking the lock again.
+	idx := s.pickPendingLocked(cachedRepos)
+	if idx < 0 {
+		return nil
+	}
+	jobID := s.pending[idx]
+	s.pending = append(s.pending[:idx], s.pending[idx+1:]...)
+	a, ok := s.byID[jobID]
+	if !ok || a.Status != AssignmentMinted {
+		return s.claimNextUnlocked(agentID, cachedRepos)
+	}
+	now := time.Now().UTC()
+	a.Status = AssignmentAssigned
+	a.AssignedAgentID = agentID
+	a.AssignedAt = now
+	cp := *a
+	_ = s.persistLocked(a)
+	return &cp
+}
+
+func (s *AssignmentStore) pickPendingLocked(cachedRepos []string) int {
+	want := map[string]struct{}{}
+	for _, r := range cachedRepos {
+		r = strings.ToLower(strings.TrimSpace(r))
+		if r != "" {
+			want[r] = struct{}{}
+		}
+	}
+	if len(want) > 0 {
+		for i, jobID := range s.pending {
+			a, ok := s.byID[jobID]
+			if !ok || a.Status != AssignmentMinted {
+				continue
+			}
+			if _, hit := want[strings.ToLower(a.RepoFullName)]; hit {
+				return i
+			}
+		}
+	}
+	for i, jobID := range s.pending {
+		a, ok := s.byID[jobID]
+		if ok && a.Status == AssignmentMinted {
+			return i
+		}
+	}
+	return -1
+}
+
+// SetCacheStats records host-local actions/cache counters on a job.
+func (s *AssignmentStore) SetCacheStats(jobID int64, hits, misses int, bytesIn, bytesOut int64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	a, ok := s.byID[jobID]
+	if !ok {
+		return fmt.Errorf("control: unknown job %d", jobID)
+	}
+	a.CacheHits = hits
+	a.CacheMisses = misses
+	a.CacheBytesIn = bytesIn
+	a.CacheBytesOut = bytesOut
+	return s.persistLocked(a)
 }
 
 // MarkStarted transitions assigned → started for the agent that owns the job.

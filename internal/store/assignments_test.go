@@ -139,6 +139,31 @@ func TestAssignmentDeleteAndPrune(t *testing.T) {
 	}
 }
 
+func TestAssignmentCacheStatsRoundTrip(t *testing.T) {
+	s := openTestStore(t)
+	row := store.AssignmentRow{
+		JobID:         8,
+		Org:           "acme",
+		RepoFullName:  "acme/app",
+		Status:        "finished",
+		CreatedAt:     time.Now().UTC(),
+		CacheHits:     2,
+		CacheMisses:   1,
+		CacheBytesIn:  100,
+		CacheBytesOut: 200,
+	}
+	if err := s.UpsertAssignment(row); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.GetAssignment(8)
+	if err != nil || got == nil {
+		t.Fatalf("get = %+v err=%v", got, err)
+	}
+	if got.CacheHits != 2 || got.CacheMisses != 1 || got.CacheBytesIn != 100 || got.CacheBytesOut != 200 {
+		t.Fatalf("cache stats = %+v", *got)
+	}
+}
+
 func TestGetAssignmentMissing(t *testing.T) {
 	s := openTestStore(t)
 	got, err := s.GetAssignment(999)

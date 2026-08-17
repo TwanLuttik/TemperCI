@@ -34,3 +34,6 @@ idle_recycle_seconds = 3600
 vmm_backend = "firecracker"
 
 reconcile_interval_seconds = 1
+
+# Host-local GitHub Actions cache. Empty disables. Guest must trust TemperCI CA.
+cache_listen_addr = "127.0.0.1:8743"

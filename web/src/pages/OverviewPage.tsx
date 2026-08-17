@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { api, type Overview } from "../api";
+import { api, formatDuration, type Overview } from "../api";
 import { useRealtime } from "../hooks/useRealtime";
 
 type Props = { onOverview: (o: Overview) => void };
@@ -74,6 +74,25 @@ export function OverviewPage({ onOverview }: Props) {
           <div className="label">Finished</div>
           <div className="value">{o.jobs_finished}</div>
           <div className="hint">completed in memory</div>
+        </div>
+        <div className="stat">
+          <div className="label">Run p50</div>
+          <div className="value">{formatDuration(o.run_p50_ms)}</div>
+          <div className="hint">last 100 finished</div>
+        </div>
+        <div className="stat">
+          <div className="label">Run p95</div>
+          <div className="value">{formatDuration(o.run_p95_ms)}</div>
+          <div className="hint">last 100 finished</div>
+        </div>
+        <div className="stat">
+          <div className="label">Cache</div>
+          <div className="value">
+            {(o.cache_hits ?? 0) + (o.cache_misses ?? 0) === 0
+              ? "—"
+              : `${o.cache_hits ?? 0}/${(o.cache_hits ?? 0) + (o.cache_misses ?? 0)}`}
+          </div>
+          <div className="hint">hits / lookups</div>
         </div>
       </div>
       <div className="split">

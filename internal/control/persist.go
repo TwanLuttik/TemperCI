@@ -76,6 +76,10 @@ func assignmentToRow(a *Assignment) store.AssignmentRow {
 		WarmBind:         a.WarmBind,
 		Outcome:          a.Outcome,
 		Error:            a.Error,
+		CacheHits:        a.CacheHits,
+		CacheMisses:      a.CacheMisses,
+		CacheBytesIn:     a.CacheBytesIn,
+		CacheBytesOut:    a.CacheBytesOut,
 	}
 }
 
@@ -104,5 +108,9 @@ func rowToAssignment(r *store.AssignmentRow) *Assignment {
 		WarmBind:         r.WarmBind,
 		Outcome:          r.Outcome,
 		Error:            r.Error,
+		CacheHits:        r.CacheHits,
+		CacheMisses:      r.CacheMisses,
+		CacheBytesIn:     r.CacheBytesIn,
+		CacheBytesOut:    r.CacheBytesOut,
 	}
 }

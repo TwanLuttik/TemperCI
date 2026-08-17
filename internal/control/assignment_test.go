@@ -13,7 +13,7 @@ func TestAssignmentStore_ClaimNextFIFO(t *testing.T) {
 		t.Fatalf("pending=%d", s.PendingLen())
 	}
 
-	a1 := s.ClaimNext("agent-a")
+	a1 := s.ClaimNext("agent-a", nil)
 	if a1 == nil || a1.JobID != 1 {
 		t.Fatalf("first claim = %+v", a1)
 	}
@@ -24,11 +24,11 @@ func TestAssignmentStore_ClaimNextFIFO(t *testing.T) {
 		t.Fatal("jit missing on claim")
 	}
 
-	a2 := s.ClaimNext("agent-a")
+	a2 := s.ClaimNext("agent-a", nil)
 	if a2 == nil || a2.JobID != 2 {
 		t.Fatalf("second claim = %+v", a2)
 	}
-	if s.ClaimNext("agent-a") != nil {
+	if s.ClaimNext("agent-a", nil) != nil {
 		t.Fatal("expected empty queue")
 	}
 	if s.PendingLen() != 0 {
@@ -39,7 +39,7 @@ func TestAssignmentStore_ClaimNextFIFO(t *testing.T) {
 func TestAssignmentStore_Lifecycle(t *testing.T) {
 	s := NewAssignmentStore()
 	s.Put(&Assignment{JobID: 10, Status: AssignmentMinted, EncodedJITConfig: "secret"})
-	claimed := s.ClaimNext("host-1")
+	claimed := s.ClaimNext("host-1", nil)
 	if claimed == nil {
 		t.Fatal("expected claim")
 	}
@@ -65,7 +65,7 @@ func TestAssignmentStore_Lifecycle(t *testing.T) {
 func TestAssignmentStore_WrongAgentRejected(t *testing.T) {
 	s := NewAssignmentStore()
 	s.Put(&Assignment{JobID: 5, Status: AssignmentMinted})
-	_ = s.ClaimNext("agent-a")
+	_ = s.ClaimNext("agent-a", nil)
 	if err := s.MarkStarted(5, "agent-b", "vm-1", false); err == nil {
 		t.Fatal("expected wrong-agent error")
 	}
@@ -74,7 +74,22 @@ func TestAssignmentStore_WrongAgentRejected(t *testing.T) {
 func TestAssignmentStore_FailedNotClaimable(t *testing.T) {
 	s := NewAssignmentStore()
 	s.Put(&Assignment{JobID: 9, Status: AssignmentFailed, Error: "mint"})
-	if s.ClaimNext("a") != nil {
+	if s.ClaimNext("a", nil) != nil {
 		t.Fatal("failed job should not be claimed")
+	}
+}
+
+func TestAssignmentStore_ClaimNextPrefersCachedRepo(t *testing.T) {
+	s := NewAssignmentStore()
+	s.Put(&Assignment{JobID: 1, Status: AssignmentMinted, RepoFullName: "acme/old", EncodedJITConfig: "a"})
+	s.Put(&Assignment{JobID: 2, Status: AssignmentMinted, RepoFullName: "acme/hot", EncodedJITConfig: "b"})
+
+	got := s.ClaimNext("host-1", []string{"acme/hot"})
+	if got == nil || got.JobID != 2 {
+		t.Fatalf("sticky claim = %+v want job 2", got)
+	}
+	got = s.ClaimNext("host-1", []string{"acme/hot"})
+	if got == nil || got.JobID != 1 {
+		t.Fatalf("fallback claim = %+v want job 1", got)
 	}
 }

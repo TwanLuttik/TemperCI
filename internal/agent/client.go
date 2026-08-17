@@ -84,6 +84,7 @@ type CapacitySnapshot struct {
 	Warm        int
 	Busy        int
 	VMs         []api.VMUsage
+	CachedRepos []string
 }
 
 // Register announces this agent to the control plane with capacity.
@@ -95,6 +96,7 @@ func (c *ControlClient) Register(ctx context.Context, cap CapacitySnapshot) erro
 		Warm:        cap.Warm,
 		Busy:        cap.Busy,
 		VMs:         cap.VMs,
+		CachedRepos: cap.CachedRepos,
 	}
 	var resp api.RegisterResponse
 	if err := c.post(ctx, "/v1/agent/register", req, &resp); err != nil {
@@ -109,10 +111,11 @@ func (c *ControlClient) Register(ctx context.Context, cap CapacitySnapshot) erro
 // Claim requests the next pending job when free slots remain. Returns nil,nil when no work.
 func (c *ControlClient) Claim(ctx context.Context, cap CapacitySnapshot) (*api.JobAssignment, error) {
 	req := api.ClaimRequest{
-		AgentID:   c.AgentID,
-		FreeSlots: cap.FreeSlots,
-		Warm:      cap.Warm,
-		Busy:      cap.Busy,
+		AgentID:     c.AgentID,
+		FreeSlots:   cap.FreeSlots,
+		Warm:        cap.Warm,
+		Busy:        cap.Busy,
+		CachedRepos: cap.CachedRepos,
 	}
 	var resp api.ClaimResponse
 	if err := c.post(ctx, "/v1/agent/jobs/claim", req, &resp); err != nil {
@@ -144,15 +147,19 @@ func (c *ControlClient) ReportFinished(ctx context.Context, jobID int64, outcome
 // ReportFinishedLogs is ReportFinished plus guest diagnostic logs.
 func (c *ControlClient) ReportFinishedLogs(ctx context.Context, jobID int64, outcome, vmID string, warmBind bool, errMsg string, logs JobLogs) error {
 	req := api.JobFinishedRequest{
-		AgentID:    c.AgentID,
-		JobID:      jobID,
-		Outcome:    outcome,
-		VMID:       vmID,
-		WarmBind:   warmBind,
-		Error:      errMsg,
-		RunnerLog:  logs.RunnerLog,
-		AgentLog:   logs.AgentLog,
-		ConsoleLog: logs.ConsoleLog,
+		AgentID:       c.AgentID,
+		JobID:         jobID,
+		Outcome:       outcome,
+		VMID:          vmID,
+		WarmBind:      warmBind,
+		Error:         errMsg,
+		RunnerLog:     logs.RunnerLog,
+		AgentLog:      logs.AgentLog,
+		ConsoleLog:    logs.ConsoleLog,
+		CacheHits:     logs.CacheHits,
+		CacheMisses:   logs.CacheMisses,
+		CacheBytesIn:  logs.CacheBytesIn,
+		CacheBytesOut: logs.CacheBytesOut,
 	}
 	var resp api.JobFinishedResponse
 	return c.post(ctx, "/v1/agent/jobs/finished", req, &resp)

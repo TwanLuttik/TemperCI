@@ -25,6 +25,11 @@ func (l Layout) ImagesDir() string {
 	return filepath.Join(l.Root, "images")
 }
 
+// CacheDir is host-local Actions cache storage (not deleted per job).
+func (l Layout) CacheDir() string {
+	return filepath.Join(l.Root, "cache")
+}
+
 // InstancesDir is the parent of all per-VM instance directories.
 func (l Layout) InstancesDir() string {
 	return filepath.Join(l.Root, "instances")

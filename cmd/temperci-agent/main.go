@@ -18,6 +18,7 @@ import (
 	"github.com/TwanLuttik/TemperCI/internal/agent"
 	"github.com/TwanLuttik/TemperCI/internal/cleanup"
 	"github.com/TwanLuttik/TemperCI/internal/config"
+	"github.com/TwanLuttik/TemperCI/internal/ghacache"
 	"github.com/TwanLuttik/TemperCI/internal/logging"
 	"github.com/TwanLuttik/TemperCI/internal/vmm"
 	"github.com/TwanLuttik/TemperCI/internal/vmm/fake"
@@ -61,7 +62,11 @@ func main() {
 		os.Exit(1)
 	}
 
-	mgr, err := newVMM(cfg, layout)
+	cachePort := 0
+	if cfg.CacheListenAddr != "" {
+		cachePort = ghacache.ListenPort(cfg.CacheListenAddr)
+	}
+	mgr, err := newVMM(cfg, layout, cachePort)
 	if err != nil {
 		log.Error("init vmm", "err", err, "backend", cfg.VMMBackend)
 		os.Exit(1)
@@ -155,6 +160,21 @@ func main() {
 			"job_deadline", deadline.String(),
 			"vmm_backend", cfg.VMMBackend,
 		)
+		var cacheGW *ghacache.Gateway
+		if cfg.CacheListenAddr != "" {
+			st, err := ghacache.Open(layout.CacheDir(), cfg.CacheMaxBytes)
+			if err != nil {
+				log.Error("open cache store", "err", err)
+				os.Exit(1)
+			}
+			cacheGW = ghacache.NewGateway(st)
+			go func() {
+				log.Info("actions cache gateway listening", "addr", cfg.CacheListenAddr, "dir", layout.CacheDir())
+				if err := cacheGW.ListenAndServe(cfg.CacheListenAddr); err != nil && err != http.ErrServerClosed {
+					log.Error("cache gateway failed", "err", err)
+				}
+			}()
+		}
 		worker := &agent.Worker{
 			Client:         client,
 			Pool:           pool,
@@ -164,6 +184,7 @@ func main() {
 			JobDeadline:    deadline,
 			Capacity:       cfg.MaxReady,
 			WaitRealRunner: waitReal,
+			Cache:          cacheGW,
 		}
 		workerDone = make(chan struct{})
 		go func() {
@@ -218,13 +239,14 @@ func main() {
 	}
 }
 
-func newVMM(cfg *config.AgentConfig, layout vmm.Layout) (vmm.Manager, error) {
+func newVMM(cfg *config.AgentConfig, layout vmm.Layout, cachePort int) (vmm.Manager, error) {
 	switch cfg.VMMBackend {
 	case "fake":
 		return fake.New(layout)
 	case "firecracker":
 		return firecracker.New(firecracker.Config{
-			Layout: layout,
+			Layout:            layout,
+			CacheRedirectPort: cachePort,
 		})
 	default:
 		return nil, fmt.Errorf("unknown vmm_backend %q", cfg.VMMBackend)

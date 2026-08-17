@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { api, type JobDetail } from "../api";
+import { api, formatDuration, type JobDetail } from "../api";
 
 function statusBadge(status?: string) {
   const s = String(status || "").toLowerCase();
@@ -97,6 +97,39 @@ export function JobDetailPage() {
           <div className="hint mono">
             {j.assigned_agent_id || "—"}
             {j.vm_id ? ` / ${j.vm_id}` : ""}
+          </div>
+        </div>
+        <div className="stat">
+          <div className="label">Queue</div>
+          <div className="value">{formatDuration(j.queue_ms)}</div>
+          <div className="hint">created → assigned</div>
+        </div>
+        <div className="stat">
+          <div className="label">Bind</div>
+          <div className="value">{formatDuration(j.bind_ms)}</div>
+          <div className="hint">assigned → started</div>
+        </div>
+        <div className="stat">
+          <div className="label">Run</div>
+          <div className="value">{formatDuration(j.run_ms)}</div>
+          <div className="hint">started → finished</div>
+        </div>
+        <div className="stat">
+          <div className="label">Total</div>
+          <div className="value">{formatDuration(j.total_ms)}</div>
+          <div className="hint">created → finished</div>
+        </div>
+        <div className="stat">
+          <div className="label">Cache</div>
+          <div className="value">
+            {(j.cache_hits ?? 0) + (j.cache_misses ?? 0) === 0
+              ? "—"
+              : `${j.cache_hits ?? 0} hit / ${j.cache_misses ?? 0} miss`}
+          </div>
+          <div className="hint">
+            {j.cache_bytes_in || j.cache_bytes_out
+              ? `${Math.round(((j.cache_bytes_in ?? 0) + (j.cache_bytes_out ?? 0)) / 1024)} KiB`
+              : "local actions/cache"}
           </div>
         </div>
         <div className="stat">

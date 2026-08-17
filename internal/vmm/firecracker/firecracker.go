@@ -22,6 +22,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/TwanLuttik/TemperCI/internal/ghacache"
 	"github.com/TwanLuttik/TemperCI/internal/vmm"
 )
 
@@ -43,8 +44,11 @@ type Config struct {
 	// RunCmd, if set, replaces the default process starter (tests).
 	RunCmd func(ctx context.Context, name string, args ...string) (pid int, wait func() error, err error)
 	// Network hooks (optional). Defaults are no-ops that only write markers.
-	SetupNetwork   func(id vmm.ID, netDir string) (vmm.NetworkState, error)
+	SetupNetwork    func(id vmm.ID, netDir string) (vmm.NetworkState, error)
 	TeardownNetwork func(id vmm.ID, net vmm.NetworkState) error
+	// CacheRedirectPort, when > 0, REDIRECTs guest :443 on the tap to this host port
+	// so the Actions cache gateway can intercept results/blob TLS.
+	CacheRedirectPort int
 }
 
 // Manager drives Firecracker instances under a host layout root.
@@ -84,6 +88,22 @@ func New(cfg Config) (*Manager, error) {
 	}
 	if cfg.SetupNetwork == nil {
 		cfg.SetupNetwork = realSetupNetwork
+	}
+	if cfg.CacheRedirectPort > 0 {
+		inner := cfg.SetupNetwork
+		port := cfg.CacheRedirectPort
+		cfg.SetupNetwork = func(id vmm.ID, netDir string) (vmm.NetworkState, error) {
+			st, err := inner(id, netDir)
+			if err != nil {
+				return st, err
+			}
+			if st.TapDevice != "" {
+				if rerr := ghacache.RedirectGuestHTTPS(st.TapDevice, port); rerr != nil {
+					_ = os.WriteFile(filepath.Join(netDir, "cache.redirect.err"), []byte(rerr.Error()), 0o600)
+				}
+			}
+			return st, nil
+		}
 	}
 	if cfg.TeardownNetwork == nil {
 		cfg.TeardownNetwork = realTeardownNetwork

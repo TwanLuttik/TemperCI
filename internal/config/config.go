@@ -205,6 +205,11 @@ type AgentConfig struct {
 	// Prefer 127.0.0.1 for admin endpoints.
 	MetricsListenAddr string `toml:"metrics_listen_addr"`
 
+	// CacheMaxBytes is the LRU cap for host-local Actions cache (default 50 GiB).
+	CacheMaxBytes int64 `toml:"cache_max_bytes"`
+	// CacheListenAddr binds the Actions cache gateway (empty = disabled).
+	CacheListenAddr string `toml:"cache_listen_addr"`
+
 	// Optional TLS when control_url is https://
 	TLSCAFile             string `toml:"tls_ca_file"`
 	TLSCertFile           string `toml:"tls_cert_file"`
@@ -295,6 +300,13 @@ func (c *AgentConfig) Validate() error {
 		return fmt.Errorf("config: max_total_vms (%d) must be >= max_ready (%d)", c.MaxTotalVMs, c.MaxReady)
 	}
 	c.MetricsListenAddr = strings.TrimSpace(c.MetricsListenAddr)
+	c.CacheListenAddr = strings.TrimSpace(c.CacheListenAddr)
+	if c.CacheMaxBytes < 0 {
+		return fmt.Errorf("config: cache_max_bytes must be >= 0")
+	}
+	if c.CacheMaxBytes == 0 {
+		c.CacheMaxBytes = 50 << 30
+	}
 	c.TLSCAFile = strings.TrimSpace(c.TLSCAFile)
 	c.TLSCertFile = strings.TrimSpace(c.TLSCertFile)
 	c.TLSKeyFile = strings.TrimSpace(c.TLSKeyFile)

@@ -157,3 +157,16 @@ Re-install into an existing rootfs with the same command after loop-mounting it.
 - `deploy/ubuntu/guest-agent/temperci-runner-agent.service`
 
 End-to-end operator steps: [quickstart.md](quickstart.md).
+
+## Local Actions cache CA
+
+The host cache gateway intercepts guest HTTPS to GitHub results / Azure blob hosts.
+The guest must trust a TemperCI CA (or cache steps fail closed — they do not fall through to GitHub).
+
+After mounting the rootfs:
+
+```bash
+sudo ./deploy/ubuntu/install-cache-ca.sh /mnt
+```
+
+Set `cache_listen_addr = "127.0.0.1:8743"` on the agent. Drain warm VMs after rebuilding the image.

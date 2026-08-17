@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/TwanLuttik/TemperCI/internal/api"
+	"github.com/TwanLuttik/TemperCI/internal/ghacache"
 	"github.com/TwanLuttik/TemperCI/internal/vmm"
 )
 
@@ -31,6 +32,8 @@ type Worker struct {
 	// WaitRealRunner when true (default for firecracker) waits on GuestExec.WaitRunner.
 	// Set false only for unit tests that do not implement WaitRunner beyond stubs.
 	WaitRealRunner bool
+	// Cache is the optional host-local Actions cache gateway.
+	Cache *ghacache.Gateway
 
 	// inflight counts claimed jobs whose handleJob goroutine has not returned.
 	// Used so FreeSlots drops immediately on claim, before Pool.Busy updates.
@@ -154,12 +157,17 @@ func (w *Worker) snapshot() CapacitySnapshot {
 	if free < 0 {
 		free = 0
 	}
+	var repos []string
+	if w.Cache != nil && w.Cache.Store != nil {
+		repos = w.Cache.Store.Repos()
+	}
 	return CapacitySnapshot{
 		MaxCapacity: w.Capacity,
 		FreeSlots:   free,
 		Warm:        c.Warm,
 		Busy:        c.Busy,
 		VMs:         w.Pool.ListUsage(),
+		CachedRepos: repos,
 	}
 }
 
@@ -182,8 +190,16 @@ func (w *Worker) handleJob(ctx context.Context, job *api.JobAssignment) error {
 	job.EncodedJITConfig = ""
 
 	if err != nil {
-		_ = w.finish(ctx, job.JobID, "error", "", false, err.Error(), JobLogs{})
+		_ = w.finish(ctx, job.JobID, job.RepoFullName, "error", "", false, err.Error(), JobLogs{})
 		return err
+	}
+	if w.Cache != nil && job.RepoFullName != "" {
+		guestIP := w.Pool.GuestIP(res.VMID)
+		if guestIP == "" {
+			guestIP = "127.0.0.1"
+		}
+		w.Cache.BindRemote(guestIP, job.RepoFullName)
+		defer w.Cache.UnbindRemote(guestIP)
 	}
 
 	if err := w.Client.ReportStarted(ctx, job.JobID, string(res.VMID), res.WarmStart); err != nil {
@@ -200,7 +216,7 @@ func (w *Worker) handleJob(ctx context.Context, job *api.JobAssignment) error {
 	logs := w.collectLogs(res.VMID)
 	if waitErr != nil && !errors.Is(waitErr, context.DeadlineExceeded) {
 		_ = w.Pool.JobFinished(context.Background(), res.VMID, "cancelled")
-		_ = w.finish(context.Background(), job.JobID, "cancelled", string(res.VMID), res.WarmStart, waitErr.Error(), logs)
+		_ = w.finish(context.Background(), job.JobID, job.RepoFullName, "cancelled", string(res.VMID), res.WarmStart, waitErr.Error(), logs)
 		return waitErr
 	}
 	if outcome == "timeout" {
@@ -210,10 +226,10 @@ func (w *Worker) handleJob(ctx context.Context, job *api.JobAssignment) error {
 			"deadline", w.JobDeadline.String(),
 		)
 		if err := w.Pool.JobFinished(ctx, res.VMID, "timeout"); err != nil {
-			_ = w.finish(ctx, job.JobID, "timeout", string(res.VMID), res.WarmStart, err.Error(), logs)
+			_ = w.finish(ctx, job.JobID, job.RepoFullName, "timeout", string(res.VMID), res.WarmStart, err.Error(), logs)
 			return err
 		}
-		if err := w.finish(ctx, job.JobID, "timeout", string(res.VMID), res.WarmStart, "job deadline exceeded", logs); err != nil {
+		if err := w.finish(ctx, job.JobID, job.RepoFullName, "timeout", string(res.VMID), res.WarmStart, "job deadline exceeded", logs); err != nil {
 			return err
 		}
 		return nil
@@ -221,10 +237,10 @@ func (w *Worker) handleJob(ctx context.Context, job *api.JobAssignment) error {
 
 	// outcome success | failure from runner exit code
 	if err := w.Pool.JobFinished(ctx, res.VMID, outcome); err != nil {
-		_ = w.finish(ctx, job.JobID, "error", string(res.VMID), res.WarmStart, err.Error(), logs)
+		_ = w.finish(ctx, job.JobID, job.RepoFullName, "error", string(res.VMID), res.WarmStart, err.Error(), logs)
 		return err
 	}
-	if err := w.finish(ctx, job.JobID, outcome, string(res.VMID), res.WarmStart, "", logs); err != nil {
+	if err := w.finish(ctx, job.JobID, job.RepoFullName, outcome, string(res.VMID), res.WarmStart, "", logs); err != nil {
 		return err
 	}
 	log.Info("job complete",
@@ -244,9 +260,16 @@ func (w *Worker) collectLogs(vmID vmm.ID) JobLogs {
 	return CollectJobLogs(w.Pool.HostLayout(), vmID)
 }
 
-func (w *Worker) finish(ctx context.Context, jobID int64, outcome, vmID string, warmBind bool, errMsg string, logs JobLogs) error {
+func (w *Worker) finish(ctx context.Context, jobID int64, repo, outcome, vmID string, warmBind bool, errMsg string, logs JobLogs) error {
 	if w.Client == nil {
 		return nil
+	}
+	if w.Cache != nil && repo != "" {
+		st := w.Cache.TakeStats(repo)
+		logs.CacheHits = st.Hits
+		logs.CacheMisses = st.Misses
+		logs.CacheBytesIn = st.BytesIn
+		logs.CacheBytesOut = st.BytesOut
 	}
 	return w.Client.ReportFinishedLogs(ctx, jobID, outcome, vmID, warmBind, errMsg, logs)
 }

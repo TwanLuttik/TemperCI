@@ -66,7 +66,7 @@ func TestAssignmentStore_RestartReloadsMintedJIT(t *testing.T) {
 		t.Fatalf("labels = %v", got.Labels)
 	}
 
-	claimed := s2.ClaimNext("agent-1")
+	claimed := s2.ClaimNext("agent-1", nil)
 	if claimed == nil || claimed.JobID != 100 {
 		t.Fatalf("claim after restart = job=%v", jobIDOf(claimed))
 	}
@@ -77,7 +77,7 @@ func TestAssignmentStore_RestartReloadsMintedJIT(t *testing.T) {
 		t.Fatalf("claim state job=%d status=%s agent=%s", claimed.JobID, claimed.Status, claimed.AssignedAgentID)
 	}
 
-	second := s2.ClaimNext("agent-1")
+	second := s2.ClaimNext("agent-1", nil)
 	if second == nil || second.JobID != 101 || second.EncodedJITConfig != "secret-jit-later" {
 		t.Fatalf("second claim job=%v", jobIDOf(second))
 	}
@@ -101,7 +101,7 @@ func TestAssignmentStore_MarkFinishedClearsJITInDB(t *testing.T) {
 		EncodedJITConfig: "secret-jit-token",
 		Status:           AssignmentMinted,
 	})
-	if s.ClaimNext("host-1") == nil {
+	if s.ClaimNext("host-1", nil) == nil {
 		t.Fatal("expected claim")
 	}
 	row, err := db.GetAssignment(200)
@@ -190,7 +190,7 @@ func TestAssignmentStore_NilPersister(t *testing.T) {
 		t.Fatal(err)
 	}
 	s.Put(&Assignment{JobID: 1, Status: AssignmentMinted, EncodedJITConfig: "jit"})
-	if s.ClaimNext("a") == nil {
+	if s.ClaimNext("a", nil) == nil {
 		t.Fatal("nil persister should still claim from memory")
 	}
 }

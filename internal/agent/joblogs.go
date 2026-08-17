@@ -12,9 +12,13 @@ const maxUploadedLogBytes = 128 * 1024
 
 // JobLogs is guest diagnostic text uploaded to the control plane (no secrets).
 type JobLogs struct {
-	RunnerLog  string
-	AgentLog   string
-	ConsoleLog string
+	RunnerLog     string
+	AgentLog      string
+	ConsoleLog    string
+	CacheHits     int
+	CacheMisses   int
+	CacheBytesIn  int64
+	CacheBytesOut int64
 }
 
 // CollectJobLogs reads archived + still-on-disk guest logs for a VM.

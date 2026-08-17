@@ -69,6 +69,10 @@ export type Overview = {
   jobs_finished: number;
   jobs_failed: number;
   hostctl_configured: boolean;
+  run_p50_ms?: number;
+  run_p95_ms?: number;
+  cache_hits?: number;
+  cache_misses?: number;
 };
 
 export type Host = {
@@ -106,7 +110,28 @@ export type Job = {
   finished_at?: string;
   runner_name?: string;
   runner_id?: number;
+  queue_ms?: number;
+  bind_ms?: number;
+  run_ms?: number;
+  total_ms?: number;
+  cache_hits?: number;
+  cache_misses?: number;
+  cache_bytes_in?: number;
+  cache_bytes_out?: number;
 };
+
+export function formatDuration(ms?: number): string {
+  if (ms == null || ms < 0) return "—";
+  if (ms < 1000) return `${Math.round(ms)}ms`;
+  const sec = ms / 1000;
+  if (sec < 60) return `${sec < 10 ? sec.toFixed(1) : Math.round(sec)}s`;
+  const m = Math.floor(sec / 60);
+  const s = Math.round(sec % 60);
+  if (m < 60) return s ? `${m}m ${s}s` : `${m}m`;
+  const h = Math.floor(m / 60);
+  const rm = m % 60;
+  return rm ? `${h}h ${rm}m` : `${h}h`;
+}
 
 export type JobEvent = {
   time: string;

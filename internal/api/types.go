@@ -60,6 +60,8 @@ type RegisterRequest struct {
 	Labels []string `json:"labels,omitempty"`
 	// VMs is optional per-microVM usage for the dashboard (realtime).
 	VMs []VMUsage `json:"vms,omitempty"`
+	// CachedRepos is org/repo namespaces present in this agent's local cache.
+	CachedRepos []string `json:"cached_repos,omitempty"`
 }
 
 // RegisterResponse acknowledges registration.
@@ -78,6 +80,8 @@ type ClaimRequest struct {
 	// Warm/Busy optional snapshot updated on claim (heartbeat).
 	Warm int `json:"warm,omitempty"`
 	Busy int `json:"busy,omitempty"`
+	// CachedRepos is org/repo namespaces this agent already has on disk (sticky claim).
+	CachedRepos []string `json:"cached_repos,omitempty"`
 }
 
 // JobAssignment is a claimed job payload delivered to an agent.
@@ -130,6 +134,11 @@ type JobFinishedRequest struct {
 	RunnerLog  string `json:"runner_log,omitempty"`
 	AgentLog   string `json:"agent_log,omitempty"`
 	ConsoleLog string `json:"console_log,omitempty"`
+	// Host-local actions/cache counters for this job (optional).
+	CacheHits     int   `json:"cache_hits,omitempty"`
+	CacheMisses   int   `json:"cache_misses,omitempty"`
+	CacheBytesIn  int64 `json:"cache_bytes_in,omitempty"`
+	CacheBytesOut int64 `json:"cache_bytes_out,omitempty"`
 }
 
 // JobLogsRequest is an incremental log upload while a job is still running.
