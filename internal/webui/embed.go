@@ -31,6 +31,7 @@ func SPAHandler() http.Handler {
 	fileServer := http.FileServer(http.FS(sub))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Never take over API/agent/webhook/metrics routes (registered more specifically on the mux).
+		// Leave API/agent/webhook routes to more specific mux handlers (incl. WebSocket).
 		if strings.HasPrefix(r.URL.Path, "/api/") ||
 			strings.HasPrefix(r.URL.Path, "/v1/") ||
 			strings.HasPrefix(r.URL.Path, "/webhooks/") ||

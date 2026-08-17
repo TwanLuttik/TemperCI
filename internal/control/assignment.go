@@ -2,6 +2,8 @@ package control
 
 import (
 	"fmt"
+	"log/slog"
+	"sort"
 	"sync"
 	"time"
 )
@@ -41,12 +43,20 @@ type Assignment struct {
 	Error            string
 }
 
+// AssignmentPersister is optional durability for AssignmentStore mutations.
+// A nil persister keeps the store memory-only.
+type AssignmentPersister interface {
+	Persist(a *Assignment) error
+	LoadAll() ([]*Assignment, error)
+}
+
 // AssignmentStore is a concurrency-safe in-memory store (multi-host MVP).
 type AssignmentStore struct {
 	mu   sync.RWMutex
 	byID map[int64]*Assignment
 	// pending is FIFO job ids with status minted (claim order).
-	pending []int64
+	pending   []int64
+	persister AssignmentPersister
 }
 
 // StatusCounts is a snapshot of assignment statuses for metrics.
@@ -59,9 +69,30 @@ type StatusCounts struct {
 	Total    int
 }
 
-// NewAssignmentStore creates an empty store.
+// NewAssignmentStore creates an empty in-memory store (no persistence).
 func NewAssignmentStore() *AssignmentStore {
 	return &AssignmentStore{byID: make(map[int64]*Assignment)}
+}
+
+// NewAssignmentStoreWithPersister creates a store and loads existing rows.
+func NewAssignmentStoreWithPersister(p AssignmentPersister) (*AssignmentStore, error) {
+	s := NewAssignmentStore()
+	if err := s.SetPersister(p); err != nil {
+		return nil, err
+	}
+	return s, nil
+}
+
+// SetPersister attaches durability and replaces in-memory state from LoadAll.
+// A nil persister leaves current memory contents unchanged.
+func (s *AssignmentStore) SetPersister(p AssignmentPersister) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.persister = p
+	if p == nil {
+		return nil
+	}
+	return s.loadLocked()
 }
 
 // Put inserts or replaces an assignment keyed by GitHub job id.
@@ -80,6 +111,7 @@ func (s *AssignmentStore) Put(a *Assignment) {
 			s.enqueuePendingLocked(a.JobID)
 		}
 	}
+	_ = s.persistLocked(&cp)
 }
 
 // Get returns a copy of the assignment for jobID, or nil.
@@ -128,6 +160,7 @@ func (s *AssignmentStore) ClaimNext(agentID string) *Assignment {
 		a.AssignedAgentID = agentID
 		a.AssignedAt = now
 		cp := *a
+		_ = s.persistLocked(a)
 		return &cp
 	}
 	return nil
@@ -157,7 +190,7 @@ func (s *AssignmentStore) MarkStarted(jobID int64, agentID, vmID string, warmBin
 	if a.StartedAt.IsZero() {
 		a.StartedAt = time.Now().UTC()
 	}
-	return nil
+	return s.persistLocked(a)
 }
 
 // MarkFinished transitions started/assigned → finished.
@@ -192,7 +225,7 @@ func (s *AssignmentStore) MarkFinished(jobID int64, agentID, outcome, vmID strin
 	}
 	// Drop secret after finish so long-lived process memory holds less JIT material.
 	a.EncodedJITConfig = ""
-	return nil
+	return s.persistLocked(a)
 }
 
 // MarkFailed records a mint/assign failure (webhook path).
@@ -207,6 +240,7 @@ func (s *AssignmentStore) MarkFailed(jobID int64, errMsg string) {
 	a.Error = errMsg
 	a.EncodedJITConfig = ""
 	s.removePendingLocked(jobID)
+	_ = s.persistLocked(a)
 }
 
 // ListRecent returns up to limit assignments (most recently created first).
@@ -330,7 +364,7 @@ func (s *AssignmentStore) RequeueAssigned(jobID int64) error {
 	a.AssignedAt = time.Time{}
 	a.VMID = ""
 	s.enqueuePendingLocked(jobID)
-	return nil
+	return s.persistLocked(a)
 }
 
 func (s *AssignmentStore) enqueuePendingLocked(jobID int64) {
@@ -350,4 +384,83 @@ func (s *AssignmentStore) removePendingLocked(jobID int64) {
 		}
 	}
 	s.pending = out
+}
+
+func (s *AssignmentStore) loadLocked() error {
+	all, err := s.persister.LoadAll()
+	if err != nil {
+		return err
+	}
+	s.byID = make(map[int64]*Assignment, len(all))
+	s.pending = nil
+	var minted []*Assignment
+	for _, a := range all {
+		if a == nil || a.JobID == 0 {
+			continue
+		}
+		cp := *a
+		s.byID[cp.JobID] = &cp
+		if cp.Status == AssignmentMinted {
+			minted = append(minted, &cp)
+		}
+	}
+	sort.Slice(minted, func(i, j int) bool {
+		if minted[i].CreatedAt.Equal(minted[j].CreatedAt) {
+			return minted[i].JobID < minted[j].JobID
+		}
+		return minted[i].CreatedAt.Before(minted[j].CreatedAt)
+	})
+	for _, a := range minted {
+		s.enqueuePendingLocked(a.JobID)
+	}
+	return nil
+}
+
+// persistLocked writes a copy. Never log EncodedJITConfig.
+func (s *AssignmentStore) persistLocked(a *Assignment) error {
+	if s.persister == nil || a == nil {
+		return nil
+	}
+	cp := *a
+	if err := s.persister.Persist(&cp); err != nil {
+		slog.Warn("persist assignment failed", "job_id", a.JobID, "status", string(a.Status), "err", err)
+		return err
+	}
+	return nil
+}
+
+type assignmentPruner interface {
+	PruneFinished(olderThan time.Duration) error
+}
+
+// PruneFinished drops finished/failed assignments older than olderThan.
+// Minted, assigned, and started jobs are never pruned.
+func (s *AssignmentStore) PruneFinished(olderThan time.Duration) int {
+	if olderThan <= 0 {
+		return 0
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := time.Now().UTC()
+	n := 0
+	for id, a := range s.byID {
+		if a.Status != AssignmentFinished && a.Status != AssignmentFailed {
+			continue
+		}
+		ref := a.FinishedAt
+		if ref.IsZero() {
+			ref = a.CreatedAt
+		}
+		if ref.IsZero() || now.Sub(ref) < olderThan {
+			continue
+		}
+		delete(s.byID, id)
+		n++
+	}
+	if p, ok := s.persister.(assignmentPruner); ok {
+		if err := p.PruneFinished(olderThan); err != nil {
+			slog.Warn("prune finished assignments failed", "err", err)
+		}
+	}
+	return n
 }

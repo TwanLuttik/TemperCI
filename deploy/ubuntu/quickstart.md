@@ -16,7 +16,7 @@ For guest image build details see [guest-image.md](guest-image.md). Host package
 ```bash
 sudo ./deploy/ubuntu/host-prereqs.sh
 # Install Firecracker binary (see README.md)
-# Build/place guest rootfs + kernel (see guest-image.md)
+sudo ./deploy/ubuntu/build-guest-image.sh   # rootfs + kernel; see guest-image.md
 ```
 
 ## 2. Build TemperCI
@@ -114,7 +114,7 @@ pgrep -a firecracker || true
 Use this as an operator runbook:
 
 - [ ] Install deps + KVM (`host-prereqs.sh`, Firecracker binary, `/dev/kvm`)
-- [ ] Build/place Ubuntu base image + `actions/runner` + kernel (`guest-image.md`)
+- [ ] Build Ubuntu base image + `actions/runner` + kernel (`sudo ./deploy/ubuntu/build-guest-image.sh`)
 - [ ] `make build` and install both binaries
 - [ ] Configure `/etc/temperci/{control,agent}.toml` with matching `agent_token`
 - [ ] Start `temperci-control` and `temperci-agent`

@@ -206,10 +206,10 @@ type AgentConfig struct {
 	MetricsListenAddr string `toml:"metrics_listen_addr"`
 
 	// Optional TLS when control_url is https://
-	TLSCAFile          string `toml:"tls_ca_file"`
-	TLSCertFile        string `toml:"tls_cert_file"`
-	TLSKeyFile         string `toml:"tls_key_file"`
-	TLSInsecureSkipVerify bool `toml:"tls_insecure_skip_verify"`
+	TLSCAFile             string `toml:"tls_ca_file"`
+	TLSCertFile           string `toml:"tls_cert_file"`
+	TLSKeyFile            string `toml:"tls_key_file"`
+	TLSInsecureSkipVerify bool   `toml:"tls_insecure_skip_verify"`
 }
 
 // LoadAgentFile reads and validates a host-agent TOML config file.
@@ -281,6 +281,9 @@ func (c *AgentConfig) Validate() error {
 		c.VMMBackend = strings.ToLower(c.VMMBackend)
 	default:
 		return fmt.Errorf("config: vmm_backend must be fake or firecracker, got %q", c.VMMBackend)
+	}
+	if c.VMMBackend == "firecracker" && strings.TrimSpace(c.KernelPath) == "" {
+		return fmt.Errorf("config: kernel_path is required when vmm_backend is firecracker")
 	}
 	if c.ReconcileIntervalSeconds <= 0 {
 		c.ReconcileIntervalSeconds = 1

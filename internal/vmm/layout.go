@@ -67,10 +67,14 @@ func (l Layout) LogDir(id ID) string {
 
 // GuestDir is the host-side inject channel for a VM (JIT config, runner start markers).
 // On fake/dev backends this is a real directory under the instance scratch.
-// On Firecracker, inject content is staged here then delivered into the guest
-// (vsock/SSH guest-exec path — see agent GuestExec).
+// On Firecracker, content is synced into InjectDrivePath (second virtio disk) for the guest agent.
 func (l Layout) GuestDir(id ID) string {
 	return filepath.Join(l.InstanceDir(id), "guest")
+}
+
+// InjectDrivePath is a small ext4 disk attached as /dev/vdb for host↔guest job inject.
+func (l Layout) InjectDrivePath(id ID) string {
+	return filepath.Join(l.InstanceDir(id), "inject.ext4")
 }
 
 // JITConfigPath is where the agent writes the encoded JIT config for the runner.

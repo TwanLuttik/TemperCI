@@ -10,6 +10,7 @@ import (
 
 	"github.com/TwanLuttik/TemperCI/internal/api"
 	"github.com/TwanLuttik/TemperCI/internal/github"
+	"github.com/TwanLuttik/TemperCI/internal/store"
 )
 
 // Server is the control-plane HTTP API (webhooks + agent + health + metrics + dashboard).
@@ -22,6 +23,7 @@ type Server struct {
 	log           *slog.Logger
 	mux           *http.ServeMux
 	dash          *DashboardConfig
+	hub           *Hub
 }
 
 // ServerConfig configures the HTTP server.
@@ -35,6 +37,8 @@ type ServerConfig struct {
 	Logger     *slog.Logger
 	// Dashboard enables the operator UI and /api/v1 routes when non-nil Config is set.
 	Dashboard *DashboardConfig
+	// Hub is the optional WebSocket broadcast hub for realtime dashboard updates.
+	Hub *Hub
 }
 
 // NewServer builds an HTTP handler serving health, GitHub webhooks, agent APIs, and metrics.
@@ -54,6 +58,10 @@ func NewServer(cfg ServerConfig) *Server {
 	if agents == nil {
 		agents = NewAgentRegistry()
 	}
+	hub := cfg.Hub
+	if hub == nil {
+		hub = NewHub(log)
+	}
 	s := &Server{
 		handler:       cfg.Handler,
 		store:         store,
@@ -62,6 +70,7 @@ func NewServer(cfg ServerConfig) *Server {
 		agentToken:    cfg.AgentToken,
 		log:           log,
 		mux:           http.NewServeMux(),
+		hub:           hub,
 	}
 	s.mux.HandleFunc("GET /healthz", s.handleHealthz)
 	s.mux.HandleFunc("GET /metrics", s.handleMetrics)
@@ -74,6 +83,7 @@ func NewServer(cfg ServerConfig) *Server {
 	s.mux.HandleFunc("POST /v1/agent/jobs/claim", s.withAgentAuth(s.handleJobClaim))
 	s.mux.HandleFunc("POST /v1/agent/jobs/started", s.withAgentAuth(s.handleJobStarted))
 	s.mux.HandleFunc("POST /v1/agent/jobs/finished", s.withAgentAuth(s.handleJobFinished))
+	s.mux.HandleFunc("POST /v1/agent/jobs/logs", s.withAgentAuth(s.handleJobLogs))
 
 	if cfg.Dashboard != nil && cfg.Dashboard.Config != nil {
 		s.mountDashboard(*cfg.Dashboard)
@@ -156,8 +166,15 @@ func (s *Server) handleGitHubWebhook(w http.ResponseWriter, r *http.Request) {
 	result, err := s.handler.HandleWorkflowJob(r.Context(), body)
 	if err != nil {
 		s.log.Error("webhook handling failed", "err", err)
+		if ev, pErr := github.ParseWorkflowJobEvent(body); pErr == nil {
+			s.recordJobEvent(ev.WorkflowJob.ID, "control", "error", "mint JIT failed: "+err.Error())
+		}
 		http.Error(w, "handler error", http.StatusInternalServerError)
 		return
+	}
+	if result != nil && !result.Ignored && result.Assignment != nil {
+		s.recordJobEvent(result.Assignment.JobID, "control", "info",
+			"minted JIT config repo="+result.Assignment.RepoFullName+" runner="+result.Assignment.RunnerName)
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
@@ -218,7 +235,9 @@ func (s *Server) handleAgentRegister(w http.ResponseWriter, r *http.Request) {
 		"max_capacity", info.MaxCapacity,
 		"warm", info.Warm,
 		"busy", info.Busy,
+		"vms", len(info.VMs),
 	)
+	s.PublishSnapshot()
 	writeJSON(w, http.StatusOK, api.RegisterResponse{OK: true, AgentID: info.AgentID})
 }
 
@@ -254,6 +273,8 @@ func (s *Server) handleJobClaim(w http.ResponseWriter, r *http.Request) {
 		"runner_id", a.RunnerID,
 		// intentionally omit EncodedJITConfig
 	)
+	s.recordJobEvent(a.JobID, "control", "info", "claimed by agent "+req.AgentID)
+	s.PublishSnapshot()
 	writeJSON(w, http.StatusOK, api.ClaimResponse{
 		OK: true,
 		Job: &api.JobAssignment{
@@ -292,12 +313,18 @@ func (s *Server) handleJobStarted(w http.ResponseWriter, r *http.Request) {
 		"vm_id", req.VMID,
 		"warm_bind", req.WarmBind,
 	)
+	msg := "started on " + req.VMID
+	if req.WarmBind {
+		msg += " (warm bind)"
+	}
+	s.recordJobEvent(req.JobID, "agent", "info", msg)
+	s.PublishSnapshot()
 	writeJSON(w, http.StatusOK, api.JobStartedResponse{OK: true})
 }
 
 func (s *Server) handleJobFinished(w http.ResponseWriter, r *http.Request) {
 	var req api.JobFinishedRequest
-	if err := decodeJSON(r, &req); err != nil {
+	if err := decodeJSONLimit(r, &req, 4<<20); err != nil {
 		writeAPIError(w, http.StatusBadRequest, "invalid json")
 		return
 	}
@@ -313,6 +340,7 @@ func (s *Server) handleJobFinished(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusConflict, err.Error())
 		return
 	}
+	s.mergeJobLogs(req.JobID, req.RunnerLog, req.AgentLog, req.ConsoleLog)
 	s.agents.Touch(req.AgentID)
 	s.log.Info("job finished",
 		"job_id", req.JobID,
@@ -321,12 +349,76 @@ func (s *Server) handleJobFinished(w http.ResponseWriter, r *http.Request) {
 		"vm_id", req.VMID,
 		"warm_bind", req.WarmBind,
 	)
+	msg := "finished outcome=" + outcome
+	if req.Error != "" {
+		msg += " err=" + req.Error
+	}
+	level := "info"
+	if outcome != "success" {
+		level = "warn"
+	}
+	s.recordJobEvent(req.JobID, "agent", level, msg)
+	s.PublishSnapshot()
 	writeJSON(w, http.StatusOK, api.JobFinishedResponse{OK: true})
 }
 
+func (s *Server) handleJobLogs(w http.ResponseWriter, r *http.Request) {
+	var req api.JobLogsRequest
+	if err := decodeJSONLimit(r, &req, 4<<20); err != nil {
+		writeAPIError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	if req.AgentID == "" || req.JobID == 0 {
+		writeAPIError(w, http.StatusBadRequest, "agent_id and job_id required")
+		return
+	}
+	s.mergeJobLogs(req.JobID, req.RunnerLog, req.AgentLog, req.ConsoleLog)
+	s.agents.Touch(req.AgentID)
+	writeJSON(w, http.StatusOK, api.JobLogsResponse{OK: true})
+}
+
+func (s *Server) jobDB() *store.Store {
+	if s.dash != nil && s.dash.Store != nil {
+		return s.dash.Store
+	}
+	return nil
+}
+
+func (s *Server) recordJobEvent(jobID int64, source, level, message string) {
+	if jobID == 0 || message == "" {
+		return
+	}
+	db := s.jobDB()
+	if db == nil {
+		return
+	}
+	_ = db.AppendJobEvent(jobID, store.JobEvent{
+		Source:  source,
+		Level:   level,
+		Message: message,
+	})
+}
+
+func (s *Server) mergeJobLogs(jobID int64, runner, agent, console string) {
+	if jobID == 0 || (runner == "" && agent == "" && console == "") {
+		return
+	}
+	db := s.jobDB()
+	if db == nil {
+		return
+	}
+	_ = db.MergeJobLogs(jobID, runner, agent, console)
+}
+
 func decodeJSON(r *http.Request, dst any) error {
+	return decodeJSONLimit(r, dst, 1<<20)
+}
+
+func decodeJSONLimit(r *http.Request, dst any, maxBody int64) error {
 	defer r.Body.Close()
-	const maxBody = 1 << 20
+	if maxBody <= 0 {
+		maxBody = 1 << 20
+	}
 	dec := json.NewDecoder(io.LimitReader(r.Body, maxBody))
 	return dec.Decode(dst)
 }

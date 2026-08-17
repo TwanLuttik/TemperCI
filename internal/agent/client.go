@@ -83,6 +83,7 @@ type CapacitySnapshot struct {
 	FreeSlots   int
 	Warm        int
 	Busy        int
+	VMs         []api.VMUsage
 }
 
 // Register announces this agent to the control plane with capacity.
@@ -93,6 +94,7 @@ func (c *ControlClient) Register(ctx context.Context, cap CapacitySnapshot) erro
 		Capacity:    cap.FreeSlots,
 		Warm:        cap.Warm,
 		Busy:        cap.Busy,
+		VMs:         cap.VMs,
 	}
 	var resp api.RegisterResponse
 	if err := c.post(ctx, "/v1/agent/register", req, &resp); err != nil {
@@ -136,16 +138,37 @@ func (c *ControlClient) ReportStarted(ctx context.Context, jobID int64, vmID str
 
 // ReportFinished notifies control of a terminal job outcome.
 func (c *ControlClient) ReportFinished(ctx context.Context, jobID int64, outcome, vmID string, warmBind bool, errMsg string) error {
+	return c.ReportFinishedLogs(ctx, jobID, outcome, vmID, warmBind, errMsg, JobLogs{})
+}
+
+// ReportFinishedLogs is ReportFinished plus guest diagnostic logs.
+func (c *ControlClient) ReportFinishedLogs(ctx context.Context, jobID int64, outcome, vmID string, warmBind bool, errMsg string, logs JobLogs) error {
 	req := api.JobFinishedRequest{
-		AgentID:  c.AgentID,
-		JobID:    jobID,
-		Outcome:  outcome,
-		VMID:     vmID,
-		WarmBind: warmBind,
-		Error:    errMsg,
+		AgentID:    c.AgentID,
+		JobID:      jobID,
+		Outcome:    outcome,
+		VMID:       vmID,
+		WarmBind:   warmBind,
+		Error:      errMsg,
+		RunnerLog:  logs.RunnerLog,
+		AgentLog:   logs.AgentLog,
+		ConsoleLog: logs.ConsoleLog,
 	}
 	var resp api.JobFinishedResponse
 	return c.post(ctx, "/v1/agent/jobs/finished", req, &resp)
+}
+
+// ReportLogs uploads incremental guest logs while a job is still running.
+func (c *ControlClient) ReportLogs(ctx context.Context, jobID int64, logs JobLogs) error {
+	req := api.JobLogsRequest{
+		AgentID:    c.AgentID,
+		JobID:      jobID,
+		RunnerLog:  logs.RunnerLog,
+		AgentLog:   logs.AgentLog,
+		ConsoleLog: logs.ConsoleLog,
+	}
+	var resp api.JobLogsResponse
+	return c.post(ctx, "/v1/agent/jobs/logs", req, &resp)
 }
 
 func (c *ControlClient) post(ctx context.Context, path string, body any, out any) error {

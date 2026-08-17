@@ -147,6 +147,43 @@ func TestAgentConfig_MaxReadyBelowMin(t *testing.T) {
 	}
 }
 
+func TestLoadAgentFile_FirecrackerRequiresKernel(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "agent.toml")
+	content := `
+image_path = "/img/base"
+agent_token = "shared-secret"
+vmm_backend = "firecracker"
+`
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadAgentFile(path); err == nil {
+		t.Fatal("expected kernel_path required for firecracker")
+	}
+}
+
+func TestLoadAgentFile_FirecrackerWithKernel(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "agent.toml")
+	content := `
+image_path = "/img/base"
+kernel_path = "/img/vmlinux"
+agent_token = "shared-secret"
+vmm_backend = "firecracker"
+`
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadAgentFile(path)
+	if err != nil {
+		t.Fatalf("LoadAgentFile: %v", err)
+	}
+	if cfg.KernelPath != "/img/vmlinux" || cfg.VMMBackend != "firecracker" {
+		t.Fatalf("cfg = %+v", cfg)
+	}
+}
+
 func TestLoadControlFile_MissingAgentToken(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "control.toml")

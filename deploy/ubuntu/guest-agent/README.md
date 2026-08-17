@@ -1,0 +1,44 @@
+# Guest runner agent (required for real GitHub jobs)
+
+This unit runs **inside** the Firecracker rootfs. The host agent writes JIT to a second
+disk (`inject.ext4` → `/dev/vdb`); this script mounts it, starts official
+`actions/runner`, and writes `runner.exit` for the host to wait on.
+
+## Install into an existing image on the Proxmox host
+
+```bash
+IMG=/var/lib/temperci/images/ubuntu-2404-runner.ext4
+MNT=$(mktemp -d)
+mount -o loop "$IMG" "$MNT"
+
+# From TemperCI checkout:
+./deploy/ubuntu/guest-agent/install-into-rootfs.sh "$MNT"
+
+# Confirm runner still present:
+ls -la "$MNT/opt/actions-runner/run.sh"
+
+umount "$MNT"
+rmdir "$MNT"
+```
+
+Then restart the agent so warm VMs boot from the updated image:
+
+```bash
+systemctl restart temperci-agent
+```
+
+## Host agent.toml
+
+```toml
+vmm_backend = "firecracker"
+job_simulate_seconds = 0
+# optional; defaults to 6h when waiting on real runner
+# job_deadline_seconds = 7200
+```
+
+## Protocol
+
+1. Warm VM boots; guest unit starts and polls `/dev/vdb` for `jitconfig`.
+2. Host binds job → writes `instances/<id>/guest/jitconfig` → syncs into `inject.ext4`.
+3. Guest mounts inject, runs `run.sh --jitconfig …`, writes `runner.exit`.
+4. Host polls inject disk for `runner.exit`, then destroys the VM.

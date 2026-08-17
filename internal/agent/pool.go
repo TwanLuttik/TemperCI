@@ -51,6 +51,7 @@ type Pool struct {
 	stopping       bool
 	lastDestroyErr string
 	metrics        Metrics
+	sampler        *procSampler
 
 	// createInFlight counts cold-bind provisions not yet registered in vms.
 	createInFlight int
@@ -316,6 +317,11 @@ func (p *Pool) Bind(ctx context.Context, job JobPayload) (*BindResult, error) {
 	return &BindResult{VMID: selected, WarmStart: warmStart, JobID: job.JobID}, nil
 }
 
+// RunnerWaiter returns the pool's runner starter for WaitRunner (may be nil).
+func (p *Pool) RunnerWaiter() RunnerStarter {
+	return p.runner
+}
+
 // JobFinished signals a terminal job outcome: busy → destroying → cleanup → replenish.
 func (p *Pool) JobFinished(ctx context.Context, id vmm.ID, reason string) error {
 	p.mu.Lock()
@@ -372,6 +378,14 @@ func (p *Pool) ImagePath() string {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.cfg.ImagePath
+}
+
+// HostLayout is the on-disk layout used for instance scratch and job-logs.
+func (p *Pool) HostLayout() vmm.Layout {
+	if p == nil || p.cleaner == nil {
+		return vmm.Layout{}
+	}
+	return p.cleaner.Layout
 }
 
 // DrainWarm destroys all warm (idle) VMs so the pool can refill (e.g. after image update).

@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { api, type Job } from "../api";
+import { useRealtime } from "../hooks/useRealtime";
 
 function statusBadge(status?: string) {
   const s = String(status || "").toLowerCase();
@@ -12,12 +14,17 @@ function statusBadge(status?: string) {
 export function JobsPage() {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [err, setErr] = useState<string | null>(null);
+  const rt = useRealtime(true);
 
   useEffect(() => {
+    if (rt.last?.jobs) {
+      setJobs(rt.last.jobs);
+      return;
+    }
     api<{ jobs: Job[] }>("/api/v1/jobs")
       .then((d) => setJobs(d.jobs || []))
       .catch((e: Error) => setErr(e.message));
-  }, []);
+  }, [rt.last]);
 
   if (err) return <div className="err">{err}</div>;
 
@@ -27,8 +34,8 @@ export function JobsPage() {
         <p className="page-kicker">/ Jobs</p>
         <h1>Recent assignments</h1>
         <p className="lead">
-          In-memory control-plane view (resets on restart). Spot failing and stuck jobs across the
-          fleet.
+          Assignments persist across control restarts. Open a job to inspect the event timeline,
+          guest agent log, and official runner log after you dispatch a GitHub Actions workflow.
         </p>
       </div>
       <div className="panel" style={{ overflow: "auto", padding: "8px 12px 4px" }}>
@@ -57,7 +64,9 @@ export function JobsPage() {
               jobs.map((j) => (
                 <tr key={j.job_id}>
                   <td>
-                    <code>{j.job_id}</code>
+                    <Link to={`/jobs/${j.job_id}`}>
+                      <code>{j.job_id}</code>
+                    </Link>
                   </td>
                   <td>{j.repo_full_name || "—"}</td>
                   <td>

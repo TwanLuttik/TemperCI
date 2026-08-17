@@ -127,6 +127,7 @@ func main() {
 		go runDemoBind(ctx, pool, log, *demoJobID)
 	}
 
+	var workerDone chan struct{}
 	if !*noWorker && !*demoBind {
 		httpClient, err := agent.NewHTTPClientTLS(agent.ClientTLSConfig{
 			CAFile:             cfg.TLSCAFile,
@@ -143,16 +144,30 @@ func main() {
 			httpClient = nil // default
 		}
 		client := agent.NewControlClient(cfg.ControlURL, cfg.AgentID, cfg.AgentToken, httpClient)
-		worker := &agent.Worker{
-			Client:       client,
-			Pool:         pool,
-			Log:          log,
-			PollInterval: time.Duration(cfg.PollIntervalSeconds) * time.Second,
-			JobSimulate:  time.Duration(cfg.JobSimulateSeconds) * time.Second,
-			JobDeadline:  time.Duration(cfg.JobDeadlineSeconds) * time.Second,
-			Capacity:     cfg.MaxReady,
+		waitReal := cfg.VMMBackend == "firecracker" && cfg.JobSimulateSeconds == 0
+		deadline := time.Duration(cfg.JobDeadlineSeconds) * time.Second
+		if waitReal && deadline <= 0 {
+			deadline = 6 * time.Hour
 		}
+		log.Info("worker config",
+			"wait_real_runner", waitReal,
+			"job_simulate_seconds", cfg.JobSimulateSeconds,
+			"job_deadline", deadline.String(),
+			"vmm_backend", cfg.VMMBackend,
+		)
+		worker := &agent.Worker{
+			Client:         client,
+			Pool:           pool,
+			Log:            log,
+			PollInterval:   time.Duration(cfg.PollIntervalSeconds) * time.Second,
+			JobSimulate:    time.Duration(cfg.JobSimulateSeconds) * time.Second,
+			JobDeadline:    deadline,
+			Capacity:       cfg.MaxReady,
+			WaitRealRunner: waitReal,
+		}
+		workerDone = make(chan struct{})
 		go func() {
+			defer close(workerDone)
 			if err := worker.Run(ctx); err != nil && ctx.Err() == nil {
 				log.Error("worker stopped", "err", err)
 				cancel()
@@ -188,6 +203,13 @@ func main() {
 
 	<-ctx.Done()
 	log.Info("shutting down")
+	if workerDone != nil {
+		select {
+		case <-workerDone:
+		case <-time.After(25 * time.Second):
+			log.Error("worker shutdown wait timed out")
+		}
+	}
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer shutdownCancel()
 	if err := pool.Shutdown(shutdownCtx); err != nil {
@@ -213,7 +235,7 @@ func newRunner(cfg *config.AgentConfig, layout vmm.Layout, log *slog.Logger) age
 	fileGuest := &agent.FileGuestExec{Layout: layout}
 	var guest agent.GuestExec = fileGuest
 	if cfg.VMMBackend == "firecracker" {
-		guest = &agent.FirecrackerGuestExec{Inner: fileGuest, EnabledRealExec: false}
+		guest = &agent.FirecrackerGuestExec{Inner: fileGuest, Layout: layout}
 	}
 	return &agent.InjectRunner{
 		Guest: guest,

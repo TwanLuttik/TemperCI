@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api, type Overview } from "../api";
+import { useRealtime } from "../hooks/useRealtime";
 
 type Props = { onOverview: (o: Overview) => void };
 
@@ -8,15 +9,22 @@ export function OverviewPage({ onOverview }: Props) {
   const [o, setO] = useState<Overview | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const navigate = useNavigate();
+  const rt = useRealtime(true);
 
   useEffect(() => {
+    if (rt.last?.overview) {
+      const merged = { ok: true, ...rt.last.overview } as Overview;
+      setO(merged);
+      onOverview(merged);
+      return;
+    }
     api<Overview>("/api/v1/overview")
       .then((data) => {
         setO(data);
         onOverview(data);
       })
       .catch((e: Error) => setErr(e.message));
-  }, [onOverview]);
+  }, [onOverview, rt.last]);
 
   if (err) return <div className="err">{err}</div>;
   if (!o) return <div className="loading">Loading overview…</div>;
@@ -28,7 +36,12 @@ export function OverviewPage({ onOverview }: Props) {
         <h1>GitHub Actions, on your hardware</h1>
         <p className="lead">
           Live capacity and job flow across TemperCI agents — spot stuck hosts and empty warm pools
-          quickly.
+          quickly.{" "}
+          {rt.connected ? (
+            <span className="badge ok">websocket live</span>
+          ) : (
+            <span className="badge warn">rest</span>
+          )}
         </p>
       </div>
       <div className="grid">
@@ -92,6 +105,9 @@ export function OverviewPage({ onOverview }: Props) {
           <div className="row">
             <button type="button" className="ghost" onClick={() => navigate("/hosts")}>
               View runners
+            </button>
+            <button type="button" className="ghost" onClick={() => navigate("/vms")}>
+              MicroVM usage
             </button>
             <button type="button" className="ghost" onClick={() => navigate("/jobs")}>
               View jobs

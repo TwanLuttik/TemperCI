@@ -29,6 +29,8 @@ cd web && npm install && npm run dev
 - **Users** when `auth_mode = "password"` (create accounts; no email sending)
 - **Settings** — view + edit control.toml fields (GitHub App, webhook secret, agent token, paths); secrets blank = keep current
 - **Settings → Restart** via `temperci-hostctl` when installed (`Save & restart` after config changes)
+- **WebSocket** at `GET /api/v1/ws` — live overview, hosts, jobs, microVM usage (agent heartbeats every ~2s with CPU/RSS samples)
+- **MicroVMs** page — per-VM CPU %, RSS vs configured RAM, instance disk, PID
 
 ## Auth
 

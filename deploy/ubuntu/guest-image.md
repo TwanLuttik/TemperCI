@@ -1,8 +1,8 @@
-# Guest image pipeline (Ubuntu + official actions/runner)
+# Guest image pipeline (Ubuntu 24.04 + official actions/runner)
 
 TemperCI guests run **upstream** [actions/runner](https://github.com/actions/runner) inside an ephemeral Ubuntu rootfs. Warm VMs boot from a **shared base image** with **no** GitHub credentials. JIT config is injected only at bind time.
 
-This document describes how to build and refresh the base image used by the Firecracker backend on Ubuntu+KVM hosts.
+Build the image on a Linux/KVM host (or the deploy host). The script does not run on macOS.
 
 ## Layout on the host
 
@@ -22,45 +22,96 @@ vmm_backend = "firecracker"
 
 Per-job COW/overlay lives under `/var/lib/temperci/instances/<vm-id>/` and is destroyed after the job.
 
-## What the base image must contain
+## 1. Install host prereqs
 
-1. **Ubuntu 22.04 or 24.04** minimal userspace (matches your `temperci-…-ubuntu-2404` labels).
-2. **Official `actions/runner`** unpacked under a fixed path, e.g. `/opt/actions-runner`.
-3. **Dependencies** the runner needs (`libicu`, `git`, `curl`, ca-certs, etc.). Prefer tracking [actions/runner](https://github.com/actions/runner) release notes rather than cloning full `runner-images` for MVP.
-4. **No** long-lived `config.sh` registration and **no** JIT secrets baked into the image.
-5. Optional: a small **boot service** that waits for inject files under a known path (see inject channel below).
-
-## Build sketch (operator)
-
-Exact tooling can vary (Packer, `virt-builder`, chroot + `dd`). Minimal outline:
+From the repo root on Ubuntu 22.04/24.04 (amd64):
 
 ```bash
-# 1) Create a sparse ext4 rootfs and mount it
-IMG=/var/lib/temperci/images/ubuntu-2404-runner.ext4
-sudo truncate -s 8G "$IMG"
-sudo mkfs.ext4 -F "$IMG"
-MNT=$(mktemp -d)
-sudo mount -o loop "$IMG" "$MNT"
-
-# 2) Bootstrap Ubuntu (debootstrap or unpack a cloud image)
-sudo debootstrap --arch=amd64 noble "$MNT" http://archive.ubuntu.com/ubuntu
-
-# 3) Install runner dependencies + official runner release
-RUNNER_VERSION=2.321.0   # pin a known-good release
-curl -fsSL -o /tmp/runner.tgz \
-  "https://github.com/actions/runner/releases/download/v${RUNNER_VERSION}/actions-runner-linux-x64-${RUNNER_VERSION}.tar.gz"
-sudo mkdir -p "$MNT/opt/actions-runner"
-sudo tar -xzf /tmp/runner.tgz -C "$MNT/opt/actions-runner"
-# Install runner deps inside the chroot as needed (see runner docs).
-
-# 4) Kernel for Firecracker (separate artifact)
-# Obtain a Firecracker-compatible vmlinux and place it next to the rootfs.
-# sudo install -m 0644 ./vmlinux /var/lib/temperci/images/vmlinux
-
-sudo umount "$MNT"
+sudo ./deploy/ubuntu/host-prereqs.sh
 ```
 
-Refresh policy: rebuild when you bump Ubuntu patch level or `actions/runner` version; recycle warm VMs after deploying a new `image_path` (agent idle recycle or restart).
+That installs KVM tools plus image-build packages (`debootstrap`, `e2fsprogs`). Also place a Firecracker binary on `PATH` ([README.md](README.md)).
+
+## 2. Build the rootfs + kernel
+
+```bash
+sudo ./deploy/ubuntu/build-guest-image.sh
+```
+
+The script:
+
+1. Creates a **12G sparse** ext4 (`TEMPERCI_ROOTFS_SIZE` overrides).
+2. `debootstrap --variant=minbase` Ubuntu 24.04 (`noble`) amd64.
+3. Installs systemd (`/sbin/init`), udev, dbus, networking tools, `git`, `curl`, `ca-certificates`, `sudo`, `openssh-client`, and `libicu74` (falls back to `libicu-dev`).
+4. Writes `/etc/fstab` (`/dev/vda` ext4 rw), static DNS (`8.8.8.8` / `1.1.1.1`; systemd-resolved is masked), and enables `serial-getty@ttyS0`.
+5. Relies on the Firecracker kernel `ip=` cmdline for addressing — **no DHCP**.
+6. Unpacks official `actions/runner` **v2.336.0** at `/opt/actions-runner`. Does **not** run `config.sh`.
+7. Sources `guest-packages.sh` when that hook exists (toolchain packages; owned separately).
+8. Installs the TemperCI guest agent via `guest-agent/install-into-rootfs.sh`.
+9. Downloads a Firecracker-compatible `vmlinux` via `fetch-kernel.sh`.
+
+Rebuilds replace the previous artifacts atomically (`*.tmp` then `mv`).
+
+### Environment
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `TEMPERCI_IMAGES_DIR` | `/var/lib/temperci/images` | Output directory |
+| `TEMPERCI_ROOTFS_SIZE` | `12G` | Sparse ext4 size |
+| `TEMPERCI_RUNNER_VERSION` | `2.336.0` | Official [actions/runner](https://github.com/actions/runner/releases) pin |
+| `TEMPERCI_UBUNTU_MIRROR` | `http://archive.ubuntu.com/ubuntu` | debootstrap + apt mirror |
+| `TEMPERCI_KERNEL_URL` | (see pin below) | Override kernel download URL |
+
+Kernel-only refresh:
+
+```bash
+sudo ./deploy/ubuntu/fetch-kernel.sh
+# or: sudo ./deploy/ubuntu/fetch-kernel.sh /var/lib/temperci/images/vmlinux
+```
+
+### Pins
+
+- **actions/runner:** `2.336.0` (`actions-runner-linux-x64-2.336.0.tar.gz`). Bump with `TEMPERCI_RUNNER_VERSION`. To refresh an existing image without a full rebuild: `sudo ./deploy/ubuntu/update-guest-runner.sh`.
+- **Kernel:** Firecracker CI **v1.11** Linux **6.1.102**  
+  `https://s3.amazonaws.com/spec.ccfc.min/firecracker-ci/v1.11/x86_64/vmlinux-6.1.102`  
+  If that URL fails, `fetch-kernel.sh` tries the latest dated `firecracker-ci/YYYYMMDD-…` artifact from the same bucket ([getting-started.md](https://github.com/firecracker-microvm/firecracker/blob/main/docs/getting-started.md)). Override with `TEMPERCI_KERNEL_URL`. The kernel is **not** vendored in git.
+
+After a rebuild, recycle warm VMs (agent idle recycle or `systemctl restart temperci-agent`).
+
+## 3. Confirm `run.sh` and the guest-agent unit
+
+```bash
+sudo mount -o loop,ro /var/lib/temperci/images/ubuntu-2404-runner.ext4 /mnt
+ls /mnt/opt/actions-runner/run.sh
+ls /mnt/etc/systemd/system/temperci-runner-agent.service
+ls /mnt/etc/systemd/system/multi-user.target.wants/temperci-runner-agent.service
+ls /mnt/usr/local/sbin/temperci-runner-agent.sh
+ls /mnt/sbin/init
+cat /mnt/etc/fstab /mnt/etc/resolv.conf
+sudo umount /mnt
+ls -lh /var/lib/temperci/images/ubuntu-2404-runner.ext4 /var/lib/temperci/images/vmlinux
+```
+
+## 4. Point `agent.toml` at the artifacts
+
+```toml
+vmm_backend = "firecracker"
+image_path = "/var/lib/temperci/images/ubuntu-2404-runner.ext4"
+kernel_path = "/var/lib/temperci/images/vmlinux"
+job_simulate_seconds = 0
+```
+
+Example file: [`../agent.example.toml`](../agent.example.toml). Host agent waits for `runner.exit` on the inject disk (default deadline 6h).
+
+## What the base image contains
+
+1. Ubuntu 24.04 (`noble`) amd64 minbase + the packages listed above.
+2. Official `actions/runner` under `/opt/actions-runner`.
+3. No long-lived `config.sh` registration and no JIT secrets.
+4. Guest boot agent that waits for inject files (below).
+5. Optional toolchain (`docker`, Node, Python, …) only if `guest-packages.sh` is present.
+
+Networking: the agent creates tap + NAT; the kernel `ip=` cmdline sets the guest IP. The image does not require DHCP or `network-online.target`.
 
 ## JIT inject + start runner (bind path)
 
@@ -68,12 +119,13 @@ On bind the agent:
 
 1. Writes the encoded JIT config into the **host-side guest channel**  
    `instances/<vm-id>/guest/jitconfig` (mode `0600`).
-2. Invokes the guest runner entrypoint conceptually as:
+2. The guest agent starts official runner as:
 
    ```text
-   /opt/actions-runner/run.sh --jitconfig <path-to-jitconfig>
+   RUNNER_ALLOW_RUNASROOT=1 /opt/actions-runner/run.sh --jitconfig <encoded-string>
    ```
 
+   (`RUNNER_ALLOW_RUNASROOT` is set at runtime; it is not baked into the image.)
 3. Logs only non-secret fields (`job_id`, `jit_bytes`, `warm_bind`) — never the JIT payload.
 
 ### GuestExec backends
@@ -81,29 +133,27 @@ On bind the agent:
 | Backend | Behavior |
 |---------|----------|
 | `FileGuestExec` (fake / staging) | Writes under `instances/<id>/guest/` and records exec in `exec.log` + `runner.started` |
-| `FirecrackerGuestExec` | Stages the same host files; real vsock/SSH guest exec is enabled on Ubuntu+KVM once the guest channel is wired. Until then, production images should use a **guest boot agent** that watches a vsock/virtio-vsock or 9p/shared inject path and starts `run.sh`. |
+| `FirecrackerGuestExec` | Stages the same host files onto the inject disk; the **guest boot agent** starts `run.sh` |
 
 MVP on macOS/tests uses the fake VMM + `FileGuestExec` so the full control↔agent path is covered without KVM.
 
-## Recommended production guest agent (Ubuntu+KVM)
+## Guest agent (Ubuntu+KVM)
 
-Inside the base image, run a oneshot/path unit that:
+Firecracker attaches a second disk (`inject.ext4` → guest `/dev/vdb`). The host stages JIT under `instances/<id>/guest/` and syncs into that disk on bind. The guest agent:
 
-1. Waits for `/run/temperci/jitconfig` (or equivalent delivered from the host stage).
-2. Starts `/opt/actions-runner/run.sh --jitconfig /run/temperci/jitconfig`.
-3. Exits when the runner process exits (one job).
+1. Polls/mounts `/dev/vdb` at `/mnt/temperci` until `jitconfig` appears.
+2. Runs `/opt/actions-runner/run.sh --jitconfig <encoded-string>`.
+3. Writes the exit code to `/mnt/temperci/runner.exit` (host polls this).
 
-Host agent `JobSimulate` is **only** for fake/dev without a real runner wait. On real guests, set `job_simulate_seconds = 0` and wait on the runner/guest-agent exit signal (operator path until full process watch is automated).
-
-## Verification
+The image build already calls:
 
 ```bash
-# On a Linux+KVM host after building the image:
-ls -lh /var/lib/temperci/images/
-# Mount and confirm runner present:
-sudo mount -o loop,ro /var/lib/temperci/images/ubuntu-2404-runner.ext4 /mnt
-ls /mnt/opt/actions-runner/run.sh
-sudo umount /mnt
+sudo ./deploy/ubuntu/guest-agent/install-into-rootfs.sh /mnt
 ```
+
+Re-install into an existing rootfs with the same command after loop-mounting it. Files:
+
+- `deploy/ubuntu/guest-agent/temperci-runner-agent.sh`
+- `deploy/ubuntu/guest-agent/temperci-runner-agent.service`
 
 End-to-end operator steps: [quickstart.md](quickstart.md).

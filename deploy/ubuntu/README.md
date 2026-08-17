@@ -5,7 +5,7 @@ Primary install target: **Ubuntu 22.04 or 24.04 LTS** with KVM.
 This document covers host setup for the agent VMM path. Related:
 
 - Single-node job path: [quickstart.md](quickstart.md)
-- Guest image + runner: [guest-image.md](guest-image.md)
+- Guest image + runner: [guest-image.md](guest-image.md) (`sudo ./deploy/ubuntu/build-guest-image.sh`)
 - Proxmox twin (same agent binary): [../proxmox/README.md](../proxmox/README.md)
 - Control plane / GitHub App: [docs/architecture/control-plane-dry-run.md](../../docs/architecture/control-plane-dry-run.md)
 
@@ -79,9 +79,20 @@ sudo mkdir -p /var/lib/temperci/{images,instances}
 sudo chown -R temperci:temperci /var/lib/temperci
 ```
 
+## Guest image
+
+On a Linux/amd64 host, after `host-prereqs.sh` (includes `debootstrap` and `e2fsprogs`):
+
+```bash
+sudo ./deploy/ubuntu/build-guest-image.sh
+```
+
+This writes `/var/lib/temperci/images/ubuntu-2404-runner.ext4` and `vmlinux`. Operator details, pins, and verification: [guest-image.md](guest-image.md).
+
 Agent config (`deploy/agent.example.toml`) points at these paths:
 
-- `image_path` — base guest rootfs
+- `image_path` — base guest rootfs (`ubuntu-2404-runner.ext4`)
+- `kernel_path` — Firecracker `vmlinux` next to the rootfs
 - `scratch_dir` — should be `/var/lib/temperci/instances` (or the parent root if the agent joins `images`/`instances` itself)
 
 Decision detail: [docs/decisions/hypervisor.md](../../docs/decisions/hypervisor.md).

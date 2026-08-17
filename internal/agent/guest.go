@@ -3,26 +3,32 @@ package agent
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/TwanLuttik/TemperCI/internal/vmm"
+	"github.com/TwanLuttik/TemperCI/internal/vmm/firecracker"
 )
 
 // GuestExec injects files and runs commands inside (or as if inside) a guest VM.
 //
 // Fake/dev path: host filesystem under instances/<id>/guest/.
-// Firecracker path: stage on host then deliver via vsock/SSH-like channel
-// (exec may be partially stubbed without KVM; inject still writes host stage files).
+// Firecracker path: stage on host under guest/, sync to inject.ext4 (/dev/vdb);
+// the guest boot agent starts run.sh when jitconfig appears.
 type GuestExec interface {
 	// WriteFile writes content into the guest workspace (or host stage for inject).
 	// path is relative to the guest workspace root (e.g. "jitconfig").
 	WriteFile(ctx context.Context, id vmm.ID, relPath string, data []byte, mode os.FileMode) error
 	// Exec runs a command in the guest. On fake backends this records the command
 	// and returns success without a real process.
+	// On Firecracker inject path, Exec records intent; the guest agent performs the run.
 	Exec(ctx context.Context, id vmm.ID, name string, args ...string) error
+	// WaitRunner blocks until the guest reports runner completion (runner.exit),
+	// or until ctx is cancelled. Fake backends return success immediately.
+	WaitRunner(ctx context.Context, id vmm.ID) (exitCode int, err error)
 }
 
 // FileGuestExec implements GuestExec using the host instance guest/ directory.
@@ -103,15 +109,53 @@ func (g *FileGuestExec) Exec(ctx context.Context, id vmm.ID, name string, args .
 	return nil
 }
 
-// FirecrackerGuestExec stages inject files on the host (same layout as FileGuestExec)
-// and documents the production guest-exec path. Without a live vsock/SSH channel,
-// Exec records intent and returns nil after staging — operators enable real guest
-// exec on Ubuntu+KVM (see deploy/ubuntu/guest-image.md).
+// WaitRunner for FileGuestExec: tests write runner.exit under guest/ for fake completion.
+// If no exit file appears and ctx is not cancelled, returns success after a short poll
+// when runner.started exists (unit tests / fake VMM).
+func (g *FileGuestExec) WaitRunner(ctx context.Context, id vmm.ID) (int, error) {
+	exitPath := filepath.Join(g.Layout.GuestDir(id), "runner.exit")
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+	// For pure unit tests without exit file: if started marker exists, treat as done quickly.
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if b, err := os.ReadFile(exitPath); err == nil {
+			code := 0
+			fmt.Sscanf(strings.TrimSpace(string(b)), "%d", &code)
+			return code, nil
+		}
+		select {
+		case <-ctx.Done():
+			return -1, ctx.Err()
+		case <-ticker.C:
+			if time.Now().After(deadline) {
+				// Fake/dev: no real guest agent — complete successfully so e2e keeps working.
+				if _, err := os.Stat(g.Layout.RunnerStartMarkerPath(id)); err == nil {
+					return 0, nil
+				}
+				deadline = time.Now().Add(30 * time.Second) // keep waiting if production-like
+			}
+		}
+	}
+}
+
+// FirecrackerGuestExec stages inject files on the host and syncs them to inject.ext4
+// so the guest boot agent can start the official actions/runner.
 type FirecrackerGuestExec struct {
 	// Inner stages files on the host under instances/<id>/guest/.
 	Inner *FileGuestExec
-	// EnabledRealExec when true would dial guest vsock; MVP keeps this false on non-KVM.
-	EnabledRealExec bool
+	// Layout for inject drive path (defaults to Inner.Layout).
+	Layout vmm.Layout
+}
+
+func (f *FirecrackerGuestExec) layout() vmm.Layout {
+	if f.Layout.Root != "" {
+		return f.Layout
+	}
+	if f.Inner != nil {
+		return f.Inner.Layout
+	}
+	return vmm.Layout{}
 }
 
 // WriteFile stages content for guest delivery.
@@ -122,19 +166,102 @@ func (f *FirecrackerGuestExec) WriteFile(ctx context.Context, id vmm.ID, relPath
 	return f.Inner.WriteFile(ctx, id, relPath, data, mode)
 }
 
-// Exec stages a command request. Real vsock/SSH guest exec is operator-enabled on Linux+KVM.
+// Exec records the start request and syncs host guest/ → inject.ext4 for the guest agent.
 func (f *FirecrackerGuestExec) Exec(ctx context.Context, id vmm.ID, name string, args ...string) error {
 	if f.Inner == nil {
 		return fmt.Errorf("agent: FirecrackerGuestExec.Inner is nil")
 	}
-	// Always record on host stage for observability and tests.
 	if err := f.Inner.Exec(ctx, id, name, args...); err != nil {
 		return err
 	}
-	if !f.EnabledRealExec {
-		// Host-side stage only (no KVM guest channel in this process).
-		return nil
+	// Publish staged files into the second virtio disk the guest agent mounts.
+	if err := firecracker.SyncGuestDirToInjectDrive(f.layout(), id); err != nil {
+		return fmt.Errorf("agent: sync inject drive: %w", err)
 	}
-	// Placeholder for future vsock/SSH: return clear error if someone enables it early.
-	return fmt.Errorf("agent: real firecracker guest exec not wired (use host stage inject + cloud-init/systemd in guest image)")
+	return nil
+}
+
+// WaitRunner polls inject.ext4 for runner.exit written by the guest agent.
+// Poll slowly: the host must not thrash loop-mounts of inject.ext4 while the
+// guest agent is also mounting /dev/vdb (causes missed JIT / stuck jobs).
+func (f *FirecrackerGuestExec) WaitRunner(ctx context.Context, id vmm.ID) (int, error) {
+	layout := f.layout()
+	// Give the guest a quiet window to mount inject, copy JIT, and unmount.
+	select {
+	case <-ctx.Done():
+		return -1, ctx.Err()
+	case <-time.After(3 * time.Second):
+	}
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+	start := time.Now()
+	for {
+		if b, err := firecracker.ReadInjectFile(layout, id, "runner.exit"); err == nil {
+			text := strings.TrimSpace(string(b))
+			if text == "" {
+				// Ignore empty file races; keep waiting.
+			} else {
+				code := 0
+				if _, err := fmt.Sscanf(text, "%d", &code); err != nil {
+					code = 1
+				}
+				// Mirror artifacts for operators and surface failure reason in host logs.
+				guestDir := layout.GuestDir(id)
+				_ = os.WriteFile(filepath.Join(guestDir, "runner.exit"), b, 0o600)
+				var runnerLog, agentLog []byte
+				if logb, err := firecracker.ReadInjectFile(layout, id, "runner.log"); err == nil {
+					runnerLog = logb
+					_ = os.WriteFile(filepath.Join(guestDir, "runner.log"), logb, 0o600)
+				}
+				if logb, err := firecracker.ReadInjectFile(layout, id, "agent.log"); err == nil {
+					agentLog = logb
+					_ = os.WriteFile(filepath.Join(guestDir, "agent.log"), logb, 0o600)
+				}
+				// Persist under data_dir/job-logs so destroy does not erase evidence.
+				if layout.Root != "" {
+					arch := filepath.Join(layout.Root, "job-logs", string(id))
+					_ = os.MkdirAll(arch, 0o755)
+					_ = os.WriteFile(filepath.Join(arch, "runner.exit"), b, 0o600)
+					if len(runnerLog) > 0 {
+						_ = os.WriteFile(filepath.Join(arch, "runner.log"), runnerLog, 0o600)
+					}
+					if len(agentLog) > 0 {
+						_ = os.WriteFile(filepath.Join(arch, "agent.log"), agentLog, 0o600)
+					}
+					ArchiveConsole(layout, id)
+				}
+				if code != 0 {
+					slog.Default().Warn("guest runner failed",
+						"vm_id", string(id),
+						"exit_code", code,
+						"runner_log", truncateForLog(string(runnerLog), 1500),
+						"agent_log", truncateForLog(string(agentLog), 800),
+					)
+				}
+				return code, nil
+			}
+		}
+		// Periodically surface agent.log if present (still waiting).
+		if time.Since(start) > 15*time.Second && int(time.Since(start).Seconds())%15 < 1 {
+			if logb, err := firecracker.ReadInjectFile(layout, id, "agent.log"); err == nil {
+				_ = os.WriteFile(filepath.Join(layout.GuestDir(id), "agent.log"), logb, 0o600)
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return -1, ctx.Err()
+		case <-ticker.C:
+		}
+	}
+}
+
+func truncateForLog(s string, max int) string {
+	s = strings.TrimSpace(s)
+	if max <= 0 || len(s) <= max {
+		return s
+	}
+	if max < 4 {
+		return s[:max]
+	}
+	return s[:max-3] + "..."
 }

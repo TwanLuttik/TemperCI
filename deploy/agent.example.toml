@@ -19,12 +19,11 @@ agent_token = "replace-with-long-random-string"
 # Claim poll interval when idle (seconds).
 poll_interval_seconds = 1
 
-# After bind, wait this many seconds then destroy (fake/dev without real runner wait).
-# On real Ubuntu guests with runner process wait, set 0 and rely on runner exit (future).
-# For local fake demos, a small value is fine.
-job_simulate_seconds = 2
+# After bind, wait this many seconds then destroy (dev/demo only).
+# Production Firecracker: set 0 — agent waits for guest runner.exit on inject disk.
+job_simulate_seconds = 0
 
-# Force destroy + report timeout if a job exceeds this many seconds (0 = disabled).
+# Max wait for real runner when job_simulate_seconds=0 (default 6h if unset/0 on firecracker).
 # job_deadline_seconds = 7200
 
 # Warm pool sizing. max_ready is also the max concurrent job capacity reported to control.
@@ -35,10 +34,10 @@ max_ready = 2
 # growth if destroy fails. Default: max_ready + 32.
 # max_total_vms = 34
 
-# Guest image, optional kernel, and host data root.
+# Guest image and kernel. kernel_path is required when vmm_backend = "firecracker".
 # Same paths on Ubuntu and Proxmox host installs (prefer local NVMe; see deploy/proxmox/storage.md).
 image_path = "/var/lib/temperci/images/ubuntu-2404-runner.ext4"
-# kernel_path = "/var/lib/temperci/images/vmlinux"
+kernel_path = "/var/lib/temperci/images/vmlinux"
 data_dir = "/var/lib/temperci"
 # scratch_dir is accepted for compatibility; parent of .../instances becomes data_dir.
 # scratch_dir = "/var/lib/temperci/instances"
@@ -50,8 +49,9 @@ memory_mib = 8192
 # Idle warm VM recycle after this many seconds (0 = disabled).
 idle_recycle_seconds = 3600
 
-# VMM backend: "fake" (tests / macOS) or "firecracker" (Linux + KVM, Ubuntu or Proxmox host).
-vmm_backend = "fake"
+# Production on Linux/KVM (Ubuntu or Proxmox host): firecracker.
+# Use fake only for unit tests / macOS without KVM.
+vmm_backend = "firecracker"
 
 # How often the pool reconciler runs (seconds).
 reconcile_interval_seconds = 1

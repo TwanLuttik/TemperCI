@@ -10,9 +10,10 @@ agent_token = "replace-with-long-random-string"
 
 poll_interval_seconds = 1
 
-# Real guest + runner: 0 (finish when runner exits — production path).
-# Dev without waiting on runner: small positive number.
+# Production Firecracker: 0 — wait for guest agent runner.exit on inject disk.
+# Dev/demo only: positive seconds to fake job duration without GitHub adoption.
 job_simulate_seconds = 0
+# job_deadline_seconds = 7200
 
 # Keep pool small when sharing the node with Proxmox VMs.
 min_ready = 1

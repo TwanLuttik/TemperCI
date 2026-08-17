@@ -13,6 +13,9 @@ type RunnerStarter interface {
 	// StartRunner attaches job material to the VM and starts the runner.
 	// Implementations must not log JITConfig in full.
 	StartRunner(ctx context.Context, id vmm.ID, job JobPayload) error
+	// WaitRunner waits until the guest runner finishes (or fake/sim completes).
+	// exitCode 0 is success; non-zero is a runner/job failure.
+	WaitRunner(ctx context.Context, id vmm.ID) (exitCode int, err error)
 }
 
 // StubRunner is a no-op runner starter for local testing and unit tests.
@@ -40,11 +43,21 @@ func (s *StubRunner) StartRunner(ctx context.Context, id vmm.ID, job JobPayload)
 	return nil
 }
 
+// WaitRunner is a no-op success for stubs.
+func (s *StubRunner) WaitRunner(ctx context.Context, id vmm.ID) (int, error) {
+	if err := ctx.Err(); err != nil {
+		return -1, err
+	}
+	return 0, nil
+}
+
 // InjectRunner writes JIT config via GuestExec and starts the official runner process.
 //
 // Guest command (production image):
 //
-//	$RUNNER_ROOT/run.sh --jitconfig <path-or-stdin>
+//	$RUNNER_ROOT/run.sh --jitconfig <encoded-base64-string>
+//
+// Note: --jitconfig takes the EncodedJITConfig string itself, not a file path.
 //
 // Fake/FileGuestExec records the exec without launching a real binary.
 type InjectRunner struct {
@@ -84,10 +97,9 @@ func (r *InjectRunner) StartRunner(ctx context.Context, id vmm.ID, job JobPayloa
 	meta := fmt.Sprintf("job_id=%s\nrunner_name=%s\n", job.JobID, job.RunnerName)
 	_ = r.Guest.WriteFile(ctx, id, "job.meta", []byte(meta), 0o600)
 
-	// Start runner with JIT. Official runner accepts --jitconfig <file>.
-	// Path inside guest workspace for file backends: ./jitconfig relative to guest dir;
-	// production images map this path or use absolute /run/temperci/jitconfig.
-	jitArg := jitRel
+	// Guest agent mounts inject disk, reads jitconfig, and execs:
+	//   run.sh --jitconfig "$JIT_B64"
+	// --jitconfig is the encoded string, not a filesystem path.
 	if r.Log != nil {
 		r.Log.Info("starting guest runner",
 			"vm_id", string(id),
@@ -97,8 +109,18 @@ func (r *InjectRunner) StartRunner(ctx context.Context, id vmm.ID, job JobPayloa
 			"runner_path", runnerPath,
 		)
 	}
-	if err := r.Guest.Exec(ctx, id, runnerPath, "--jitconfig", jitArg); err != nil {
+	_ = r.Guest.WriteFile(ctx, id, "runner.cmd", []byte(runnerPath+" --jitconfig <encoded-jit-string>\n"), 0o600)
+
+	if err := r.Guest.Exec(ctx, id, runnerPath, "--jitconfig", "<encoded-jit-string>"); err != nil {
 		return fmt.Errorf("agent: guest exec runner: %w", err)
 	}
 	return nil
+}
+
+// WaitRunner delegates to GuestExec (inject disk or host guest/ markers).
+func (r *InjectRunner) WaitRunner(ctx context.Context, id vmm.ID) (int, error) {
+	if r.Guest == nil {
+		return -1, fmt.Errorf("agent: InjectRunner.Guest is nil")
+	}
+	return r.Guest.WaitRunner(ctx, id)
 }

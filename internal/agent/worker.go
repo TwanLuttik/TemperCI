@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"log/slog"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/TwanLuttik/TemperCI/internal/api"
+	"github.com/TwanLuttik/TemperCI/internal/vmm"
 )
 
 // Worker polls the control plane for jobs, binds warm VMs, and reports lifecycle.
@@ -19,15 +21,21 @@ type Worker struct {
 	// PollInterval between empty claims (default 500ms).
 	PollInterval time.Duration
 	// JobSimulate holds how long to wait after bind before treating the job as done.
-	// On fake/dev without a real runner exit signal, this simulates job completion.
-	// Set to 0 to finish immediately after bind (tests). Production with real runner
-	// should replace this with runner process wait.
+	// When > 0, skips real runner wait (dev/demo). When 0, waits for guest runner.exit.
 	JobSimulate time.Duration
 	// JobDeadline is the max time from bind to force destroy + report timeout.
-	// 0 disables the deadline (JobSimulate-only path).
+	// 0 means default 6h when waiting on a real runner; still 0 = no deadline for simulate path.
 	JobDeadline time.Duration
 	// Capacity is max concurrent jobs (usually MaxReady). Free slots = Capacity - Busy.
 	Capacity int
+	// WaitRealRunner when true (default for firecracker) waits on GuestExec.WaitRunner.
+	// Set false only for unit tests that do not implement WaitRunner beyond stubs.
+	WaitRealRunner bool
+
+	// inflight counts claimed jobs whose handleJob goroutine has not returned.
+	// Used so FreeSlots drops immediately on claim, before Pool.Busy updates.
+	inflightMu sync.Mutex
+	inflight   int
 }
 
 // Run registers then polls until ctx is cancelled.
@@ -56,11 +64,25 @@ func (w *Worker) Run(ctx context.Context) error {
 		"free_slots", w.snapshot().FreeSlots,
 	)
 
+	// Heartbeat re-registers with microVM usage for the realtime dashboard.
+	go w.heartbeat(ctx, log)
+
+	var jobsWG sync.WaitGroup
+	defer jobsWG.Wait()
+
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
 		cap := w.snapshot()
+		if cap.FreeSlots <= 0 {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(poll):
+			}
+			continue
+		}
 		job, err := w.Client.Claim(ctx, cap)
 		if err != nil {
 			log.Error("claim failed", "err", err)
@@ -79,15 +101,56 @@ func (w *Worker) Run(ctx context.Context) error {
 			}
 			continue
 		}
-		if err := w.handleJob(ctx, job); err != nil {
-			log.Error("handle job failed", "job_id", job.JobID, "err", err)
+		jobsWG.Add(1)
+		w.addInFlight(1)
+		go func(job *api.JobAssignment) {
+			defer jobsWG.Done()
+			defer w.addInFlight(-1)
+			if err := w.handleJob(ctx, job); err != nil {
+				log.Error("handle job failed", "job_id", job.JobID, "err", err)
+			}
+		}(job)
+	}
+}
+
+func (w *Worker) heartbeat(ctx context.Context, log *slog.Logger) {
+	t := time.NewTicker(2 * time.Second)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			if err := w.Client.Register(ctx, w.snapshot()); err != nil {
+				log.Error("heartbeat register failed", "err", err)
+			}
 		}
 	}
 }
 
+func (w *Worker) addInFlight(delta int) {
+	w.inflightMu.Lock()
+	w.inflight += delta
+	if w.inflight < 0 {
+		w.inflight = 0
+	}
+	w.inflightMu.Unlock()
+}
+
+func (w *Worker) inFlight() int {
+	w.inflightMu.Lock()
+	defer w.inflightMu.Unlock()
+	return w.inflight
+}
+
 func (w *Worker) snapshot() CapacitySnapshot {
 	c := w.Pool.Counts()
-	free := w.Capacity - c.Busy
+	used := c.Busy
+	if n := w.inFlight(); n > used {
+		// Claimed but Bind has not yet incremented Busy (or JobFinished already ran).
+		used = n
+	}
+	free := w.Capacity - used
 	if free < 0 {
 		free = 0
 	}
@@ -96,6 +159,7 @@ func (w *Worker) snapshot() CapacitySnapshot {
 		FreeSlots:   free,
 		Warm:        c.Warm,
 		Busy:        c.Busy,
+		VMs:         w.Pool.ListUsage(),
 	}
 }
 
@@ -118,7 +182,7 @@ func (w *Worker) handleJob(ctx context.Context, job *api.JobAssignment) error {
 	job.EncodedJITConfig = ""
 
 	if err != nil {
-		_ = w.Client.ReportFinished(ctx, job.JobID, "error", "", false, err.Error())
+		_ = w.finish(ctx, job.JobID, "error", "", false, err.Error(), JobLogs{})
 		return err
 	}
 
@@ -132,10 +196,11 @@ func (w *Worker) handleJob(ctx context.Context, job *api.JobAssignment) error {
 		"warm_bind", res.WarmStart,
 	)
 
-	outcome, waitErr := w.waitForJob(ctx)
+	outcome, waitErr := w.waitForJob(ctx, res.VMID)
+	logs := w.collectLogs(res.VMID)
 	if waitErr != nil && !errors.Is(waitErr, context.DeadlineExceeded) {
 		_ = w.Pool.JobFinished(context.Background(), res.VMID, "cancelled")
-		_ = w.Client.ReportFinished(context.Background(), job.JobID, "cancelled", string(res.VMID), res.WarmStart, waitErr.Error())
+		_ = w.finish(context.Background(), job.JobID, "cancelled", string(res.VMID), res.WarmStart, waitErr.Error(), logs)
 		return waitErr
 	}
 	if outcome == "timeout" {
@@ -145,72 +210,107 @@ func (w *Worker) handleJob(ctx context.Context, job *api.JobAssignment) error {
 			"deadline", w.JobDeadline.String(),
 		)
 		if err := w.Pool.JobFinished(ctx, res.VMID, "timeout"); err != nil {
-			_ = w.Client.ReportFinished(ctx, job.JobID, "timeout", string(res.VMID), res.WarmStart, err.Error())
+			_ = w.finish(ctx, job.JobID, "timeout", string(res.VMID), res.WarmStart, err.Error(), logs)
 			return err
 		}
-		if err := w.Client.ReportFinished(ctx, job.JobID, "timeout", string(res.VMID), res.WarmStart, "job deadline exceeded"); err != nil {
+		if err := w.finish(ctx, job.JobID, "timeout", string(res.VMID), res.WarmStart, "job deadline exceeded", logs); err != nil {
 			return err
 		}
 		return nil
 	}
 
-	if err := w.Pool.JobFinished(ctx, res.VMID, "success"); err != nil {
-		_ = w.Client.ReportFinished(ctx, job.JobID, "error", string(res.VMID), res.WarmStart, err.Error())
+	// outcome success | failure from runner exit code
+	if err := w.Pool.JobFinished(ctx, res.VMID, outcome); err != nil {
+		_ = w.finish(ctx, job.JobID, "error", string(res.VMID), res.WarmStart, err.Error(), logs)
 		return err
 	}
-	if err := w.Client.ReportFinished(ctx, job.JobID, "success", string(res.VMID), res.WarmStart, ""); err != nil {
+	if err := w.finish(ctx, job.JobID, outcome, string(res.VMID), res.WarmStart, "", logs); err != nil {
 		return err
 	}
 	log.Info("job complete",
 		"job_id", job.JobID,
 		"vm_id", string(res.VMID),
 		"warm_bind", res.WarmStart,
+		"outcome", outcome,
 	)
 	return nil
 }
 
-// waitForJob blocks until JobSimulate elapses, JobDeadline hits, or ctx cancels.
-// With JobSimulate==0 and no deadline, returns success immediately (test default).
-func (w *Worker) waitForJob(ctx context.Context) (outcome string, err error) {
+func (w *Worker) collectLogs(vmID vmm.ID) JobLogs {
+	if w.Pool == nil || vmID == "" {
+		return JobLogs{}
+	}
+	ArchiveConsole(w.Pool.HostLayout(), vmID)
+	return CollectJobLogs(w.Pool.HostLayout(), vmID)
+}
+
+func (w *Worker) finish(ctx context.Context, jobID int64, outcome, vmID string, warmBind bool, errMsg string, logs JobLogs) error {
+	if w.Client == nil {
+		return nil
+	}
+	return w.Client.ReportFinishedLogs(ctx, jobID, outcome, vmID, warmBind, errMsg, logs)
+}
+
+// waitForJob blocks until the guest runner finishes, JobSimulate elapses, deadline hits, or ctx cancels.
+func (w *Worker) waitForJob(ctx context.Context, vmID vmm.ID) (outcome string, err error) {
 	sim := w.JobSimulate
 	if sim < 0 {
 		sim = 0
 	}
 	deadline := w.JobDeadline
 
-	// Immediate finish path used by unit/e2e tests.
-	if sim == 0 && deadline <= 0 {
-		return "success", nil
-	}
-
-	var deadlineCh <-chan time.Time
-	if deadline > 0 {
-		t := time.NewTimer(deadline)
-		defer t.Stop()
-		deadlineCh = t.C
-	}
-
-	var simCh <-chan time.Time
+	// Dev/demo: simulate wall-clock job duration.
 	if sim > 0 {
+		var deadlineCh <-chan time.Time
+		if deadline > 0 {
+			t := time.NewTimer(deadline)
+			defer t.Stop()
+			deadlineCh = t.C
+		}
 		t := time.NewTimer(sim)
 		defer t.Stop()
-		simCh = t.C
-	} else if deadline > 0 {
-		// No simulate: wait only on deadline (or cancel) — used when runner exit not wired.
 		select {
 		case <-ctx.Done():
 			return "cancelled", ctx.Err()
 		case <-deadlineCh:
 			return "timeout", context.DeadlineExceeded
+		case <-t.C:
+			return "success", nil
 		}
 	}
 
-	select {
-	case <-ctx.Done():
-		return "cancelled", ctx.Err()
-	case <-deadlineCh:
-		return "timeout", context.DeadlineExceeded
-	case <-simCh:
+	// Production: wait for guest agent runner.exit (unless tests disable).
+	if w.WaitRealRunner && w.Pool != nil && w.Pool.RunnerWaiter() != nil {
+		log := w.Log
+		if log == nil {
+			log = slog.Default()
+		}
+		if deadline <= 0 {
+			deadline = 6 * time.Hour
+		}
+		waitCtx, cancel := context.WithTimeout(ctx, deadline)
+		defer cancel()
+		log.Info("waiting for guest runner.exit",
+			"vm_id", string(vmID),
+			"deadline", deadline.String(),
+		)
+		code, werr := w.Pool.RunnerWaiter().WaitRunner(waitCtx, vmID)
+		if werr != nil {
+			if errors.Is(werr, context.DeadlineExceeded) || errors.Is(waitCtx.Err(), context.DeadlineExceeded) {
+				return "timeout", context.DeadlineExceeded
+			}
+			return "cancelled", werr
+		}
+		log.Info("guest runner exited", "vm_id", string(vmID), "exit_code", code)
+		if code != 0 {
+			return "failure", nil
+		}
 		return "success", nil
 	}
+
+	// Unit/e2e without WaitRealRunner: finish immediately (legacy test default).
+	if w.Log != nil {
+		w.Log.Warn("WaitRealRunner disabled; finishing job without guest runner wait")
+	}
+	return "success", nil
 }

@@ -19,6 +19,9 @@ apt-get install -y \
   qemu-kvm \
   bridge-utils \
   iproute2 \
+  e2fsprogs \
+  debootstrap \
+  iptables \
   curl \
   ca-certificates
 
@@ -35,3 +38,4 @@ fi
 
 echo "prereqs ok; data root=${DATA_ROOT}"
 echo "next: install firecracker binary (see deploy/ubuntu/README.md)"
+echo "      then sudo ./deploy/ubuntu/build-guest-image.sh (see deploy/ubuntu/guest-image.md)"

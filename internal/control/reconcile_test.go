@@ -119,6 +119,50 @@ func TestReconciler_StaleMinted(t *testing.T) {
 	}
 }
 
+func TestReconciler_PruneFinished(t *testing.T) {
+	s := NewAssignmentStore()
+	now := time.Now().UTC()
+	s.Put(&Assignment{
+		JobID:      1,
+		Status:     AssignmentFinished,
+		CreatedAt:  now.Add(-10 * 24 * time.Hour),
+		FinishedAt: now.Add(-10 * 24 * time.Hour),
+	})
+	s.Put(&Assignment{
+		JobID:     2,
+		Status:    AssignmentMinted,
+		CreatedAt: now.Add(-10 * 24 * time.Hour),
+	})
+	s.Put(&Assignment{
+		JobID:      3,
+		Status:     AssignmentFinished,
+		CreatedAt:  now.Add(-time.Hour),
+		FinishedAt: now.Add(-time.Hour),
+	})
+	s.Put(&Assignment{
+		JobID:     4,
+		Status:    AssignmentAssigned,
+		CreatedAt: now.Add(-10 * 24 * time.Hour),
+	})
+
+	rec := &Reconciler{Store: s}
+	if n := rec.ReconcileOnce(context.Background()); n != 0 {
+		t.Fatalf("reconciled = %d want 0", n)
+	}
+	if s.Get(1) != nil {
+		t.Fatal("old finished should be pruned")
+	}
+	if s.Get(2) == nil {
+		t.Fatal("minted must not be pruned")
+	}
+	if s.Get(3) == nil {
+		t.Fatal("recent finished must remain")
+	}
+	if s.Get(4) == nil {
+		t.Fatal("assigned must not be pruned")
+	}
+}
+
 func TestAssignmentStore_ListStuck(t *testing.T) {
 	s := NewAssignmentStore()
 	now := time.Now().UTC()

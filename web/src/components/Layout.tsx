@@ -41,6 +41,10 @@ export function Layout({ setup, me, overview, onLogout, children }: Props) {
                 <span className="dot" />
                 Runners
               </NavLink>
+              <NavLink to="/vms" className={({ isActive }) => (isActive ? "active" : "")}>
+                <span className="dot" />
+                MicroVMs
+              </NavLink>
               <NavLink to="/jobs" className={({ isActive }) => (isActive ? "active" : "")}>
                 <span className="dot" />
                 Jobs

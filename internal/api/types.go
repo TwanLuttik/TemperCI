@@ -19,6 +19,30 @@ const (
 	JobStatusFailed   = "failed"
 )
 
+// VMUsage is a point-in-time view of one microVM on an agent host.
+type VMUsage struct {
+	// ID is the TemperCI microVM id.
+	ID string `json:"id"`
+	// State is agent pool state: warm, busy, pool_boot, destroying, etc.
+	State string `json:"state"`
+	// JobID when the VM is bound to a job (busy).
+	JobID string `json:"job_id,omitempty"`
+	// VCPUs configured for the guest.
+	VCPUs int `json:"vcpus"`
+	// MemoryMiB configured guest RAM.
+	MemoryMiB int `json:"memory_mib"`
+	// PID of the Firecracker (or VMM) process when known.
+	PID int `json:"pid,omitempty"`
+	// CPUPercent is host-side process CPU usage estimate (0–100 * nCPU scale optional).
+	CPUPercent float64 `json:"cpu_percent"`
+	// RSSMiB is resident set size of the VMM process in mebibytes.
+	RSSMiB float64 `json:"rss_mib"`
+	// DiskMiB is host instance directory size when available.
+	DiskMiB float64 `json:"disk_mib,omitempty"`
+	// SampledAt is when this sample was taken (UTC).
+	SampledAt time.Time `json:"sampled_at,omitempty"`
+}
+
 // RegisterRequest is sent by an agent on startup (or heartbeat re-register).
 type RegisterRequest struct {
 	// AgentID is a stable host identity (hostname or configured id).
@@ -34,6 +58,8 @@ type RegisterRequest struct {
 	Busy int `json:"busy,omitempty"`
 	// Labels optional host capability labels (reserved).
 	Labels []string `json:"labels,omitempty"`
+	// VMs is optional per-microVM usage for the dashboard (realtime).
+	VMs []VMUsage `json:"vms,omitempty"`
 }
 
 // RegisterResponse acknowledges registration.
@@ -100,6 +126,24 @@ type JobFinishedRequest struct {
 	VMID     string `json:"vm_id,omitempty"`
 	// Error is optional non-secret failure detail.
 	Error string `json:"error,omitempty"`
+	// Guest diagnostic logs (truncated by the agent). Never include JIT material.
+	RunnerLog  string `json:"runner_log,omitempty"`
+	AgentLog   string `json:"agent_log,omitempty"`
+	ConsoleLog string `json:"console_log,omitempty"`
+}
+
+// JobLogsRequest is an incremental log upload while a job is still running.
+type JobLogsRequest struct {
+	AgentID    string `json:"agent_id"`
+	JobID      int64  `json:"job_id"`
+	RunnerLog  string `json:"runner_log,omitempty"`
+	AgentLog   string `json:"agent_log,omitempty"`
+	ConsoleLog string `json:"console_log,omitempty"`
+}
+
+// JobLogsResponse acknowledges a log upload.
+type JobLogsResponse struct {
+	OK bool `json:"ok"`
 }
 
 // JobFinishedResponse acknowledges job finished.
@@ -123,6 +167,8 @@ type AgentInfo struct {
 	Labels       []string  `json:"labels,omitempty"`
 	RegisteredAt time.Time `json:"registered_at"`
 	LastSeenAt   time.Time `json:"last_seen_at"`
+	// VMs is the latest microVM usage sample from the agent (may be empty).
+	VMs []VMUsage `json:"vms,omitempty"`
 }
 
 // ControlMetrics is a scrapeable JSON metrics payload from temperci-control.

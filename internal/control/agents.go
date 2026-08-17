@@ -41,6 +41,9 @@ func (r *AgentRegistry) Register(req api.RegisterRequest) api.AgentInfo {
 	if len(req.Labels) > 0 {
 		info.Labels = append([]string(nil), req.Labels...)
 	}
+	if req.VMs != nil {
+		info.VMs = append([]api.VMUsage(nil), req.VMs...)
+	}
 	info.LastSeenAt = now
 	cp := *info
 	return cp

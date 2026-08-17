@@ -3,12 +3,14 @@ import { Navigate, Route, Routes, useLocation, useNavigate } from "react-router-
 import { api, type Me, type Overview, type SetupStatus } from "./api";
 import { Layout } from "./components/Layout";
 import { HostsPage } from "./pages/HostsPage";
+import { JobDetailPage } from "./pages/JobDetailPage";
 import { JobsPage } from "./pages/JobsPage";
 import { LoginPage } from "./pages/LoginPage";
 import { OverviewPage } from "./pages/OverviewPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { SetupPage } from "./pages/SetupPage";
 import { UsersPage } from "./pages/UsersPage";
+import { VMsPage } from "./pages/VMsPage";
 
 export default function App() {
   const [setup, setSetup] = useState<SetupStatus | null>(null);
@@ -108,7 +110,9 @@ export default function App() {
       <Routes>
         <Route path="/" element={<OverviewPage onOverview={setOverview} />} />
         <Route path="/hosts" element={<HostsPage />} />
+        <Route path="/vms" element={<VMsPage />} />
         <Route path="/jobs" element={<JobsPage />} />
+        <Route path="/jobs/:id" element={<JobDetailPage />} />
         <Route path="/settings" element={<SettingsPage onOverview={setOverview} />} />
         {me?.admin && setup.auth_mode === "password" ? (
           <Route path="/users" element={<UsersPage />} />

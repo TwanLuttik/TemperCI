@@ -97,8 +97,13 @@ func (r *Reconciler) ReconcileOnce(ctx context.Context) int {
 			n++
 		}
 	}
+
+	r.Store.PruneFinished(assignmentFinishedRetention)
 	return n
 }
+
+// assignmentFinishedRetention is how long finished/failed rows are kept.
+const assignmentFinishedRetention = 7 * 24 * time.Hour
 
 // Run loops until ctx is cancelled.
 func (r *Reconciler) Run(ctx context.Context) {

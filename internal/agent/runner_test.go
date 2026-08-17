@@ -49,9 +49,22 @@ func TestInjectRunner_WritesJITAndStarts(t *testing.T) {
 	if !strings.Contains(string(execLog), "run.sh") || !strings.Contains(string(execLog), "--jitconfig") {
 		t.Fatalf("exec.log = %s", execLog)
 	}
+	if strings.Contains(string(execLog), "/mnt/temperci/") {
+		t.Fatal("exec must pass --jitconfig as the encoded string, not a file path")
+	}
 	// Ensure we didn't write secret into exec.log
 	if strings.Contains(string(execLog), secret) {
 		t.Fatal("JIT secret leaked into exec.log")
+	}
+	cmdb, err := os.ReadFile(filepath.Join(layout.GuestDir(id), "runner.cmd"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(cmdb), "/mnt/temperci/") {
+		t.Fatal("runner.cmd must not imply --jitconfig is a file path")
+	}
+	if !strings.Contains(string(cmdb), "--jitconfig") {
+		t.Fatalf("runner.cmd = %s", cmdb)
 	}
 }
 

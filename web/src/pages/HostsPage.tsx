@@ -1,15 +1,21 @@
 import { useEffect, useState } from "react";
 import { api, type Host } from "../api";
+import { useRealtime } from "../hooks/useRealtime";
 
 export function HostsPage() {
   const [hosts, setHosts] = useState<Host[]>([]);
   const [err, setErr] = useState<string | null>(null);
+  const rt = useRealtime(true);
 
   useEffect(() => {
+    if (rt.last?.hosts) {
+      setHosts(rt.last.hosts);
+      return;
+    }
     api<{ hosts: Host[] }>("/api/v1/hosts")
       .then((d) => setHosts(d.hosts || []))
       .catch((e: Error) => setErr(e.message));
-  }, []);
+  }, [rt.last]);
 
   if (err) return <div className="err">{err}</div>;
 
@@ -19,7 +25,12 @@ export function HostsPage() {
         <p className="page-kicker">/ Runners</p>
         <h1>Host agents</h1>
         <p className="lead">
-          Capacity-aware hosts in your fleet. Warm pool size is the main lever for pickup latency.
+          Capacity-aware hosts in your fleet. Warm pool size is the main lever for pickup latency.{" "}
+          {rt.connected ? (
+            <span className="badge ok">live</span>
+          ) : (
+            <span className="badge warn">rest</span>
+          )}
         </p>
       </div>
       <div className="panel" style={{ overflow: "auto", padding: "8px 12px 4px" }}>

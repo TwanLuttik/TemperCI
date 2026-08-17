@@ -3,6 +3,7 @@ package agent_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -175,7 +176,7 @@ func TestWorker_NoCapacityDoesNotClaim(t *testing.T) {
 	if _, err := pool2.Bind(ctx, agent.JobPayload{JobID: "hold", JITConfig: "x"}); err != nil {
 		t.Fatal(err)
 	}
-	// busy=1 capacity=1 → free=0
+	// busy=1 capacity=1 → free=0; worker must not POST /claim.
 	w = &agent.Worker{Client: client, Pool: pool2, Capacity: 1, PollInterval: 15 * time.Millisecond}
 	runCtx, runCancel := context.WithTimeout(ctx, 80*time.Millisecond)
 	defer runCancel()
@@ -183,12 +184,141 @@ func TestWorker_NoCapacityDoesNotClaim(t *testing.T) {
 
 	mu.Lock()
 	defer mu.Unlock()
-	if len(claimBodies) == 0 {
-		t.Fatal("expected claim polls")
+	if len(claimBodies) != 0 {
+		t.Fatalf("expected no claims when free_slots=0, got %d: %+v", len(claimBodies), claimBodies)
 	}
-	for _, c := range claimBodies {
-		if c.FreeSlots != 0 {
-			t.Fatalf("expected free_slots=0 while busy, got %+v", c)
+}
+
+func TestWorker_ConcurrentJobsUpToCapacity(t *testing.T) {
+	store := control.NewAssignmentStore()
+	srv := control.NewServer(control.ServerConfig{
+		Store:      store,
+		AgentToken: "tok",
+		Logger:     slog.Default(),
+	})
+	ts := httptest.NewServer(srv.Handler())
+	t.Cleanup(ts.Close)
+
+	root := t.TempDir()
+	layout := vmm.NewLayout(root)
+	if err := cleanup.EnsureLayout(layout); err != nil {
+		t.Fatal(err)
+	}
+	img := filepath.Join(layout.ImagesDir(), "base")
+	if err := os.WriteFile(img, []byte("b"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	mgr, err := fake.New(layout)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var startMu sync.Mutex
+	started := 0
+	maxStarted := 0
+	release := make(chan struct{})
+	runner := &agent.StubRunner{
+		StartFunc: func(ctx context.Context, id vmm.ID, job agent.JobPayload) error {
+			startMu.Lock()
+			started++
+			if started > maxStarted {
+				maxStarted = started
+			}
+			startMu.Unlock()
+			select {
+			case <-release:
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+			return nil
+		},
+	}
+
+	pool, err := agent.NewPool(agent.PoolConfig{
+		MinReady:          2,
+		MaxReady:          2,
+		ImagePath:         img,
+		VCPUs:             1,
+		MemoryMiB:         256,
+		ReconcileInterval: 20 * time.Millisecond,
+		BindWait:          time.Second,
+	}, agent.PoolDeps{
+		VMM:     mgr,
+		Cleaner: &cleanup.Cleaner{VMM: mgr, Layout: layout},
+		Runner:  runner,
+		Log:     slog.Default(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	if err := pool.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = pool.Shutdown(context.Background()) })
+	waitFor(t, 2*time.Second, func() bool { return pool.Counts().Warm >= 2 })
+
+	for _, id := range []int64{101, 102, 103} {
+		store.Put(&control.Assignment{
+			JobID:            id,
+			EncodedJITConfig: fmt.Sprintf("jit-%d", id),
+			Status:           control.AssignmentMinted,
+			Org:              "acme",
+		})
+	}
+
+	client := agent.NewControlClient(ts.URL, "conc-agent", "tok", ts.Client())
+	worker := &agent.Worker{
+		Client:       client,
+		Pool:         pool,
+		Log:          slog.Default(),
+		PollInterval: 15 * time.Millisecond,
+		Capacity:     2,
+	}
+	go func() { _ = worker.Run(ctx) }()
+
+	// Two jobs must be in StartRunner at once (Capacity=2).
+	waitFor(t, 3*time.Second, func() bool {
+		startMu.Lock()
+		defer startMu.Unlock()
+		return started >= 2
+	})
+	time.Sleep(80 * time.Millisecond)
+	startMu.Lock()
+	if started != 2 {
+		startMu.Unlock()
+		t.Fatalf("in-flight starts = %d want 2 (capacity)", started)
+	}
+	if maxStarted != 2 {
+		startMu.Unlock()
+		t.Fatalf("max in-flight = %d want 2", maxStarted)
+	}
+	startMu.Unlock()
+
+	active := 0
+	for _, id := range []int64{101, 102, 103} {
+		a := store.Get(id)
+		if a == nil {
+			continue
+		}
+		switch a.Status {
+		case control.AssignmentAssigned, control.AssignmentStarted, control.AssignmentFinished:
+			active++
 		}
 	}
+	if active != 2 {
+		t.Fatalf("claimed/started jobs = %d want 2 while first pair blocked", active)
+	}
+
+	close(release)
+	waitFor(t, 4*time.Second, func() bool {
+		for _, id := range []int64{101, 102, 103} {
+			a := store.Get(id)
+			if a == nil || a.Status != control.AssignmentFinished {
+				return false
+			}
+		}
+		return true
+	})
 }

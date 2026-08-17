@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"io"
 	"net"
 	"net/http"
@@ -82,10 +83,10 @@ func New(cfg Config) (*Manager, error) {
 		cfg.StopGrace = 2 * time.Second
 	}
 	if cfg.SetupNetwork == nil {
-		cfg.SetupNetwork = defaultSetupNetwork
+		cfg.SetupNetwork = realSetupNetwork
 	}
 	if cfg.TeardownNetwork == nil {
-		cfg.TeardownNetwork = defaultTeardownNetwork
+		cfg.TeardownNetwork = realTeardownNetwork
 	}
 	if err := os.MkdirAll(cfg.Layout.ImagesDir(), 0o755); err != nil {
 		return nil, fmt.Errorf("firecracker: images dir: %w", err)
@@ -156,6 +157,14 @@ func (m *Manager) Create(ctx context.Context, cfg vmm.Config) (*vmm.Info, error)
 		_ = os.RemoveAll(dir)
 		return nil, fmt.Errorf("firecracker: create overlay: %w", err)
 	}
+
+	// Second disk for host↔guest inject (JIT + runner.exit). Best-effort format.
+	if err := createInjectDrive(m.layout.InjectDrivePath(cfg.ID)); err != nil {
+		// Tests without mkfs: leave empty file so Destroy still works.
+		_ = os.WriteFile(m.layout.InjectDrivePath(cfg.ID), make([]byte, 4096), 0o600)
+		_ = os.WriteFile(filepath.Join(dir, "inject.warn"), []byte(err.Error()), 0o600)
+	}
+	_ = os.MkdirAll(m.layout.GuestDir(cfg.ID), 0o700)
 
 	netState, err := m.cfg.SetupNetwork(cfg.ID, m.layout.NetDir(cfg.ID))
 	if err != nil {
@@ -373,12 +382,31 @@ func (m *Manager) startProcess(ctx context.Context, id vmm.ID, sock string) (int
 		return m.cfg.RunCmd(ctx, m.cfg.Binary, args...)
 	}
 	cmd := exec.CommandContext(ctx, m.cfg.Binary, args...)
-	cmd.Stdout = nil
-	cmd.Stderr = nil
+	// Capture guest serial (console=ttyS0) + FC logs for operator diagnosis.
+	logDir := m.layout.LogDir(id)
+	_ = os.MkdirAll(logDir, 0o755)
+	consolePath := filepath.Join(logDir, "console.log")
+	consoleFile, err := os.OpenFile(consolePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		cmd.Stdout = nil
+		cmd.Stderr = nil
+	} else {
+		cmd.Stdout = consoleFile
+		cmd.Stderr = consoleFile
+	}
 	if err := cmd.Start(); err != nil {
+		if consoleFile != nil {
+			_ = consoleFile.Close()
+		}
 		return 0, nil, fmt.Errorf("firecracker: start: %w", err)
 	}
-	wait := func() error { return cmd.Wait() }
+	wait := func() error {
+		err := cmd.Wait()
+		if consoleFile != nil {
+			_ = consoleFile.Close()
+		}
+		return err
+	}
 	return cmd.Process.Pid, wait, nil
 }
 
@@ -395,10 +423,10 @@ func (m *Manager) configureAndStart(ctx context.Context, id vmm.ID, meta vmm.Ins
 	}); err != nil {
 		return fmt.Errorf("firecracker: machine-config: %w", err)
 	}
-	// Boot source
+	// Boot source (static IP via kernel cmdline when net files present).
 	if err := client.put(ctx, "/boot-source", map[string]any{
 		"kernel_image_path": meta.KernelPath,
-		"boot_args":         "console=ttyS0 reboot=k panic=1 pci=off",
+		"boot_args":         bootArgs(id, m.layout.NetDir(id)),
 	}); err != nil {
 		return fmt.Errorf("firecracker: boot-source: %w", err)
 	}
@@ -411,15 +439,29 @@ func (m *Manager) configureAndStart(ctx context.Context, id vmm.ID, meta vmm.Ins
 	}); err != nil {
 		return fmt.Errorf("firecracker: drives: %w", err)
 	}
-	// Optional network interface when tap was provisioned.
+	// Inject drive (/dev/vdb) — JIT + runner.exit for guest agent.
+	injectPath := m.layout.InjectDrivePath(id)
+	if _, err := os.Stat(injectPath); err == nil {
+		if err := client.put(ctx, "/drives/inject", map[string]any{
+			"drive_id":       "inject",
+			"path_on_host":   injectPath,
+			"is_root_device": false,
+			"is_read_only":   false,
+		}); err != nil {
+			return fmt.Errorf("firecracker: inject drive: %w", err)
+		}
+	}
+	// Network interface when a real tap was provisioned.
 	if meta.Network.TapDevice != "" {
-		_ = client.put(ctx, "/network-interfaces/eth0", map[string]any{
-			"iface_id":     "eth0",
-			"host_dev_name": meta.Network.TapDevice,
-			"guest_mac":    "AA:FC:00:00:00:01",
-		})
-		// Network setup may fail on hosts without CAP_NET_ADMIN; ignore here
-		// when tap is only a marker. Real boot on Ubuntu will have a real tap.
+		if _, err := os.Stat(filepath.Join(m.layout.NetDir(id), "host_ip")); err == nil {
+			if err := client.put(ctx, "/network-interfaces/eth0", map[string]any{
+				"iface_id":      "eth0",
+				"host_dev_name": meta.Network.TapDevice,
+				"guest_mac":     "AA:FC:00:00:00:01",
+			}); err != nil {
+				return fmt.Errorf("firecracker: network-interfaces: %w", err)
+			}
+		}
 	}
 	// Start
 	if err := client.put(ctx, "/actions", map[string]any{
@@ -520,8 +562,18 @@ func defaultTeardownNetwork(id vmm.ID, net vmm.NetworkState) error {
 	return nil
 }
 
-func tapName(id vmm.ID) string  { return "tc-tap-" + string(id) }
-func netNSName(id vmm.ID) string { return "tc-ns-" + string(id) }
+// Linux IFNAMSIZ is 16 (15 usable chars). VM ids are long — hash to a short name.
+func tapName(id vmm.ID) string {
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(id))
+	return fmt.Sprintf("tc%08x", h.Sum32()) // 10 chars
+}
+
+func netNSName(id vmm.ID) string {
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(id))
+	return fmt.Sprintf("tn%08x", h.Sum32())
+}
 
 func copyFile(src, dst string) error {
 	in, err := os.Open(src)

@@ -294,6 +294,30 @@
     @apply mt-3 text-[13px] text-bad;
   }
 
+  .log-tabs {
+    @apply mb-3.5 flex flex-wrap gap-2;
+  }
+
+  .log-tabs button {
+    @apply px-3 py-1.5 text-xs;
+  }
+
+  .event-list {
+    @apply m-0 flex list-none flex-col gap-2 p-0;
+  }
+
+  .event-list li {
+    @apply flex flex-wrap items-baseline gap-2.5 border-b border-line-soft py-1.5 text-[13px];
+  }
+
+  .event-list li:last-child {
+    @apply border-b-0;
+  }
+
+  .log-pre {
+    @apply m-0 max-h-[28rem] overflow-auto rounded-lg border border-line-soft bg-canvas p-3 font-mono text-[11px] leading-relaxed whitespace-pre-wrap text-zinc-300;
+  }
+
   .okmsg {
     @apply mt-3 text-[13px] text-ok;
   }

@@ -1,5 +1,5 @@
 // Package store provides SQLite persistence for the operator dashboard
-// (users, sessions, setup metadata).
+// (users, sessions, setup metadata) and durable job assignments.
 package store
 
 import (
@@ -90,6 +90,37 @@ CREATE TABLE IF NOT EXISTS sessions (
 CREATE TABLE IF NOT EXISTS meta (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS assignments (
+  job_id INTEGER PRIMARY KEY,
+  run_id INTEGER NOT NULL DEFAULT 0,
+  org TEXT NOT NULL,
+  repo_full_name TEXT NOT NULL DEFAULT '',
+  labels_json TEXT NOT NULL DEFAULT '[]',
+  installation_id INTEGER NOT NULL DEFAULT 0,
+  runner_name TEXT NOT NULL DEFAULT '',
+  runner_id INTEGER NOT NULL DEFAULT 0,
+  encoded_jit_config TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  assigned_at TEXT NOT NULL DEFAULT '',
+  started_at TEXT NOT NULL DEFAULT '',
+  finished_at TEXT NOT NULL DEFAULT '',
+  assigned_agent_id TEXT NOT NULL DEFAULT '',
+  vm_id TEXT NOT NULL DEFAULT '',
+  warm_bind INTEGER NOT NULL DEFAULT 0,
+  outcome TEXT NOT NULL DEFAULT '',
+  error TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_assignments_status ON assignments(status);
+CREATE INDEX IF NOT EXISTS idx_assignments_created ON assignments(created_at);
+CREATE TABLE IF NOT EXISTS job_logs (
+  job_id INTEGER PRIMARY KEY,
+  runner_log TEXT NOT NULL DEFAULT '',
+  agent_log TEXT NOT NULL DEFAULT '',
+  console_log TEXT NOT NULL DEFAULT '',
+  events_json TEXT NOT NULL DEFAULT '[]',
+  updated_at TEXT NOT NULL
 );
 `)
 	if err != nil {

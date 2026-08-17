@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -29,6 +30,8 @@ type DashboardConfig struct {
 	Store      *store.Store
 	// Ready is false until GitHub client + full agent APIs are available.
 	FleetReady bool
+	// Hub optional; if nil, server creates one.
+	Hub *Hub
 }
 
 func (s *Server) mountDashboard(d DashboardConfig) {
@@ -46,12 +49,44 @@ func (s *Server) mountDashboard(d DashboardConfig) {
 	s.mux.HandleFunc("POST /api/v1/settings/config", s.withUIAuth(s.handleSettingsConfigSave, true))
 	s.mux.HandleFunc("GET /api/v1/hosts", s.withUIAuth(s.handleHosts, false))
 	s.mux.HandleFunc("GET /api/v1/jobs", s.withUIAuth(s.handleJobs, false))
+	s.mux.HandleFunc("GET /api/v1/jobs/{id}", s.withUIAuth(s.handleJobDetail, false))
 	s.mux.HandleFunc("GET /api/v1/users", s.withUIAuth(s.handleListUsers, true))
 	s.mux.HandleFunc("POST /api/v1/users", s.withUIAuth(s.handleCreateUser, true))
 	s.mux.HandleFunc("GET /api/v1/system/status", s.withUIAuth(s.handleSystemStatus, false))
 	s.mux.HandleFunc("POST /api/v1/system/restart", s.withUIAuth(s.handleSystemRestart, true))
+	s.mux.HandleFunc("GET /api/v1/ws", s.handleDashboardWS)
+	s.mux.HandleFunc("GET /api/v1/vms", s.withUIAuth(s.handleVMs, false))
 	// Vite SPA (embedded dist/). More specific /api and /v1 routes take precedence.
 	s.mux.Handle("/", webui.SPAHandler())
+}
+
+func (s *Server) handleDashboardWS(w http.ResponseWriter, r *http.Request) {
+	// Same auth as UI: open mode or valid session cookie.
+	if _, err := s.resolvePrincipal(r); err != nil {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	if s.hub == nil {
+		http.Error(w, "websocket unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	snap := s.BuildSnapshot()
+	if snap.Overview != nil {
+		snap.Overview["ws_clients"] = s.hub.ClientCount() + 1
+	}
+	raw, err := json.Marshal(snap)
+	if err != nil {
+		raw = []byte(`{"type":"hello"}`)
+	}
+	s.hub.ServeWS(w, r, raw)
+}
+
+func (s *Server) handleVMs(w http.ResponseWriter, r *http.Request, _ *uiPrincipal) {
+	snap := s.BuildSnapshot()
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":  true,
+		"vms": snap.VMs,
+	})
 }
 
 type uiPrincipal struct {
@@ -716,6 +751,7 @@ func (s *Server) handleJobs(w http.ResponseWriter, r *http.Request, _ *uiPrincip
 		VMID            string    `json:"vm_id,omitempty"`
 		WarmBind        bool      `json:"warm_bind,omitempty"`
 		Outcome         string    `json:"outcome,omitempty"`
+		Error           string    `json:"error,omitempty"`
 		CreatedAt       time.Time `json:"created_at"`
 		StartedAt       time.Time `json:"started_at,omitempty"`
 		FinishedAt      time.Time `json:"finished_at,omitempty"`
@@ -733,12 +769,56 @@ func (s *Server) handleJobs(w http.ResponseWriter, r *http.Request, _ *uiPrincip
 			VMID:            a.VMID,
 			WarmBind:        a.WarmBind,
 			Outcome:         a.Outcome,
+			Error:           a.Error,
 			CreatedAt:       a.CreatedAt,
 			StartedAt:       a.StartedAt,
 			FinishedAt:      a.FinishedAt,
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "jobs": rows})
+}
+
+func (s *Server) handleJobDetail(w http.ResponseWriter, r *http.Request, _ *uiPrincipal) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil || id == 0 {
+		writeAPIError(w, http.StatusBadRequest, "invalid job id")
+		return
+	}
+	a := s.store.Get(id)
+	if a == nil {
+		writeAPIError(w, http.StatusNotFound, "job not found")
+		return
+	}
+	var logs *store.JobLog
+	if db := s.jobDB(); db != nil {
+		logs, _ = db.GetJobLog(id)
+	}
+	if logs == nil {
+		logs = &store.JobLog{JobID: id, Events: []store.JobEvent{}}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":   true,
+		"job": map[string]any{
+			"job_id":            a.JobID,
+			"run_id":            a.RunID,
+			"org":               a.Org,
+			"repo_full_name":    a.RepoFullName,
+			"labels":            a.Labels,
+			"status":            string(a.Status),
+			"assigned_agent_id": a.AssignedAgentID,
+			"vm_id":             a.VMID,
+			"warm_bind":         a.WarmBind,
+			"outcome":           a.Outcome,
+			"error":             a.Error,
+			"created_at":        a.CreatedAt,
+			"assigned_at":       a.AssignedAt,
+			"started_at":        a.StartedAt,
+			"finished_at":       a.FinishedAt,
+			"runner_name":       a.RunnerName,
+			"runner_id":         a.RunnerID,
+		},
+		"logs": logs,
+	})
 }
 
 func (s *Server) handleListUsers(w http.ResponseWriter, r *http.Request, _ *uiPrincipal) {

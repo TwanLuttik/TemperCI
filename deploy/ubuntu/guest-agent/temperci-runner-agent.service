@@ -1,0 +1,19 @@
+[Unit]
+Description=TemperCI guest runner agent (JIT one-shot)
+# Do NOT wait for network-online: this image uses kernel cmdline IP and may not
+# run networkd, so network-online can hang forever and the agent never starts.
+After=local-fs.target
+DefaultDependencies=yes
+
+[Service]
+Type=simple
+Restart=no
+ExecStart=/usr/local/sbin/temperci-runner-agent.sh
+StandardOutput=journal+console
+StandardError=journal+console
+# Long GitHub jobs (simple service runs until runner exits)
+TimeoutStartSec=infinity
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

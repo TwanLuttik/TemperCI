@@ -61,7 +61,12 @@ func main() {
 		cfg.SetupCompleted = true
 	}
 
-	storeMem := control.NewAssignmentStore()
+	storeMem, err := control.NewAssignmentStoreWithPersister(control.NewStorePersister(db))
+	if err != nil {
+		log.Error("load persisted assignments", "err", err)
+		os.Exit(1)
+	}
+	log.Info("loaded assignments", "count", storeMem.Len(), "pending", storeMem.PendingLen())
 	agents := control.NewAgentRegistry()
 
 	dash := &control.DashboardConfig{
@@ -97,6 +102,8 @@ func main() {
 		log.Info("setup mode enabled — open dashboard to complete first-run wizard", "addr", cfg.ListenAddr)
 	}
 
+	hub := control.NewHub(log)
+	dash.Hub = hub
 	srv := control.NewServer(control.ServerConfig{
 		Handler:       handler,
 		Store:         storeMem,
@@ -105,6 +112,7 @@ func main() {
 		AgentToken:    cfg.AgentToken,
 		Logger:        log,
 		Dashboard:     dash,
+		Hub:           hub,
 	})
 
 	tlsFiles := control.TLSFiles{
@@ -127,6 +135,20 @@ func main() {
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
+
+	// Periodic snapshot for WebSocket dashboards (agent heartbeats also trigger publishes).
+	go func() {
+		t := time.NewTicker(2 * time.Second)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				srv.PublishSnapshot()
+			}
+		}
+	}()
 
 	if handler != nil {
 		stuckAfter := time.Duration(cfg.AssignmentStuckSeconds) * time.Second

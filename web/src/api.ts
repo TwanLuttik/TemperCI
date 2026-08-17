@@ -79,6 +79,13 @@ export type Host = {
   busy?: number;
   last_seen_at?: string;
   labels?: string[];
+  vms?: {
+    id: string;
+    state: string;
+    cpu_percent?: number;
+    rss_mib?: number;
+    memory_mib?: number;
+  }[];
 };
 
 export type Job = {
@@ -92,9 +99,35 @@ export type Job = {
   vm_id?: string;
   warm_bind?: boolean;
   outcome?: string;
+  error?: string;
   created_at?: string;
+  assigned_at?: string;
   started_at?: string;
   finished_at?: string;
+  runner_name?: string;
+  runner_id?: number;
+};
+
+export type JobEvent = {
+  time: string;
+  source: string;
+  level?: string;
+  message: string;
+};
+
+export type JobLogs = {
+  job_id?: number;
+  runner_log?: string;
+  agent_log?: string;
+  console_log?: string;
+  events?: JobEvent[];
+  updated_at?: string;
+};
+
+export type JobDetail = {
+  ok: boolean;
+  job: Job;
+  logs: JobLogs;
 };
 
 export type User = {
