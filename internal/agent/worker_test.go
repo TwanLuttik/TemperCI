@@ -442,3 +442,117 @@ func TestWorker_WarmStillClaimsWhenCreateBlocked(t *testing.T) {
 		return claims > 0 && lastFree == 1
 	})
 }
+
+func TestWorker_LeftoverFullClaimsOnlyOneWarmJob(t *testing.T) {
+	store := control.NewAssignmentStore()
+	srv := control.NewServer(control.ServerConfig{
+		Store:      store,
+		AgentToken: "tok",
+		Logger:     slog.Default(),
+	})
+	ts := httptest.NewServer(srv.Handler())
+	t.Cleanup(ts.Close)
+
+	root := t.TempDir()
+	layout := vmm.NewLayout(root)
+	if err := cleanup.EnsureLayout(layout); err != nil {
+		t.Fatal(err)
+	}
+	img := filepath.Join(layout.ImagesDir(), "base")
+	if err := os.WriteFile(img, []byte("b"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	mgr, err := fake.New(layout)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cur := &atomicInventory{inv: agent.HostInventory{
+		RAMTotalMiB: 65536, RAMAvailMiB: 60000, DiskTotalMiB: 200000, DiskFreeMiB: 200000,
+	}}
+	pool, err := agent.NewPool(agent.PoolConfig{
+		MinReady: 1, MaxReady: 2, ImagePath: img, VCPUs: 1, MemoryMiB: 4096,
+		DiskPerVMMiB: 256, ReconcileInterval: time.Hour, BindWait: 50 * time.Millisecond,
+	}, agent.PoolDeps{
+		VMM: mgr, Cleaner: &cleanup.Cleaner{VMM: mgr, Layout: layout},
+		Runner: &agent.StubRunner{}, Inventory: cur, Log: slog.Default(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	if err := pool.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = pool.Shutdown(context.Background()) })
+	waitFor(t, 2*time.Second, func() bool { return pool.Counts().Warm >= 1 })
+	cur.set(agent.HostInventory{RAMTotalMiB: 65536, RAMAvailMiB: 100, DiskTotalMiB: 200000, DiskFreeMiB: 200000})
+
+	for _, id := range []int64{201, 202} {
+		store.Put(&control.Assignment{
+			JobID:            id,
+			EncodedJITConfig: fmt.Sprintf("jit-%d", id),
+			Status:           control.AssignmentMinted,
+			Org:              "acme",
+		})
+	}
+
+	gate := make(chan struct{})
+	t.Cleanup(func() {
+		select {
+		case <-gate:
+		default:
+			close(gate)
+		}
+	})
+
+	client := agent.NewControlClient(ts.URL, "leftover-agent", "tok", ts.Client())
+	worker := &agent.Worker{
+		Client:       client,
+		Pool:         pool,
+		Log:          slog.Default(),
+		PollInterval: 15 * time.Millisecond,
+		Capacity:     2,
+		JobSimulate:  time.Hour,
+		BeforeBind:   func() { <-gate },
+	}
+	go func() { _ = worker.Run(ctx) }()
+
+	waitFor(t, 3*time.Second, func() bool {
+		a := store.Get(201)
+		b := store.Get(202)
+		if a == nil || b == nil {
+			return false
+		}
+		claimed := 0
+		if a.Status != control.AssignmentMinted {
+			claimed++
+		}
+		if b.Status != control.AssignmentMinted {
+			claimed++
+		}
+		return claimed >= 1
+	})
+	time.Sleep(120 * time.Millisecond)
+
+	claimed, pending := 0, 0
+	errored := 0
+	for _, id := range []int64{201, 202} {
+		a := store.Get(id)
+		if a == nil {
+			t.Fatalf("missing job %d", id)
+		}
+		switch a.Status {
+		case control.AssignmentMinted:
+			pending++
+		case control.AssignmentAssigned, control.AssignmentStarted:
+			claimed++
+		case control.AssignmentFinished, control.AssignmentFailed:
+			claimed++
+			errored++
+		}
+	}
+	if claimed != 1 || pending != 1 {
+		t.Fatalf("claimed=%d pending=%d errored=%d want 1 claimed / 1 pending", claimed, pending, errored)
+	}
+}

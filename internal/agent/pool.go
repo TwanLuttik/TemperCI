@@ -421,6 +421,13 @@ func (p *Pool) ImagePath() string {
 	return p.cfg.ImagePath
 }
 
+// DiskPerVMMiB returns the overlay estimate used by admission.
+func (p *Pool) DiskPerVMMiB() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.cfg.DiskPerVMMiB
+}
+
 // HostLayout is the on-disk layout used for instance scratch and job-logs.
 func (p *Pool) HostLayout() vmm.Layout {
 	if p == nil || p.cleaner == nil {
@@ -477,6 +484,7 @@ func (p *Pool) ReloadImage(ctx context.Context, imagePath string, drain bool) (d
 	if imagePath != "" {
 		p.mu.Lock()
 		p.cfg.ImagePath = imagePath
+		p.cfg.DiskPerVMMiB = OverlayEstimateMiB(imagePath)
 		p.mu.Unlock()
 		p.log.Info("pool image path updated", "image_path", imagePath)
 	}
@@ -795,8 +803,7 @@ func (p *Pool) canCreateLocked() bool {
 	c := p.countsLocked()
 	total := c.Total() + p.createInFlight
 	if total >= p.cfg.MaxTotalVMs {
-		p.lastAdmit = "max_total_vms"
-		p.log.Error("refusing create: at max_total_vms",
+		p.noteAdmitRefuse("max_total_vms", "refusing create: at max_total_vms",
 			"total", total,
 			"max_total_vms", p.cfg.MaxTotalVMs,
 			"destroying", c.Destroying,
@@ -805,18 +812,17 @@ func (p *Pool) canCreateLocked() bool {
 		return false
 	}
 	if p.inventory == nil {
+		p.lastAdmit = ""
 		return true
 	}
 	inv, err := p.inventory.Sample()
 	if err != nil {
-		p.lastAdmit = "inventory_error"
-		p.log.Error("refusing create: inventory sample failed", "err", err)
+		p.noteAdmitRefuse("inventory_error", "refusing create: inventory sample failed", "err", err)
 		return false
 	}
 	dec := p.admission().CanCreate(inv, total)
 	if !dec.OK {
-		p.lastAdmit = dec.Reason
-		p.log.Error("refusing create: host resources",
+		p.noteAdmitRefuse(dec.Reason, "refusing create: host resources",
 			"reason", dec.Reason,
 			"allocated", total,
 			"memory_mib", p.cfg.MemoryMiB,
@@ -825,7 +831,20 @@ func (p *Pool) canCreateLocked() bool {
 		)
 		return false
 	}
+	p.lastAdmit = ""
 	return true
+}
+
+// noteAdmitRefuse records a refuse reason. Warns on a new reason; Debug on repeats
+// so leftover-full Bind/replenish retries do not spam.
+func (p *Pool) noteAdmitRefuse(reason, msg string, args ...any) {
+	repeat := p.lastAdmit == reason
+	p.lastAdmit = reason
+	if repeat {
+		p.log.Debug(msg, args...)
+		return
+	}
+	p.log.Warn(msg, args...)
 }
 
 func (p *Pool) admission() Admission {

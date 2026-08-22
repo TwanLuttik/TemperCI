@@ -509,6 +509,72 @@ func TestPool_LiveRAMBlocksColdCreate(t *testing.T) {
 	}
 }
 
+func TestPool_LastAdmitClearedWhenCreateSucceeds(t *testing.T) {
+	cur := &atomicInventory{inv: agent.HostInventory{
+		RAMTotalMiB: 65536, RAMAvailMiB: 512, DiskTotalMiB: 200000, DiskFreeMiB: 200000,
+	}}
+	p := testPool(t, agent.PoolConfig{
+		MinReady: 1, MaxReady: 2, MemoryMiB: 4096, DiskPerVMMiB: 256,
+		ReserveRAMMiB: 0, ReserveDiskMiB: 0,
+	}, func(d *agent.PoolDeps, _ *fake.Manager) {
+		d.Inventory = cur
+	})
+	waitFor(t, 2*time.Second, func() bool { return p.LastAdmitReason() == agent.ReasonRAMAvail })
+	cur.set(agent.HostInventory{RAMTotalMiB: 65536, RAMAvailMiB: 60000, DiskTotalMiB: 200000, DiskFreeMiB: 200000})
+	waitFor(t, 2*time.Second, func() bool { return p.Counts().Warm >= 1 })
+	if got := p.LastAdmitReason(); got != "" {
+		t.Fatalf("LastAdmitReason=%q after successful create, want empty", got)
+	}
+}
+
+func TestPool_ReloadImageRefreshesDiskPerVMMiB(t *testing.T) {
+	root := t.TempDir()
+	layout := vmm.NewLayout(root)
+	if err := cleanup.EnsureLayout(layout); err != nil {
+		t.Fatal(err)
+	}
+	img1 := filepath.Join(layout.ImagesDir(), "small")
+	img2 := filepath.Join(layout.ImagesDir(), "large")
+	if err := os.WriteFile(img1, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(img2, make([]byte, 5*1024*1024), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	mgr, err := fake.New(layout)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := agent.NewPool(agent.PoolConfig{
+		MinReady: 0, MaxReady: 1, ImagePath: img1, VCPUs: 1, MemoryMiB: 256,
+		ReconcileInterval: time.Hour,
+	}, agent.PoolDeps{
+		VMM: mgr, Cleaner: &cleanup.Cleaner{VMM: mgr, Layout: layout},
+		Runner: &agent.StubRunner{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = p.Shutdown(context.Background()) })
+	if err := p.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	wantSmall := agent.OverlayEstimateMiB(img1)
+	if got := p.DiskPerVMMiB(); got != wantSmall {
+		t.Fatalf("DiskPerVMMiB=%d want %d", got, wantSmall)
+	}
+	if _, err := p.ReloadImage(context.Background(), img2, false); err != nil {
+		t.Fatal(err)
+	}
+	wantLarge := agent.OverlayEstimateMiB(img2)
+	if wantLarge == wantSmall {
+		t.Fatalf("test images must differ in overlay estimate: both %d", wantSmall)
+	}
+	if got := p.DiskPerVMMiB(); got != wantLarge {
+		t.Fatalf("DiskPerVMMiB=%d want %d after larger rootfs", got, wantLarge)
+	}
+}
+
 func TestPool_WarmBindWhenCreateBlocked(t *testing.T) {
 	// Huge RAM at start so one warm VM boots; then flip live RAM down.
 	cur := &atomicInventory{inv: agent.HostInventory{
