@@ -178,6 +178,7 @@ func (w *Worker) snapshot() CapacitySnapshot {
 		VMs:         w.Pool.ListUsage(),
 		CachedRepos: repos,
 		Cache:       cache,
+		Resources:   w.Pool.HostResources(),
 	}
 }
 

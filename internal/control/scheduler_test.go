@@ -121,3 +121,33 @@ func TestMultiHost_RegistryCapacitySnapshot(t *testing.T) {
 		t.Fatalf("list = %+v", list)
 	}
 }
+
+func TestRegister_StoresHostResources(t *testing.T) {
+	srv, _ := testAgentServer(t)
+	req := agentReq(t, http.MethodPost, "/v1/agent/register", "agent-shared-token", api.RegisterRequest{
+		AgentID:     "box-1",
+		MaxCapacity: 1,
+		Capacity:    1,
+		Resources: &api.HostResources{
+			RAMTotalMiB:        16384,
+			RAMAvailMiB:        9000,
+			DiskFreeMiB:        100000,
+			NumCPU:             8,
+			ConfiguredMaxReady: 4,
+			EffectiveMaxReady:  1,
+			ClampReason:        "ram",
+		},
+	})
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("register: %d", rr.Code)
+	}
+	info := srv.Agents().Get("box-1")
+	if info == nil || info.Resources == nil {
+		t.Fatal("expected resources on agent")
+	}
+	if info.Resources.EffectiveMaxReady != 1 || info.Resources.ClampReason != "ram" || info.Resources.NumCPU != 8 {
+		t.Fatalf("resources %+v", info.Resources)
+	}
+}

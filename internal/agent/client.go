@@ -86,6 +86,7 @@ type CapacitySnapshot struct {
 	VMs         []api.VMUsage
 	CachedRepos []string
 	Cache       *api.CacheUsage
+	Resources   *api.HostResources
 }
 
 // Register announces this agent to the control plane with capacity.
@@ -100,6 +101,7 @@ func (c *ControlClient) Register(ctx context.Context, cap CapacitySnapshot) ([]a
 		VMs:         cap.VMs,
 		CachedRepos: cap.CachedRepos,
 		Cache:       cap.Cache,
+		Resources:   cap.Resources,
 	}
 	var resp api.RegisterResponse
 	if err := c.post(ctx, "/v1/agent/register", req, &resp); err != nil {

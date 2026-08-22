@@ -43,6 +43,19 @@ type VMUsage struct {
 	SampledAt time.Time `json:"sampled_at,omitempty"`
 }
 
+// HostResources is the agent's view of leftover host compute and the clamped slot cap.
+type HostResources struct {
+	RAMTotalMiB        int    `json:"ram_total_mib"`
+	RAMAvailMiB        int    `json:"ram_avail_mib"`
+	DiskTotalMiB       int    `json:"disk_total_mib"`
+	DiskFreeMiB        int    `json:"disk_free_mib"`
+	NumCPU             int    `json:"num_cpu"`
+	ConfiguredMaxReady int    `json:"configured_max_ready"`
+	EffectiveMaxReady  int    `json:"effective_max_ready"`
+	ClampReason        string `json:"clamp_reason,omitempty"`
+	LastAdmitReason    string `json:"last_admit_reason,omitempty"`
+}
+
 // RegisterRequest is sent by an agent on startup (or heartbeat re-register).
 type RegisterRequest struct {
 	// AgentID is a stable host identity (hostname or configured id).
@@ -63,13 +76,14 @@ type RegisterRequest struct {
 	// CachedRepos is org/repo namespaces present in this agent's local cache.
 	CachedRepos []string `json:"cached_repos,omitempty"`
 	// Cache is the latest host-local Actions cache inventory.
-	Cache *CacheUsage `json:"cache,omitempty"`
+	Cache     *CacheUsage    `json:"cache,omitempty"`
+	Resources *HostResources `json:"resources,omitempty"`
 }
 
 // RegisterResponse acknowledges registration.
 type RegisterResponse struct {
-	OK      bool      `json:"ok"`
-	AgentID string    `json:"agent_id"`
+	OK      bool   `json:"ok"`
+	AgentID string `json:"agent_id"`
 	// CacheOps are pending operator cache commands for this agent to apply.
 	CacheOps []CacheOp `json:"cache_ops,omitempty"`
 }
@@ -119,9 +133,9 @@ type CacheClearRequest struct {
 
 // CacheClearResponse reports how many agents were queued.
 type CacheClearResponse struct {
-	OK    bool   `json:"ok"`
-	Queued int   `json:"queued"`
-	Error string `json:"error,omitempty"`
+	OK     bool   `json:"ok"`
+	Queued int    `json:"queued"`
+	Error  string `json:"error,omitempty"`
 }
 
 // ClaimRequest asks the control plane for the next pending job.
@@ -235,19 +249,20 @@ type AgentInfo struct {
 	// CachedRepos last reported by the agent.
 	CachedRepos []string `json:"cached_repos,omitempty"`
 	// Cache last reported inventory (may be nil if the agent has no gateway).
-	Cache *CacheUsage `json:"cache,omitempty"`
+	Cache     *CacheUsage    `json:"cache,omitempty"`
+	Resources *HostResources `json:"resources,omitempty"`
 }
 
 // ControlMetrics is a scrapeable JSON metrics payload from temperci-control.
 type ControlMetrics struct {
-	AgentsRegistered int            `json:"agents_registered"`
-	JobsPending      int            `json:"jobs_pending"`
-	JobsMinted       int            `json:"jobs_minted"`
-	JobsAssigned     int            `json:"jobs_assigned"`
-	JobsStarted      int            `json:"jobs_started"`
-	JobsFinished     int            `json:"jobs_finished"`
-	JobsFailed       int            `json:"jobs_failed"`
-	Agents           []AgentInfo    `json:"agents,omitempty"`
+	AgentsRegistered int         `json:"agents_registered"`
+	JobsPending      int         `json:"jobs_pending"`
+	JobsMinted       int         `json:"jobs_minted"`
+	JobsAssigned     int         `json:"jobs_assigned"`
+	JobsStarted      int         `json:"jobs_started"`
+	JobsFinished     int         `json:"jobs_finished"`
+	JobsFailed       int         `json:"jobs_failed"`
+	Agents           []AgentInfo `json:"agents,omitempty"`
 }
 
 // AgentMetrics is a scrapeable JSON metrics payload from temperci-agent.
@@ -276,8 +291,8 @@ type PoolReloadRequest struct {
 
 // PoolReloadResponse acknowledges pool reload/drain.
 type PoolReloadResponse struct {
-	OK           bool   `json:"ok"`
-	DrainedWarm  int    `json:"drained_warm"`
-	ImagePath    string `json:"image_path,omitempty"`
-	Error        string `json:"error,omitempty"`
+	OK          bool   `json:"ok"`
+	DrainedWarm int    `json:"drained_warm"`
+	ImagePath   string `json:"image_path,omitempty"`
+	Error       string `json:"error,omitempty"`
 }

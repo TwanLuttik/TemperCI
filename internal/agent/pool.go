@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/TwanLuttik/TemperCI/internal/api"
 	"github.com/TwanLuttik/TemperCI/internal/cleanup"
 	"github.com/TwanLuttik/TemperCI/internal/vmm"
 )
@@ -887,6 +888,35 @@ func (p *Pool) InventorySample() (HostInventory, error) {
 		return HostInventory{}, nil
 	}
 	return p.inventory.Sample()
+}
+
+func (p *Pool) HostResources() *api.HostResources {
+	if p == nil {
+		return nil
+	}
+	inv, err := p.InventorySample()
+	if err != nil {
+		return &api.HostResources{
+			ConfiguredMaxReady: p.ConfiguredMaxReady(),
+			EffectiveMaxReady:  p.EffectiveMaxReady(),
+			ClampReason:        p.ClampReason(),
+			LastAdmitReason:    "inventory_error",
+		}
+	}
+	if p.inventory == nil {
+		return nil
+	}
+	return &api.HostResources{
+		RAMTotalMiB:        inv.RAMTotalMiB,
+		RAMAvailMiB:        inv.RAMAvailMiB,
+		DiskTotalMiB:       inv.DiskTotalMiB,
+		DiskFreeMiB:        inv.DiskFreeMiB,
+		NumCPU:             inv.NumCPU,
+		ConfiguredMaxReady: p.ConfiguredMaxReady(),
+		EffectiveMaxReady:  p.EffectiveMaxReady(),
+		ClampReason:        p.ClampReason(),
+		LastAdmitReason:    p.LastAdmitReason(),
+	}
 }
 
 func randomVMID() (vmm.ID, error) {

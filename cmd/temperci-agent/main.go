@@ -77,10 +77,11 @@ func main() {
 	cleaner := &cleanup.Cleaner{VMM: mgr, Layout: layout, Log: log}
 	poolCfg := agent.PoolConfigFromAgent(cfg)
 	pool, err := agent.NewPool(poolCfg, agent.PoolDeps{
-		VMM:     mgr,
-		Cleaner: cleaner,
-		Runner:  runner,
-		Log:     log,
+		VMM:       mgr,
+		Cleaner:   cleaner,
+		Runner:    runner,
+		Log:       log,
+		Inventory: agent.ProcInventory{DataDir: cfg.DataDir},
 	})
 	if err != nil {
 		log.Error("init pool", "err", err)
@@ -99,7 +100,9 @@ func main() {
 		"backend", cfg.VMMBackend,
 		"data_dir", cfg.DataDir,
 		"min_ready", cfg.MinReady,
-		"max_ready", cfg.MaxReady,
+		"max_ready", pool.EffectiveMaxReady(),
+		"configured_max_ready", pool.ConfiguredMaxReady(),
+		"clamp_reason", pool.ClampReason(),
 		"agent_id", cfg.AgentID,
 		"control_url", cfg.ControlURL,
 		"image_path", cfg.ImagePath,
@@ -182,7 +185,7 @@ func main() {
 			PollInterval:   time.Duration(cfg.PollIntervalSeconds) * time.Second,
 			JobSimulate:    time.Duration(cfg.JobSimulateSeconds) * time.Second,
 			JobDeadline:    deadline,
-			Capacity:       cfg.MaxReady,
+			Capacity:       pool.EffectiveMaxReady(),
 			WaitRealRunner: waitReal,
 			Cache:          cacheGW,
 		}
