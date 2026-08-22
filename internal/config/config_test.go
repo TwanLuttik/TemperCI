@@ -201,3 +201,55 @@ github_org = "acme"
 		t.Fatal("expected agent_token required")
 	}
 }
+
+func TestAgentConfig_ReserveDefaults(t *testing.T) {
+	cfg := AgentConfig{ImagePath: "/img", AgentToken: "t"}
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.HostReserveMemoryMiB != 2048 || cfg.HostReserveDiskMiB != 5120 {
+		t.Fatalf("defaults = ram %d disk %d", cfg.HostReserveMemoryMiB, cfg.HostReserveDiskMiB)
+	}
+}
+
+func TestAgentConfig_ReserveExplicitZeroBecomesDefault(t *testing.T) {
+	cfg := AgentConfig{ImagePath: "/img", AgentToken: "t", HostReserveMemoryMiB: 0, HostReserveDiskMiB: 0}
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.HostReserveMemoryMiB != 2048 || cfg.HostReserveDiskMiB != 5120 {
+		t.Fatalf("0 must default, got ram %d disk %d", cfg.HostReserveMemoryMiB, cfg.HostReserveDiskMiB)
+	}
+}
+
+func TestAgentConfig_ReserveNegative(t *testing.T) {
+	cfg := AgentConfig{ImagePath: "/img", AgentToken: "t", HostReserveMemoryMiB: -1}
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected negative ram reserve error")
+	}
+	cfg = AgentConfig{ImagePath: "/img", AgentToken: "t", HostReserveDiskMiB: -5}
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected negative disk reserve error")
+	}
+}
+
+func TestLoadAgentFile_ReserveKeys(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "agent.toml")
+	content := `
+image_path = "/img/base"
+agent_token = "shared-secret"
+host_reserve_memory_mib = 1024
+host_reserve_disk_mib = 2048
+`
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadAgentFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.HostReserveMemoryMiB != 1024 || cfg.HostReserveDiskMiB != 2048 {
+		t.Fatalf("got ram %d disk %d", cfg.HostReserveMemoryMiB, cfg.HostReserveDiskMiB)
+	}
+}

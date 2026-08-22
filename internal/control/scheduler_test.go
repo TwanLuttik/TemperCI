@@ -4,9 +4,11 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/TwanLuttik/TemperCI/internal/api"
+	"github.com/TwanLuttik/TemperCI/internal/config"
 )
 
 // Multi-host capacity-aware assignment: full agent is skipped; free agent gets FIFO job.
@@ -119,5 +121,62 @@ func TestMultiHost_RegistryCapacitySnapshot(t *testing.T) {
 	list := r.List()
 	if len(list) != 1 || list[0].AgentID != "h1" {
 		t.Fatalf("list = %+v", list)
+	}
+}
+
+func TestRegister_StoresHostResources(t *testing.T) {
+	srv, _ := testAgentServer(t)
+	req := agentReq(t, http.MethodPost, "/v1/agent/register", "agent-shared-token", api.RegisterRequest{
+		AgentID:     "box-1",
+		MaxCapacity: 1,
+		Capacity:    1,
+		Resources: &api.HostResources{
+			RAMTotalMiB:        16384,
+			RAMAvailMiB:        9000,
+			DiskFreeMiB:        100000,
+			NumCPU:             8,
+			ConfiguredMaxReady: 4,
+			EffectiveMaxReady:  1,
+			ClampReason:        "ram",
+		},
+	})
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("register: %d", rr.Code)
+	}
+	info := srv.Agents().Get("box-1")
+	if info == nil || info.Resources == nil {
+		t.Fatal("expected resources on agent")
+	}
+	if info.Resources.EffectiveMaxReady != 1 || info.Resources.ClampReason != "ram" || info.Resources.NumCPU != 8 {
+		t.Fatalf("resources %+v", info.Resources)
+	}
+}
+
+func TestHostsAPI_IncludesResources(t *testing.T) {
+	// testAgentServer has no dashboard (GET /api/v1/hosts is 404). Mount the
+	// UI like cache_test.go so this is an authenticated open-mode request.
+	h := NewHandler(&mockMinter{}, NewAssignmentStore(), HandlerConfig{RunnerGroupID: 1})
+	srv := NewServer(ServerConfig{
+		Handler:       h,
+		WebhookSecret: "super-secret",
+		AgentToken:    "agent-shared-token",
+		Dashboard: &DashboardConfig{
+			Config: &config.ControlConfig{AuthMode: "open", SetupCompleted: true, GitHubOrg: "acme"},
+		},
+	})
+	_ = srv.Agents().Register(api.RegisterRequest{
+		AgentID: "box-1", Capacity: 1, MaxCapacity: 1,
+		Resources: &api.HostResources{RAMAvailMiB: 9000, DiskFreeMiB: 80000, NumCPU: 16, EffectiveMaxReady: 1, ConfiguredMaxReady: 4, ClampReason: "ram"},
+	})
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/hosts", nil)
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status %d body %s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), `"clamp_reason":"ram"`) {
+		t.Fatalf("expected resources in hosts JSON: %s", rr.Body.String())
 	}
 }

@@ -54,6 +54,10 @@ func (r *AgentRegistry) Register(req api.RegisterRequest) api.AgentInfo {
 		}
 		info.Cache = &cp
 	}
+	if req.Resources != nil {
+		cp := *req.Resources
+		info.Resources = &cp
+	}
 	info.LastSeenAt = now
 	cp := *info
 	return cp

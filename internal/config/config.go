@@ -200,6 +200,10 @@ type AgentConfig struct {
 	// MaxTotalVMs hard-caps tracked instances to avoid unbounded growth if destroy fails.
 	// Default: max_ready + 32.
 	MaxTotalVMs int `toml:"max_total_vms"`
+	// HostReserveMemoryMiB is RAM kept for the host OS (0 = default 2048).
+	HostReserveMemoryMiB int `toml:"host_reserve_memory_mib"`
+	// HostReserveDiskMiB is disk kept free on data_dir (0 = default 5120).
+	HostReserveDiskMiB int `toml:"host_reserve_disk_mib"`
 
 	// MetricsListenAddr binds the agent local metrics/admin HTTP server (empty = disabled).
 	// Prefer 127.0.0.1 for admin endpoints.
@@ -298,6 +302,18 @@ func (c *AgentConfig) Validate() error {
 	}
 	if c.MaxTotalVMs < c.MaxReady {
 		return fmt.Errorf("config: max_total_vms (%d) must be >= max_ready (%d)", c.MaxTotalVMs, c.MaxReady)
+	}
+	if c.HostReserveMemoryMiB < 0 {
+		return fmt.Errorf("config: host_reserve_memory_mib must be >= 0")
+	}
+	if c.HostReserveMemoryMiB == 0 {
+		c.HostReserveMemoryMiB = 2048
+	}
+	if c.HostReserveDiskMiB < 0 {
+		return fmt.Errorf("config: host_reserve_disk_mib must be >= 0")
+	}
+	if c.HostReserveDiskMiB == 0 {
+		c.HostReserveDiskMiB = 5120
 	}
 	c.MetricsListenAddr = strings.TrimSpace(c.MetricsListenAddr)
 	c.CacheListenAddr = strings.TrimSpace(c.CacheListenAddr)

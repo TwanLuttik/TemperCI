@@ -27,13 +27,16 @@ type Worker struct {
 	// JobDeadline is the max time from bind to force destroy + report timeout.
 	// 0 means default 6h when waiting on a real runner; still 0 = no deadline for simulate path.
 	JobDeadline time.Duration
-	// Capacity is max concurrent jobs (usually MaxReady). Free slots = Capacity - Busy.
+	// Capacity is max concurrent jobs (usually MaxReady).
+	// FreeSlots is min(Capacity - max(Busy, inflight), Warm + RemainingCreates - pendingBind).
 	Capacity int
 	// WaitRealRunner when true (default for firecracker) waits on GuestExec.WaitRunner.
 	// Set false only for unit tests that do not implement WaitRunner beyond stubs.
 	WaitRealRunner bool
 	// Cache is the optional host-local Actions cache gateway.
 	Cache *ghacache.Gateway
+	// BeforeBind, if set, runs after claim and before Pool.Bind (tests).
+	BeforeBind func()
 
 	// inflight counts claimed jobs whose handleJob goroutine has not returned.
 	// Used so FreeSlots drops immediately on claim, before Pool.Busy updates.
@@ -54,8 +57,8 @@ func (w *Worker) Run(ctx context.Context) error {
 	if poll <= 0 {
 		poll = 500 * time.Millisecond
 	}
-	if w.Capacity <= 0 {
-		w.Capacity = 1
+	if w.Capacity < 0 {
+		w.Capacity = 0
 	}
 
 	if err := w.register(ctx); err != nil {
@@ -148,12 +151,24 @@ func (w *Worker) inFlight() int {
 
 func (w *Worker) snapshot() CapacitySnapshot {
 	c := w.Pool.Counts()
+	inflight := w.inFlight()
 	used := c.Busy
-	if n := w.inFlight(); n > used {
+	if inflight > used {
 		// Claimed but Bind has not yet incremented Busy (or JobFinished already ran).
-		used = n
+		used = inflight
 	}
 	free := w.Capacity - used
+	if free < 0 {
+		free = 0
+	}
+	pendingBind := inflight - c.Busy
+	if pendingBind < 0 {
+		pendingBind = 0
+	}
+	bindBudget := c.Warm + w.Pool.RemainingCreates() - pendingBind
+	if bindBudget < free {
+		free = bindBudget
+	}
 	if free < 0 {
 		free = 0
 	}
@@ -171,6 +186,7 @@ func (w *Worker) snapshot() CapacitySnapshot {
 		VMs:         w.Pool.ListUsage(),
 		CachedRepos: repos,
 		Cache:       cache,
+		Resources:   w.Pool.HostResources(),
 	}
 }
 
@@ -208,6 +224,9 @@ func (w *Worker) handleJob(ctx context.Context, job *api.JobAssignment) error {
 		JITConfig:  job.EncodedJITConfig,
 	}
 
+	if w.BeforeBind != nil {
+		w.BeforeBind()
+	}
 	res, err := w.Pool.Bind(ctx, payload)
 	// Clear secret from payload as soon as bind returns.
 	payload.JITConfig = ""

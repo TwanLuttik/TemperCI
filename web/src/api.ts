@@ -108,6 +108,18 @@ export type CacheClearResponse = {
   error?: string;
 };
 
+export type HostResources = {
+  ram_total_mib?: number;
+  ram_avail_mib?: number;
+  disk_total_mib?: number;
+  disk_free_mib?: number;
+  num_cpu?: number;
+  configured_max_ready?: number;
+  effective_max_ready?: number;
+  clamp_reason?: string;
+  last_admit_reason?: string;
+};
+
 export type Host = {
   agent_id: string;
   capacity?: number;
@@ -116,6 +128,7 @@ export type Host = {
   busy?: number;
   last_seen_at?: string;
   labels?: string[];
+  resources?: HostResources;
   vms?: {
     id: string;
     state: string;
