@@ -12,6 +12,7 @@ import { SettingsPage } from "./pages/SettingsPage";
 import { SetupPage } from "./pages/SetupPage";
 import { UsersPage } from "./pages/UsersPage";
 import { VMsPage } from "./pages/VMsPage";
+import { AnalyticsPage } from "./pages/AnalyticsPage";
 
 export default function App() {
   const [setup, setSetup] = useState<SetupStatus | null>(null);
@@ -66,12 +67,10 @@ export default function App() {
 
   if (setup.needs_setup) {
     return (
-      <Layout setup={setup} me={me} overview={overview} onLogout={async () => {}}>
-        <Routes>
-          <Route path="/setup" element={<SetupPage onDone={async () => { await refresh(); navigate("/"); }} />} />
-          <Route path="*" element={<Navigate to="/setup" replace />} />
-        </Routes>
-      </Layout>
+      <Routes>
+        <Route path="/setup" element={<SetupPage onDone={async () => { await refresh(); navigate("/"); }} />} />
+        <Route path="*" element={<Navigate to="/setup" replace />} />
+      </Routes>
     );
   }
 
@@ -102,6 +101,10 @@ export default function App() {
     navigate("/login");
   };
 
+  if (location.pathname === "/setup") {
+    return <SetupPage onDone={async () => { await refresh(); navigate("/settings"); }} />;
+  }
+
   return (
     <Layout setup={setup} me={me} overview={overview} onLogout={logout}>
       <Routes>
@@ -109,6 +112,7 @@ export default function App() {
         <Route path="/hosts" element={<HostsPage />} />
         <Route path="/vms" element={<VMsPage />} />
         <Route path="/jobs" element={<JobsPage />} />
+        <Route path="/analytics" element={<AnalyticsPage />} />
         <Route path="/cache" element={<CachePage />} />
         <Route path="/jobs/:id" element={<JobDetailPage />} />
         <Route path="/settings" element={<SettingsPage onOverview={setOverview} />} />
@@ -116,7 +120,6 @@ export default function App() {
           <Route path="/users" element={<UsersPage />} />
         ) : null}
         <Route path="/login" element={<Navigate to="/" replace />} />
-        <Route path="/setup" element={<Navigate to="/" replace />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </Layout>

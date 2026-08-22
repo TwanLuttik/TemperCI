@@ -12,6 +12,10 @@ type jobGetter interface {
 	GetJob(ctx context.Context, owner, repo string, jobID, installationID int64) (*github.WorkflowJobDetail, error)
 }
 
+type runGetter interface {
+	GetRun(ctx context.Context, owner, repo string, runID, installationID int64) (*github.WorkflowRun, error)
+}
+
 type jobMetaCache struct {
 	at  time.Time
 	job *github.WorkflowJobDetail
@@ -43,6 +47,21 @@ func (s *Server) ensureJobMeta(r interface{ Context() context.Context }, a *Assi
 		return s.cachedJob(a.JobID)
 	}
 	s.storeJobMeta(a.JobID, job)
+	wf := a.WorkflowName
+	if wf == "" {
+		if rg, ok := s.jobLogs.(runGetter); ok && a.RunID != 0 {
+			if run, rerr := rg.GetRun(ctx, owner, repo, a.RunID, a.InstallationID); rerr == nil && run != nil {
+				wf = run.Name
+			}
+		}
+	}
+	if s.store != nil {
+		s.store.SetIdentity(a.JobID, job.Name, wf)
+		a.Name = job.Name
+		if wf != "" {
+			a.WorkflowName = wf
+		}
+	}
 	return job
 }
 

@@ -108,11 +108,17 @@ export function OverviewPage({ onOverview }: Props) {
             <Button variant="secondary" onClick={() => navigate("/jobs")}>
               View jobs
             </Button>
+            <Button variant="secondary" onClick={() => navigate("/analytics")}>
+              Workflow analytics
+            </Button>
             <Button variant="secondary" onClick={() => navigate("/cache")}>
               View cache
             </Button>
             <Button variant="outline" onClick={() => navigate("/settings")}>
               Settings
+            </Button>
+            <Button variant="outline" onClick={() => navigate("/setup")}>
+              Setup wizard
             </Button>
           </CardContent>
         </Card>

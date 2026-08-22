@@ -1,12 +1,15 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   api,
   waitForServicesReady,
   type Overview,
   type RestartProgress,
   type RestartTarget,
+  type RunnerShape,
   type SettingsConfig,
   type SettingsConfigSave,
+  type SettingsShapes,
 } from "../api";
 import { GitHubAppGuide } from "../components/GitHubAppGuide";
 import { PageHeader } from "../components/page-header";
@@ -83,8 +86,11 @@ function formFromConfig(cfg: SettingsConfig): FormState {
 }
 
 export function SettingsPage({ onOverview }: Props) {
+  const navigate = useNavigate();
   const [o, setO] = useState<Overview | null>(null);
   const [cfg, setCfg] = useState<SettingsConfig | null>(null);
+  const [shapes, setShapes] = useState<RunnerShape[]>([]);
+  const [shapePath, setShapePath] = useState("");
   const [form, setForm] = useState<FormState>(emptyForm());
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -93,14 +99,17 @@ export function SettingsPage({ onOverview }: Props) {
   const [restartProgress, setRestartProgress] = useState<RestartProgress | null>(null);
 
   const reload = useCallback(async () => {
-    const [overview, settings] = await Promise.all([
+    const [overview, settings, shapeCfg] = await Promise.all([
       api<Overview>("/api/v1/overview"),
       api<SettingsConfig>("/api/v1/settings/config"),
+      api<SettingsShapes>("/api/v1/settings/shapes"),
     ]);
     setO(overview);
     onOverview(overview);
     setCfg(settings);
     setForm(formFromConfig(settings));
+    setShapes(shapeCfg.shapes?.length ? shapeCfg.shapes : [{ vcpu: 4, memory_mib: 8192, min_ready: 1 }]);
+    setShapePath(shapeCfg.agent_path || "");
   }, [onOverview]);
 
   useEffect(() => {
@@ -207,6 +216,11 @@ export function SettingsPage({ onOverview }: Props) {
         kicker="/ Settings"
         title="Control plane"
         description="View and edit configuration. Secrets stay blank unless you enter a new value. Save writes the TOML on this host."
+        actions={
+          <Button type="button" variant="outline" onClick={() => navigate("/setup")}>
+            Open setup wizard
+          </Button>
+        }
       />
 
       <Card className="mb-4">
@@ -224,6 +238,43 @@ export function SettingsPage({ onOverview }: Props) {
       <div className="mb-4">
         <ServicesPanel onRestarted={() => void reload()} />
       </div>
+
+      <RunnerShapesCard
+        shapes={shapes}
+        path={shapePath}
+        busy={busy}
+        onChange={setShapes}
+        onSave={async (restart) => {
+          setBusy(true);
+          setMsg(null);
+          setErr(null);
+          try {
+            const res = await api<SettingsConfigSave>("/api/v1/settings/shapes", {
+              method: "POST",
+              body: JSON.stringify({ shapes, restart }),
+            });
+            if (res.reconnect) {
+              setMsg("Shapes saved. Restarting agent…");
+              setRestartTarget("agent");
+              setRestartProgress({ control: "idle", agent: "restarting", done: false });
+              const progress = await waitForServicesReady("agent", setRestartProgress);
+              if (progress.done) {
+                setMsg("Shapes saved. Agent restarted and will refill matching warm VMs.");
+                await reload();
+              } else {
+                setErr(progress.error || "Shapes saved, but agent restart did not finish.");
+              }
+            } else {
+              setMsg(res.note || "Shapes saved. Restart the agent to apply.");
+              await reload();
+            }
+          } catch (e) {
+            setErr((e as Error).message);
+          } finally {
+            setBusy(false);
+          }
+        }}
+      />
 
       <Card className="mb-4">
         <CardHeader className="flex-row items-center justify-between">
@@ -377,5 +428,122 @@ export function SettingsPage({ onOverview }: Props) {
         </Card>
       </form>
     </>
+  );
+}
+
+function shapeLabel(s: RunnerShape): string {
+  if (s.vcpu === 4 && s.memory_mib === 8192) return "temperci-4vcpu-ubuntu-2404";
+  const g = Math.max(1, Math.round((s.memory_mib || 0) / 1024));
+  return `temperci-${s.vcpu || 0}vcpu-${g}g-ubuntu-2404`;
+}
+
+function RunnerShapesCard({
+  shapes,
+  path,
+  busy,
+  onChange,
+  onSave,
+}: {
+  shapes: RunnerShape[];
+  path: string;
+  busy: boolean;
+  onChange: (next: RunnerShape[]) => void;
+  onSave: (restart: boolean) => void;
+}) {
+  const patch = (i: number, part: Partial<RunnerShape>) => {
+    onChange(shapes.map((s, idx) => (idx === i ? { ...s, ...part } : s)));
+  };
+  return (
+    <Card className="mb-4">
+      <CardHeader className="flex-row items-center justify-between">
+        <CardTitle>Warm microVMs</CardTitle>
+        <span className="font-mono text-[11px] text-muted-foreground">{path || "agent.toml"}</span>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <p className="text-sm text-muted-foreground">
+          Keep one or more sizes warm. Workflows pick a size with{" "}
+          <code className="font-mono text-xs">runs-on: temperci-4vcpu-ubuntu-2404</code> or{" "}
+          <code className="font-mono text-xs">temperci-2vcpu-4g-ubuntu-2404</code>. A matching warm VM
+          is used when one exists; otherwise that size is cold-booted.
+        </p>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left font-mono text-[10px] tracking-wider text-muted-foreground uppercase">
+                <th className="pb-2 pr-3">vCPU</th>
+                <th className="pb-2 pr-3">RAM (GiB)</th>
+                <th className="pb-2 pr-3">Warm</th>
+                <th className="pb-2 pr-3">runs-on label</th>
+                <th className="pb-2" />
+              </tr>
+            </thead>
+            <tbody>
+              {shapes.map((s, i) => (
+                <tr key={`${s.vcpu}-${s.memory_mib}-${i}`} className="border-t border-border">
+                  <td className="py-2 pr-3">
+                    <Input
+                      type="number"
+                      min={1}
+                      className="w-20 font-mono"
+                      value={s.vcpu || ""}
+                      onChange={(e) => patch(i, { vcpu: Number(e.target.value) || 0 })}
+                    />
+                  </td>
+                  <td className="py-2 pr-3">
+                    <Input
+                      type="number"
+                      min={1}
+                      className="w-20 font-mono"
+                      value={s.memory_mib ? Math.round(s.memory_mib / 1024) : ""}
+                      onChange={(e) =>
+                        patch(i, { memory_mib: Math.max(1, Number(e.target.value) || 0) * 1024 })
+                      }
+                    />
+                  </td>
+                  <td className="py-2 pr-3">
+                    <Input
+                      type="number"
+                      min={0}
+                      className="w-20 font-mono"
+                      value={s.min_ready}
+                      onChange={(e) => patch(i, { min_ready: Math.max(0, Number(e.target.value) || 0) })}
+                    />
+                  </td>
+                  <td className="py-2 pr-3 font-mono text-xs text-muted-foreground">
+                    {shapeLabel({ ...s, label: undefined })}
+                  </td>
+                  <td className="py-2 text-right">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      disabled={shapes.length <= 1}
+                      onClick={() => onChange(shapes.filter((_, idx) => idx !== i))}
+                    >
+                      Remove
+                    </Button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => onChange([...shapes, { vcpu: 2, memory_mib: 4096, min_ready: 0 }])}
+          >
+            Add size
+          </Button>
+          <Button type="button" disabled={busy} onClick={() => onSave(true)}>
+            Save &amp; restart agent
+          </Button>
+          <Button type="button" variant="ghost" disabled={busy} onClick={() => onSave(false)}>
+            Save without restart
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
   );
 }

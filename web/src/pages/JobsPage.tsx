@@ -38,6 +38,7 @@ export function JobsPage() {
           <TableHeader>
             <TableRow>
               <TableHead>Job</TableHead>
+              <TableHead>Workflow</TableHead>
               <TableHead>Repository</TableHead>
               <TableHead>Status</TableHead>
               <TableHead>Agent</TableHead>
@@ -49,7 +50,7 @@ export function JobsPage() {
           <TableBody>
             {jobs.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={7}>
+                <TableCell colSpan={8}>
                   <EmptyState title="No jobs in memory">
                     Dispatch a workflow with <code>runs-on: temperci-…</code>
                   </EmptyState>
@@ -60,8 +61,15 @@ export function JobsPage() {
                 <TableRow key={j.job_id}>
                   <TableCell>
                     <Link to={`/jobs/${j.job_id}`} className="text-primary">
-                      <code className="font-mono text-xs">{j.job_id}</code>
+                      <div className="font-medium">{j.name || `Job ${j.job_id}`}</div>
+                      <code className="font-mono text-[11px] text-muted-foreground">{j.job_id}</code>
                     </Link>
+                  </TableCell>
+                  <TableCell>
+                    <div>{j.workflow_name || "—"}</div>
+                    {j.workflow_name && j.name && j.workflow_name !== j.name ? (
+                      <div className="text-[11px] text-muted-foreground">{j.name}</div>
+                    ) : null}
                   </TableCell>
                   <TableCell>{j.repo_full_name || "—"}</TableCell>
                   <TableCell>

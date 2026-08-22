@@ -80,6 +80,8 @@ func assignmentToRow(a *Assignment) store.AssignmentRow {
 		CacheMisses:      a.CacheMisses,
 		CacheBytesIn:     a.CacheBytesIn,
 		CacheBytesOut:    a.CacheBytesOut,
+		JobName:          a.Name,
+		WorkflowName:     a.WorkflowName,
 	}
 }
 
@@ -112,5 +114,7 @@ func rowToAssignment(r *store.AssignmentRow) *Assignment {
 		CacheMisses:      r.CacheMisses,
 		CacheBytesIn:     r.CacheBytesIn,
 		CacheBytesOut:    r.CacheBytesOut,
+		Name:             r.JobName,
+		WorkflowName:     r.WorkflowName,
 	}
 }

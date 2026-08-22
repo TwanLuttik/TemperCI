@@ -35,6 +35,29 @@ export async function api<T = unknown>(
   return data as T;
 }
 
+export type SetupCheck = {
+  id: string;
+  label: string;
+  status: string;
+  detail: string;
+};
+
+export type SetupValues = {
+  auth_mode?: string;
+  github_org?: string;
+  github_app_id?: number;
+  listen_addr?: string;
+  cache_listen_addr?: string;
+  webhook_set?: boolean;
+  pem_set?: boolean;
+  agent_token_set?: boolean;
+  admin_users?: number;
+  agents_registered?: number;
+  hostctl?: boolean;
+  guest_image?: boolean;
+  guest_kernel?: boolean;
+};
+
 export type SetupStatus = {
   ok: boolean;
   needs_setup: boolean;
@@ -43,6 +66,8 @@ export type SetupStatus = {
   fleet_ready: boolean;
   org: string;
   listen_addr: string;
+  steps?: SetupCheck[];
+  values?: SetupValues;
 };
 
 export type Me = {
@@ -153,6 +178,7 @@ export type Job = {
   org?: string;
   repo_full_name?: string;
   name?: string;
+  workflow_name?: string;
   steps?: JobStep[];
   labels?: string[];
   status: string;
@@ -266,6 +292,19 @@ export type SettingsConfig = {
   setup_required: boolean;
   missing_count: number;
   fields: ConfigField[];
+};
+
+export type RunnerShape = {
+  label?: string;
+  vcpu: number;
+  memory_mib: number;
+  min_ready: number;
+};
+
+export type SettingsShapes = {
+  ok: boolean;
+  agent_path?: string;
+  shapes: RunnerShape[];
 };
 
 export type SettingsConfigSave = {

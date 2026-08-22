@@ -38,7 +38,7 @@ Cold microVM boot (image hydrate + boot + network) can take seconds. Self-hosted
 2. Soft cap `max_ready` prevents idle resource waste.
 3. Warm VMs are **anonymous**: no GitHub runner registration until bind.
 4. Warm VMs may be **recycled on a timer** or when the base image updates, so idle guests do not sit forever on stale images.
-5. Pools may later be split per size/label (e.g. 2 vCPU vs 4 vCPU). MVP may use a single default size per host.
+5. Pools are split per **shape** (`vcpu` + `memory_mib`). Settings define which sizes to keep warm (`min_ready`). A job’s `runs-on` label selects the size (`temperci-4vcpu-ubuntu-2404` or `temperci-2vcpu-4g-ubuntu-2404`). A matching warm VM is bound when one exists; otherwise that size is cold-booted. Unlisted sizes in a workflow are still spawned (cold) if the host has leftover RAM.
 
 ### Host resource admission
 

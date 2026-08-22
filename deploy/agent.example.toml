@@ -49,9 +49,23 @@ data_dir = "/var/lib/temperci"
 # scratch_dir is accepted for compatibility; parent of .../instances becomes data_dir.
 # scratch_dir = "/var/lib/temperci/instances"
 
-# Default VM resources for pool members.
+# Default VM resources (used when [[shapes]] is omitted).
 vcpu = 4
 memory_mib = 8192
+
+# One or more sizes. min_ready=0 means do not keep that size warm; jobs still
+# cold-boot it when the workflow asks (runs-on: temperci-2vcpu-4g-ubuntu-2404).
+# The 4 vCPU / 8 GiB row matches the legacy label temperci-4vcpu-ubuntu-2404.
+# [[shapes]]
+# label = "temperci-4vcpu-ubuntu-2404"
+# vcpu = 4
+# memory_mib = 8192
+# min_ready = 1
+# [[shapes]]
+# label = "temperci-2vcpu-4g-ubuntu-2404"
+# vcpu = 2
+# memory_mib = 4096
+# min_ready = 0
 
 # Idle warm VM recycle after this many seconds (0 = disabled).
 idle_recycle_seconds = 3600

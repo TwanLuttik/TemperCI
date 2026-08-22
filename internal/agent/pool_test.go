@@ -597,6 +597,51 @@ func TestPool_WarmBindWhenCreateBlocked(t *testing.T) {
 	}
 }
 
+func TestBind_MatchingWarmThenColdDifferentSize(t *testing.T) {
+	p := testPool(t, agent.PoolConfig{
+		MinReady: 1, MaxReady: 3, VCPUs: 4, MemoryMiB: 8192,
+		Shapes: []agent.VMShape{
+			{Label: "temperci-4vcpu-ubuntu-2404", VCPUs: 4, MemoryMiB: 8192, MinReady: 1},
+			{Label: "temperci-2vcpu-4g-ubuntu-2404", VCPUs: 2, MemoryMiB: 4096, MinReady: 0},
+		},
+	})
+	waitFor(t, 2*time.Second, func() bool { return p.Counts().Warm >= 1 })
+
+	warm, err := p.Bind(context.Background(), agent.JobPayload{
+		JobID: "big", Labels: []string{"temperci-4vcpu-ubuntu-2404"}, JITConfig: "x",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !warm.WarmStart {
+		t.Fatal("4vcpu job should take the warm VM")
+	}
+
+	cold, err := p.Bind(context.Background(), agent.JobPayload{
+		JobID: "small", Labels: []string{"temperci-2vcpu-4g-ubuntu-2404"}, JITConfig: "x",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cold.WarmStart {
+		t.Fatal("2vcpu job must cold-boot when that size is not warm")
+	}
+
+	us := p.ListUsage()
+	var saw2, saw4 bool
+	for _, u := range us {
+		if u.VCPUs == 2 && u.MemoryMiB == 4096 {
+			saw2 = true
+		}
+		if u.VCPUs == 4 && u.MemoryMiB == 8192 {
+			saw4 = true
+		}
+	}
+	if !saw2 || !saw4 {
+		t.Fatalf("usage missing sizes: %+v", us)
+	}
+}
+
 type atomicInventory struct {
 	mu  sync.Mutex
 	inv agent.HostInventory

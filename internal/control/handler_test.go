@@ -79,6 +79,9 @@ func TestHandleWorkflowJob_TemperCILabelMintsJIT(t *testing.T) {
 	if a.EncodedJITConfig != "jit-secret" {
 		t.Errorf("jit missing from store")
 	}
+	if a.Name != "build" || a.WorkflowName != "CI" {
+		t.Errorf("identity name=%q workflow=%q", a.Name, a.WorkflowName)
+	}
 }
 
 func TestHandleWorkflowJob_NonTemperCIIgnoredNoJIT(t *testing.T) {

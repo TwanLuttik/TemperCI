@@ -9,20 +9,43 @@ import (
 type WorkflowJobEvent struct {
 	Action       string       `json:"action"`
 	WorkflowJob  WorkflowJob  `json:"workflow_job"`
+	Workflow     WorkflowRef  `json:"workflow"`
 	Repository   Repository   `json:"repository"`
 	Organization Organization `json:"organization"`
 	Installation Installation `json:"installation"`
 }
 
+// WorkflowRef is the workflow file that produced the job, when the webhook includes it.
+type WorkflowRef struct {
+	ID   int64  `json:"id"`
+	Name string `json:"name"`
+	Path string `json:"path"`
+}
+
 // WorkflowJob is the job payload inside a workflow_job event.
 type WorkflowJob struct {
-	ID         int64    `json:"id"`
-	RunID      int64    `json:"run_id"`
-	RunAttempt int      `json:"run_attempt"`
-	Name       string   `json:"name"`
-	Status     string   `json:"status"`
-	Labels     []string `json:"labels"`
-	HTMLURL    string   `json:"html_url"`
+	ID           int64    `json:"id"`
+	RunID        int64    `json:"run_id"`
+	RunAttempt   int      `json:"run_attempt"`
+	Name         string   `json:"name"`
+	WorkflowName string   `json:"workflow_name"`
+	Status       string   `json:"status"`
+	Labels       []string `json:"labels"`
+	HTMLURL      string   `json:"html_url"`
+}
+
+// EventWorkflowName is the human workflow title (e.g. "E2E"), not the job name.
+func (ev *WorkflowJobEvent) EventWorkflowName() string {
+	if ev == nil {
+		return ""
+	}
+	if ev.Workflow.Name != "" {
+		return ev.Workflow.Name
+	}
+	if ev.WorkflowJob.WorkflowName != "" {
+		return ev.WorkflowJob.WorkflowName
+	}
+	return ""
 }
 
 // Repository identifies the repository that owns the workflow.

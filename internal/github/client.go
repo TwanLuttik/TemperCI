@@ -291,6 +291,60 @@ func (c *Client) GetJob(ctx context.Context, owner, repo string, jobID, installa
 	return &out, nil
 }
 
+// WorkflowRun is GET /repos/{owner}/{repo}/actions/runs/{run_id}.
+type WorkflowRun struct {
+	ID   int64  `json:"id"`
+	Name string `json:"name"`
+	Path string `json:"path"`
+}
+
+// GetRun fetches a GitHub Actions workflow run (workflow title / path).
+func (c *Client) GetRun(ctx context.Context, owner, repo string, runID, installationID int64) (*WorkflowRun, error) {
+	if owner == "" || repo == "" {
+		return nil, fmt.Errorf("github: owner and repo are required")
+	}
+	if runID == 0 {
+		return nil, fmt.Errorf("github: run id is required")
+	}
+	installID := installationID
+	if installID == 0 {
+		installID = c.installationID
+	}
+	if installID == 0 {
+		return nil, fmt.Errorf("github: installation id is required")
+	}
+	token, err := c.installationToken(ctx, installID)
+	if err != nil {
+		return nil, err
+	}
+	url := c.baseURL + "/repos/" + owner + "/" + repo + "/actions/runs/" + strconv.FormatInt(runID, 10)
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	httpReq.Header.Set("Accept", "application/vnd.github+json")
+	httpReq.Header.Set("Authorization", "Bearer "+token)
+	httpReq.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+
+	resp, err := c.http.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("github: get run request: %w", err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return nil, fmt.Errorf("github: read run: %w", err)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("github: get run: status %d: %s", resp.StatusCode, truncate(string(body), 256))
+	}
+	var out WorkflowRun
+	if err := json.Unmarshal(body, &out); err != nil {
+		return nil, fmt.Errorf("github: decode run: %w", err)
+	}
+	return &out, nil
+}
+
 const maxJobLogBytes = 2 << 20
 
 // DownloadJobLogs fetches the official GitHub Actions job log (step output).

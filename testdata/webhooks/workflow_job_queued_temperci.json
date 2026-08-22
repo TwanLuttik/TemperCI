@@ -5,6 +5,7 @@
     "run_id": 55001,
     "run_attempt": 1,
     "name": "build",
+    "workflow_name": "CI",
     "status": "queued",
     "labels": ["temperci-4vcpu-ubuntu-2404"],
     "html_url": "https://github.com/acme/demo/actions/runs/55001/job/991001"
@@ -18,6 +19,11 @@
   "organization": {
     "login": "acme",
     "id": 2001
+  },
+  "workflow": {
+    "id": 77,
+    "name": "CI",
+    "path": ".github/workflows/ci.yml"
   },
   "installation": {
     "id": 12345

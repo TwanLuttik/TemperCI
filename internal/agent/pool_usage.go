@@ -25,9 +25,15 @@ func (p *Pool) ListUsage() []api.VMUsage {
 			ID:        string(id),
 			State:     string(pv.state),
 			JobID:     pv.jobID,
-			VCPUs:     p.cfg.VCPUs,
-			MemoryMiB: p.cfg.MemoryMiB,
+			VCPUs:     pv.vcpus,
+			MemoryMiB: pv.memoryMiB,
 			SampledAt: now.UTC(),
+		}
+		if u.VCPUs <= 0 {
+			u.VCPUs = p.cfg.VCPUs
+		}
+		if u.MemoryMiB <= 0 {
+			u.MemoryMiB = p.cfg.MemoryMiB
 		}
 		// Load instance meta for PID + actual resource config when available.
 		if layout.Root != "" {

@@ -75,10 +75,21 @@ func (a Admission) CanCreate(inv HostInventory, allocated int) AdmitDecision {
 		allocated = 0
 	}
 	mem := a.memory()
-	if allocated*mem+mem > inv.RAMTotalMiB-a.ReserveRAMMiB {
+	return a.CanCreateMemory(inv, allocated*mem, mem)
+}
+
+// CanCreateMemory is like CanCreate but uses committed guest RAM instead of a uniform slot size.
+func (a Admission) CanCreateMemory(inv HostInventory, committedMiB, nextMiB int) AdmitDecision {
+	if nextMiB <= 0 {
+		nextMiB = a.memory()
+	}
+	if committedMiB < 0 {
+		committedMiB = 0
+	}
+	if committedMiB+nextMiB > inv.RAMTotalMiB-a.ReserveRAMMiB {
 		return AdmitDecision{Reason: ReasonRAMCommitted}
 	}
-	if inv.RAMAvailMiB < mem {
+	if inv.RAMAvailMiB < nextMiB {
 		return AdmitDecision{Reason: ReasonRAMAvail}
 	}
 	if a.DiskMiB > 0 && inv.DiskFreeMiB < a.DiskMiB+a.ReserveDiskMiB {

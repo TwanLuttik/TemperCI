@@ -101,7 +101,7 @@ export function JobDetailPage() {
           </>
         }
         title={j.name ? j.name : `Job ${j.job_id}`}
-        description={`${j.repo_full_name || "unknown repo"} · ${j.runner_name || "runner"}${
+        description={`${j.workflow_name ? `${j.workflow_name} · ` : ""}${j.repo_full_name || "unknown repo"} · ${j.runner_name || "runner"}${
           j.name ? ` · ${j.job_id}` : ""
         }${running ? (follow ? " · live follow" : " · live (tab pinned)") : ""}`}
       />

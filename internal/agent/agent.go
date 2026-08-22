@@ -44,6 +44,8 @@ type PoolConfig struct {
 	DestroyRetryMax   time.Duration
 	// BindWait is how long Bind waits for a warm VM before cold-booting.
 	BindWait time.Duration
+	// Shapes is the warm catalog. Empty means a single shape from VCPUs/MemoryMiB/MinReady.
+	Shapes []VMShape
 }
 
 // PoolConfigFromAgent maps validated agent config into pool settings.
@@ -64,6 +66,7 @@ func PoolConfigFromAgent(cfg *config.AgentConfig) PoolConfig {
 		DestroyRetryBase:  100 * time.Millisecond,
 		DestroyRetryMax:   5 * time.Second,
 		BindWait:          2 * time.Second,
+		Shapes:            ShapesFromConfig(cfg),
 	}
 	if pc.ReconcileInterval <= 0 {
 		pc.ReconcileInterval = time.Second

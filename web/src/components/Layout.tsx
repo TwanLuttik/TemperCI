@@ -9,6 +9,7 @@ import {
   Server,
   Settings,
   Users,
+  ChartNoAxesCombined,
   Workflow,
 } from "lucide-react";
 
@@ -159,6 +160,10 @@ function NavLinks({
       <NavLink to="/jobs" className={navClass} onClick={onNavigate}>
         <Workflow className="size-4" />
         Jobs
+      </NavLink>
+      <NavLink to="/analytics" className={navClass} onClick={onNavigate}>
+        <ChartNoAxesCombined className="size-4" />
+        Analytics
       </NavLink>
       <NavLink to="/cache" className={navClass} onClick={onNavigate}>
         <HardDrive className="size-4" />

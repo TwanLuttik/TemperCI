@@ -127,8 +127,8 @@ func TestE2E_WebhookMintAssignBindFinish(t *testing.T) {
 	pool, err := agent.NewPool(agent.PoolConfig{
 		MinReady:          1,
 		MaxReady:          2,
-		VCPUs:             1,
-		MemoryMiB:         512,
+		VCPUs:             4,
+		MemoryMiB:         8192,
 		ImagePath:         img,
 		ReconcileInterval: 20 * time.Millisecond,
 		BindWait:          time.Second,

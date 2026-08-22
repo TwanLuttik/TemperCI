@@ -31,12 +31,15 @@ type AssignmentRow struct {
 	CacheMisses      int
 	CacheBytesIn     int64
 	CacheBytesOut    int64
+	JobName          string
+	WorkflowName     string
 }
 
 const assignmentColumns = `job_id, run_id, org, repo_full_name, labels_json, installation_id,
   runner_name, runner_id, encoded_jit_config, status, created_at,
   assigned_at, started_at, finished_at, assigned_agent_id, vm_id,
-  warm_bind, outcome, error, cache_hits, cache_misses, cache_bytes_in, cache_bytes_out`
+  warm_bind, outcome, error, cache_hits, cache_misses, cache_bytes_in, cache_bytes_out,
+  job_name, workflow_name`
 
 // UpsertAssignment inserts or replaces an assignment by job_id.
 // encoded_jit_config is cleared when status is finished or failed.
@@ -59,8 +62,9 @@ INSERT INTO assignments (
   job_id, run_id, org, repo_full_name, labels_json, installation_id,
   runner_name, runner_id, encoded_jit_config, status, created_at,
   assigned_at, started_at, finished_at, assigned_agent_id, vm_id,
-  warm_bind, outcome, error, cache_hits, cache_misses, cache_bytes_in, cache_bytes_out
-) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+  warm_bind, outcome, error, cache_hits, cache_misses, cache_bytes_in, cache_bytes_out,
+  job_name, workflow_name
+) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 ON CONFLICT(job_id) DO UPDATE SET
   run_id = excluded.run_id,
   org = excluded.org,
@@ -83,13 +87,16 @@ ON CONFLICT(job_id) DO UPDATE SET
   cache_hits = excluded.cache_hits,
   cache_misses = excluded.cache_misses,
   cache_bytes_in = excluded.cache_bytes_in,
-  cache_bytes_out = excluded.cache_bytes_out
+  cache_bytes_out = excluded.cache_bytes_out,
+  job_name = excluded.job_name,
+  workflow_name = excluded.workflow_name
 `,
 		a.JobID, a.RunID, a.Org, a.RepoFullName, a.LabelsJSON, a.InstallationID,
 		a.RunnerName, a.RunnerID, a.EncodedJITConfig, a.Status, formatStoredTime(a.CreatedAt),
 		formatStoredTime(a.AssignedAt), formatStoredTime(a.StartedAt), formatStoredTime(a.FinishedAt),
 		a.AssignedAgentID, a.VMID, warm, a.Outcome, a.Error,
 		a.CacheHits, a.CacheMisses, a.CacheBytesIn, a.CacheBytesOut,
+		a.JobName, a.WorkflowName,
 	)
 	if err != nil {
 		return fmt.Errorf("store: upsert assignment: %w", err)
@@ -180,6 +187,7 @@ func scanAssignment(row scannable) (*AssignmentRow, error) {
 		&assigned, &started, &finished, &a.AssignedAgentID, &a.VMID,
 		&warm, &a.Outcome, &a.Error,
 		&a.CacheHits, &a.CacheMisses, &a.CacheBytesIn, &a.CacheBytesOut,
+		&a.JobName, &a.WorkflowName,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil

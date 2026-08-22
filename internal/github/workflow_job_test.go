@@ -29,6 +29,9 @@ func TestParseWorkflowJobEvent_QueuedTemperCI(t *testing.T) {
 	if ev.WorkflowJob.RunID != 55001 {
 		t.Errorf("job.run_id = %d, want 55001", ev.WorkflowJob.RunID)
 	}
+	if ev.EventWorkflowName() != "CI" || ev.WorkflowJob.Name != "build" {
+		t.Errorf("workflow=%q job=%q", ev.EventWorkflowName(), ev.WorkflowJob.Name)
+	}
 	if got := ev.WorkflowJob.Labels; len(got) != 1 || got[0] != "temperci-4vcpu-ubuntu-2404" {
 		t.Errorf("labels = %v, want [temperci-4vcpu-ubuntu-2404]", got)
 	}

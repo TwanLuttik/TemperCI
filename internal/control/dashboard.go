@@ -87,6 +87,8 @@ func (s *Server) mountDashboard(d DashboardConfig) {
 	s.mux.HandleFunc("GET /api/v1/overview", s.withUIAuth(s.handleOverview, false))
 	s.mux.HandleFunc("GET /api/v1/settings/config", s.withUIAuth(s.handleSettingsConfig, false))
 	s.mux.HandleFunc("POST /api/v1/settings/config", s.withUIAuth(s.handleSettingsConfigSave, true))
+	s.mux.HandleFunc("GET /api/v1/settings/shapes", s.withUIAuth(s.handleSettingsShapes, false))
+	s.mux.HandleFunc("POST /api/v1/settings/shapes", s.withUIAuth(s.handleSettingsShapesSave, true))
 	s.mux.HandleFunc("GET /api/v1/hosts", s.withUIAuth(s.handleHosts, false))
 	s.mux.HandleFunc("GET /api/v1/jobs", s.withUIAuth(s.handleJobs, false))
 	s.mux.HandleFunc("GET /api/v1/jobs/{id}", s.withUIAuth(s.handleJobDetail, false))
@@ -187,20 +189,7 @@ func (s *Server) resolvePrincipal(r *http.Request) (*uiPrincipal, error) {
 }
 
 func (s *Server) handleSetupStatus(w http.ResponseWriter, r *http.Request) {
-	cfg := s.dash.Config
-	dbDone := false
-	if s.dash.Store != nil {
-		dbDone, _ = s.dash.Store.SetupCompleted()
-	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"ok":              true,
-		"needs_setup":     cfg.NeedsSetup() && !dbDone,
-		"setup_completed": cfg.SetupCompleted || dbDone,
-		"auth_mode":       cfg.AuthMode,
-		"fleet_ready":     s.dash.FleetReady && !cfg.NeedsSetup(),
-		"org":             cfg.GitHubOrg,
-		"listen_addr":     cfg.ListenAddr,
-	})
+	writeJSON(w, http.StatusOK, s.setupSnapshot())
 }
 
 type setupApplyRequest struct {
@@ -245,19 +234,36 @@ func (s *Server) handleSetupApply(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusBadRequest, "auth_mode must be open or password")
 		return
 	}
-	if req.GitHubAppID == 0 || strings.TrimSpace(req.GitHubOrg) == "" || strings.TrimSpace(req.GitHubWebhookSecret) == "" {
-		writeAPIError(w, http.StatusBadRequest, "github_app_id, github_org, github_webhook_secret required")
-		return
+
+	cur := *s.dash.Config
+	reentry := !cur.NeedsSetup()
+	if req.GitHubAppID == 0 {
+		req.GitHubAppID = cur.GitHubAppID
 	}
-	if strings.TrimSpace(req.GitHubAppPrivateKeyPEM) == "" {
-		writeAPIError(w, http.StatusBadRequest, "github_app_private_key_pem required")
-		return
+	if strings.TrimSpace(req.GitHubOrg) == "" {
+		req.GitHubOrg = cur.GitHubOrg
 	}
-	if !strings.Contains(req.GitHubAppPrivateKeyPEM, "PRIVATE KEY") {
+	if strings.TrimSpace(req.GitHubWebhookSecret) == "" {
+		req.GitHubWebhookSecret = cur.GitHubWebhookSecret
+	}
+	if !reentry {
+		if req.GitHubAppID == 0 || strings.TrimSpace(req.GitHubOrg) == "" || strings.TrimSpace(req.GitHubWebhookSecret) == "" {
+			writeAPIError(w, http.StatusBadRequest, "github_app_id, github_org, github_webhook_secret required")
+			return
+		}
+		if strings.TrimSpace(req.GitHubAppPrivateKeyPEM) == "" {
+			writeAPIError(w, http.StatusBadRequest, "github_app_private_key_pem required")
+			return
+		}
+	}
+	if pem := strings.TrimSpace(req.GitHubAppPrivateKeyPEM); pem != "" && !strings.Contains(pem, "PRIVATE KEY") {
 		writeAPIError(w, http.StatusBadRequest, "invalid private key pem")
 		return
 	}
 	agentToken := strings.TrimSpace(req.AgentToken)
+	if agentToken == "" {
+		agentToken = strings.TrimSpace(cur.AgentToken)
+	}
 	if agentToken == "" {
 		b := make([]byte, 32)
 		_, _ = rand.Read(b)
@@ -265,7 +271,7 @@ func (s *Server) handleSetupApply(w http.ResponseWriter, r *http.Request) {
 	}
 	listen := strings.TrimSpace(req.ListenAddr)
 	if listen == "" {
-		listen = s.dash.Config.ListenAddr
+		listen = cur.ListenAddr
 	}
 	if listen == "" {
 		listen = "0.0.0.0:8080"
@@ -275,20 +281,22 @@ func (s *Server) handleSetupApply(w http.ResponseWriter, r *http.Request) {
 	if cfgPath == "" {
 		cfgPath = "/etc/temperci/control.toml"
 	}
-	pemPath := s.dash.Config.GitHubAppPrivateKeyPath
+	pemPath := cur.GitHubAppPrivateKeyPath
 	if pemPath == "" {
 		pemPath = "/etc/temperci/github-app.pem"
 	}
-	if err := os.MkdirAll(filepath.Dir(pemPath), 0o755); err != nil {
-		writeAPIError(w, http.StatusInternalServerError, "mkdir pem: "+err.Error())
-		return
-	}
-	if err := os.WriteFile(pemPath, []byte(req.GitHubAppPrivateKeyPEM), 0o600); err != nil {
-		writeAPIError(w, http.StatusInternalServerError, "write pem: "+err.Error())
-		return
+	if pem := strings.TrimSpace(req.GitHubAppPrivateKeyPEM); pem != "" {
+		if err := os.MkdirAll(filepath.Dir(pemPath), 0o755); err != nil {
+			writeAPIError(w, http.StatusInternalServerError, "mkdir pem: "+err.Error())
+			return
+		}
+		if err := os.WriteFile(pemPath, []byte(pem+"\n"), 0o600); err != nil {
+			writeAPIError(w, http.StatusInternalServerError, "write pem: "+err.Error())
+			return
+		}
 	}
 
-	newCfg := *s.dash.Config
+	newCfg := cur
 	newCfg.ListenAddr = listen
 	newCfg.GitHubAppID = req.GitHubAppID
 	newCfg.GitHubOrg = strings.TrimSpace(req.GitHubOrg)
@@ -907,6 +915,8 @@ func (s *Server) handleJobs(w http.ResponseWriter, r *http.Request, _ *uiPrincip
 		RunID           int64     `json:"run_id"`
 		Org             string    `json:"org"`
 		RepoFullName    string    `json:"repo_full_name"`
+		Name            string    `json:"name,omitempty"`
+		WorkflowName    string    `json:"workflow_name,omitempty"`
 		Labels          []string  `json:"labels"`
 		Status          string    `json:"status"`
 		AssignedAgentID string    `json:"assigned_agent_id,omitempty"`
@@ -933,6 +943,8 @@ func (s *Server) handleJobs(w http.ResponseWriter, r *http.Request, _ *uiPrincip
 			RunID:           a.RunID,
 			Org:             a.Org,
 			RepoFullName:    a.RepoFullName,
+			Name:            a.Name,
+			WorkflowName:    a.WorkflowName,
 			Labels:          a.Labels,
 			Status:          string(a.Status),
 			AssignedAgentID: a.AssignedAgentID,
@@ -974,12 +986,22 @@ func (s *Server) handleJobDetail(w http.ResponseWriter, r *http.Request, _ *uiPr
 	}
 	s.ensureWorkflowLog(r, a, logs)
 	tm := timingsFromAssignment(a, time.Now().UTC())
-	name := ""
+	name := a.Name
 	steps := []github.WorkflowJobStep{}
 	if meta := s.ensureJobMeta(r, a); meta != nil {
-		name = meta.Name
+		if meta.Name != "" {
+			name = meta.Name
+		}
 		if meta.Steps != nil {
 			steps = meta.Steps
+		}
+	}
+	if a2 := s.store.Get(a.JobID); a2 != nil {
+		if a2.WorkflowName != "" {
+			a.WorkflowName = a2.WorkflowName
+		}
+		if a2.Name != "" && name == "" {
+			name = a2.Name
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -1011,6 +1033,7 @@ func (s *Server) handleJobDetail(w http.ResponseWriter, r *http.Request, _ *uiPr
 			"cache_bytes_in":    a.CacheBytesIn,
 			"cache_bytes_out":   a.CacheBytesOut,
 			"name":              name,
+			"workflow_name":     a.WorkflowName,
 			"steps":             steps,
 		},
 		"logs": logs,

@@ -26,6 +26,8 @@ type Assignment struct {
 	RunID          int64
 	Org            string
 	RepoFullName   string
+	Name           string
+	WorkflowName   string
 	Labels         []string
 	InstallationID int64
 	RunnerName     string
@@ -220,6 +222,31 @@ func (s *AssignmentStore) pickPendingLocked(cachedRepos []string) int {
 		}
 	}
 	return -1
+}
+
+// SetIdentity records GitHub job/workflow titles when they become known.
+func (s *AssignmentStore) SetIdentity(jobID int64, name, workflowName string) {
+	if jobID == 0 || (name == "" && workflowName == "") {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	a, ok := s.byID[jobID]
+	if !ok {
+		return
+	}
+	changed := false
+	if name != "" && a.Name != name {
+		a.Name = name
+		changed = true
+	}
+	if workflowName != "" && a.WorkflowName != workflowName {
+		a.WorkflowName = workflowName
+		changed = true
+	}
+	if changed {
+		_ = s.persistLocked(a)
+	}
 }
 
 // SetCacheStats records host-local actions/cache counters on a job.

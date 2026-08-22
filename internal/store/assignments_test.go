@@ -17,6 +17,8 @@ func TestAssignmentRoundTrip(t *testing.T) {
 		Org:              "acme",
 		RepoFullName:     "acme/app",
 		LabelsJSON:       `["temperci-4c"]`,
+		JobName:          "build",
+		WorkflowName:     "CI",
 		InstallationID:   99,
 		RunnerName:       "temperci-job-42",
 		RunnerID:         1001,
@@ -42,6 +44,9 @@ func TestAssignmentRoundTrip(t *testing.T) {
 	}
 	if got.LabelsJSON != `["temperci-4c"]` {
 		t.Fatalf("labels = %q", got.LabelsJSON)
+	}
+	if got.JobName != "build" || got.WorkflowName != "CI" {
+		t.Fatalf("identity = %q / %q", got.JobName, got.WorkflowName)
 	}
 
 	all, err := s.ListAssignments()

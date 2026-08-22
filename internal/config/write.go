@@ -125,6 +125,66 @@ cache_listen_addr = ""
 	return true, nil
 }
 
+// WriteAgentShapes replaces [[shapes]] tables and syncs top-level vcpu/memory_mib/min_ready
+// from the first shape so older fields stay consistent.
+func WriteAgentShapes(path string, shapes []VMShapeConfig) error {
+	if path == "" {
+		return fmt.Errorf("config: empty path")
+	}
+	if len(shapes) == 0 {
+		return fmt.Errorf("config: at least one runner shape is required")
+	}
+	for i := range shapes {
+		if err := normalizeShape(&shapes[i], 4, 8192); err != nil {
+			return err
+		}
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("config: read %s: %w", path, err)
+	}
+	text := stripTOMLTables(string(raw), "shapes")
+	text = upsertTOMLInt(text, "vcpu", shapes[0].VCPU)
+	text = upsertTOMLInt(text, "memory_mib", shapes[0].MemoryMiB)
+	text = upsertTOMLInt(text, "min_ready", shapes[0].MinReady)
+	if !strings.HasSuffix(text, "\n") {
+		text += "\n"
+	}
+	text += "\n"
+	for _, s := range shapes {
+		text += "[[shapes]]\n"
+		text += fmt.Sprintf("label = %q\n", s.Label)
+		text += fmt.Sprintf("vcpu = %d\n", s.VCPU)
+		text += fmt.Sprintf("memory_mib = %d\n", s.MemoryMiB)
+		text += fmt.Sprintf("min_ready = %d\n\n", s.MinReady)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, []byte(text), 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
+}
+
+func stripTOMLTables(text, name string) string {
+	re := regexp.MustCompile(`(?m)^\[\[` + regexp.QuoteMeta(name) + `\]\]\s*\n(?:^[^\[][^\n]*\n)*`)
+	return strings.TrimRight(re.ReplaceAllString(text, ""), "\n") + "\n"
+}
+
+func upsertTOMLInt(text, key string, value int) string {
+	line := fmt.Sprintf("%s = %d", key, value)
+	re := regexp.MustCompile(`(?m)^\s*` + regexp.QuoteMeta(key) + `\s*=\s*.*$`)
+	if re.MatchString(text) {
+		return re.ReplaceAllString(text, line)
+	}
+	if !strings.HasSuffix(text, "\n") {
+		text += "\n"
+	}
+	return text + line + "\n"
+}
+
 // WriteControlFile writes cfg as TOML to path (mode 0600).
 func WriteControlFile(path string, cfg *ControlConfig) error {
 	if path == "" {

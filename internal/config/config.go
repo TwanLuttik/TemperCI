@@ -187,10 +187,12 @@ type AgentConfig struct {
 	DataDir string `toml:"data_dir"`
 	// ScratchDir is optional; historically the instances directory. Prefer DataDir.
 	ScratchDir string `toml:"scratch_dir"`
-	// VCPU is default vCPU count for pool VMs.
+	// VCPU is default vCPU count for pool VMs (used when shapes is empty).
 	VCPU int `toml:"vcpu"`
-	// MemoryMiB is default guest RAM for pool VMs.
+	// MemoryMiB is default guest RAM for pool VMs (used when shapes is empty).
 	MemoryMiB int `toml:"memory_mib"`
+	// Shapes is the warm-pool catalog. Empty means a single shape from vcpu/memory_mib/min_ready.
+	Shapes []VMShapeConfig `toml:"shapes"`
 	// IdleRecycleSeconds recycles warm VMs older than this (0 = disabled).
 	IdleRecycleSeconds int `toml:"idle_recycle_seconds"`
 	// VMMBackend selects the microVM backend: "fake" (default on non-Linux) or "firecracker".
@@ -221,6 +223,14 @@ type AgentConfig struct {
 	TLSCertFile           string `toml:"tls_cert_file"`
 	TLSKeyFile            string `toml:"tls_key_file"`
 	TLSInsecureSkipVerify bool   `toml:"tls_insecure_skip_verify"`
+}
+
+// VMShapeConfig is one guest size that can be kept warm and/or cold-booted.
+type VMShapeConfig struct {
+	Label     string `toml:"label" json:"label"`
+	VCPU      int    `toml:"vcpu" json:"vcpu"`
+	MemoryMiB int    `toml:"memory_mib" json:"memory_mib"`
+	MinReady  int    `toml:"min_ready" json:"min_ready"`
 }
 
 // LoadAgentFile reads and validates a host-agent TOML config file.
@@ -280,6 +290,14 @@ func (c *AgentConfig) Validate() error {
 	}
 	if c.MemoryMiB <= 0 {
 		c.MemoryMiB = 2048
+	}
+	for i := range c.Shapes {
+		if err := normalizeShape(&c.Shapes[i], c.VCPU, c.MemoryMiB); err != nil {
+			return err
+		}
+	}
+	if sum := sumShapeMinReady(c.Shapes); sum > c.MaxReady {
+		c.MaxReady = sum
 	}
 	if c.IdleRecycleSeconds < 0 {
 		return fmt.Errorf("config: idle_recycle_seconds must be >= 0")
@@ -359,4 +377,57 @@ func (c *AgentConfig) Validate() error {
 		}
 	}
 	return nil
+}
+
+func normalizeShape(s *VMShapeConfig, defaultVCPU, defaultMem int) error {
+	if s.VCPU <= 0 {
+		s.VCPU = defaultVCPU
+	}
+	if s.MemoryMiB <= 0 {
+		s.MemoryMiB = defaultMem
+	}
+	if s.MinReady < 0 {
+		return fmt.Errorf("config: shape min_ready must be >= 0")
+	}
+	if strings.TrimSpace(s.Label) == "" {
+		s.Label = defaultShapeLabel(s.VCPU, s.MemoryMiB)
+	}
+	return nil
+}
+
+func sumShapeMinReady(shapes []VMShapeConfig) int {
+	n := 0
+	for _, s := range shapes {
+		n += s.MinReady
+	}
+	return n
+}
+
+func defaultShapeLabel(vcpus, memoryMiB int) string {
+	if vcpus == 4 && memoryMiB == 8192 {
+		return "temperci-4vcpu-ubuntu-2404"
+	}
+	g := memoryMiB / 1024
+	if g < 1 {
+		g = 1
+	}
+	return fmt.Sprintf("temperci-%dvcpu-%dg-ubuntu-2404", vcpus, g)
+}
+
+// EffectiveShapes is the warm catalog. Empty [[shapes]] becomes the legacy single size.
+func (c *AgentConfig) EffectiveShapes() []VMShapeConfig {
+	if c == nil {
+		return nil
+	}
+	if len(c.Shapes) > 0 {
+		out := make([]VMShapeConfig, len(c.Shapes))
+		copy(out, c.Shapes)
+		return out
+	}
+	return []VMShapeConfig{{
+		Label:     defaultShapeLabel(c.VCPU, c.MemoryMiB),
+		VCPU:      c.VCPU,
+		MemoryMiB: c.MemoryMiB,
+		MinReady:  c.MinReady,
+	}}
 }

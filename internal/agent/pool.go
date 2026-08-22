@@ -31,6 +31,8 @@ type poolVM struct {
 	id           vmm.ID
 	state        VMState
 	jobID        string
+	vcpus        int
+	memoryMiB    int
 	warmSince    time.Time
 	busySince    time.Time
 	destroyAfter time.Time // next destroy retry not before this
@@ -57,7 +59,8 @@ type Pool struct {
 	sampler        *procSampler
 
 	// createInFlight counts cold-bind provisions not yet registered in vms.
-	createInFlight int
+	createInFlight    int
+	createInFlightMem int
 
 	inventory     InventorySource
 	configuredMax int
@@ -111,6 +114,14 @@ func NewPool(cfg PoolConfig, deps PoolDeps) (*Pool, error) {
 	}
 	if cfg.MemoryMiB <= 0 {
 		cfg.MemoryMiB = 2048
+	}
+	if len(cfg.Shapes) == 0 {
+		cfg.Shapes = []VMShape{{
+			Label:     ShapeLabel(cfg.VCPUs, cfg.MemoryMiB),
+			VCPUs:     cfg.VCPUs,
+			MemoryMiB: cfg.MemoryMiB,
+			MinReady:  cfg.MinReady,
+		}}
 	}
 	if cfg.ImagePath == "" {
 		return nil, fmt.Errorf("agent: ImagePath is required")
@@ -268,6 +279,7 @@ func (p *Pool) Bind(ctx context.Context, job JobPayload) (*BindResult, error) {
 	if job.JobID == "" {
 		return nil, fmt.Errorf("agent: job id required")
 	}
+	shape := ResolveJobShape(job.Labels, p.cfg.Shapes, p.cfg.VCPUs, p.cfg.MemoryMiB)
 
 	deadline := p.now().Add(p.cfg.BindWait)
 	var selected vmm.ID
@@ -279,7 +291,7 @@ func (p *Pool) Bind(ctx context.Context, job JobPayload) (*BindResult, error) {
 			p.mu.Unlock()
 			return nil, ErrPoolStopped
 		}
-		if id, ok := p.pickWarmLocked(); ok {
+		if id, ok := p.pickWarmLocked(shape.VCPUs, shape.MemoryMiB); ok {
 			selected = id
 			warmStart = true
 			vm := p.vms[id]
@@ -290,13 +302,15 @@ func (p *Pool) Bind(ctx context.Context, job JobPayload) (*BindResult, error) {
 			p.mu.Unlock()
 			break
 		}
-		// No warm: try cold boot path if capacity allows.
-		if p.canCreateLocked() {
+		// No matching warm: try cold boot of the requested size if capacity allows.
+		if p.canCreateLocked(shape.MemoryMiB) {
 			p.createInFlight++
+			p.createInFlightMem += shape.MemoryMiB
 			p.mu.Unlock()
-			id, err := p.createAndBoot(ctx)
+			id, err := p.createAndBoot(ctx, shape)
 			p.mu.Lock()
 			p.createInFlight--
+			p.createInFlightMem -= shape.MemoryMiB
 			if err != nil {
 				p.mu.Unlock()
 				return nil, fmt.Errorf("agent: cold boot: %w", err)
@@ -311,6 +325,8 @@ func (p *Pool) Bind(ctx context.Context, job JobPayload) (*BindResult, error) {
 				id:        id,
 				state:     StateBusy,
 				jobID:     job.JobID,
+				vcpus:     shape.VCPUs,
+				memoryMiB: shape.MemoryMiB,
 				busySince: p.now(),
 			}
 			selected = id
@@ -353,6 +369,9 @@ func (p *Pool) Bind(ctx context.Context, job JobPayload) (*BindResult, error) {
 		"vm_id", string(selected),
 		"job_id", job.JobID,
 		"warm_bind", warmStart,
+		"vcpu", shape.VCPUs,
+		"memory_mib", shape.MemoryMiB,
+		"shape", shape.Label,
 	)
 	p.kick() // replenish min_ready
 	return &BindResult{VMID: selected, WarmStart: warmStart, JobID: job.JobID}, nil
@@ -542,40 +561,43 @@ func (p *Pool) reconcile(ctx context.Context) {
 }
 
 func (p *Pool) replenish(ctx context.Context) {
-	for {
-		p.mu.Lock()
-		if p.stopping {
-			p.mu.Unlock()
-			return
+	for _, shape := range p.cfg.Shapes {
+		if shape.MinReady <= 0 {
+			continue
 		}
-		c := p.countsLocked()
-		need := p.cfg.MinReady - (c.Warm + c.PoolBoot)
-		if need <= 0 || !p.canCreateLocked() {
-			p.mu.Unlock()
-			return
-		}
-		// Soft cap on idle capacity (warm + pool_boot).
-		idle := c.Warm + c.PoolBoot
-		if idle >= p.cfg.MaxReady {
-			p.mu.Unlock()
-			return
-		}
-		p.mu.Unlock()
-
-		id, err := p.bootIntoWarm(ctx)
-		if err != nil {
-			if errors.Is(err, ErrNoCapacity) {
+		for {
+			p.mu.Lock()
+			if p.stopping {
+				p.mu.Unlock()
 				return
 			}
-			p.log.Error("pool boot failed", "err", err)
-			return
+			c := p.countsLocked()
+			have := p.countShapeLocked(shape.VCPUs, shape.MemoryMiB, StateWarm, StatePoolBoot)
+			if have >= shape.MinReady || !p.canCreateLocked(shape.MemoryMiB) {
+				p.mu.Unlock()
+				break
+			}
+			if c.Warm+c.PoolBoot >= p.cfg.MaxReady {
+				p.mu.Unlock()
+				return
+			}
+			p.mu.Unlock()
+
+			id, err := p.bootIntoWarm(ctx, shape)
+			if err != nil {
+				if errors.Is(err, ErrNoCapacity) {
+					return
+				}
+				p.log.Error("pool boot failed", "err", err, "shape", shape.Label)
+				return
+			}
+			p.log.Info("warm VM ready", "vm_id", string(id), "shape", shape.Label, "warm", p.Counts().Warm)
 		}
-		p.log.Info("warm VM ready", "vm_id", string(id), "warm", p.Counts().Warm)
 	}
 }
 
 // bootIntoWarm creates+boots a VM and registers it as warm.
-func (p *Pool) bootIntoWarm(ctx context.Context) (vmm.ID, error) {
+func (p *Pool) bootIntoWarm(ctx context.Context, shape VMShape) (vmm.ID, error) {
 	// Reserve pool_boot slot with a provisional id so DesiredIDs / counts work mid-boot.
 	id, err := p.newID()
 	if err != nil {
@@ -587,14 +609,14 @@ func (p *Pool) bootIntoWarm(ctx context.Context) (vmm.ID, error) {
 		return "", ErrPoolStopped
 	}
 	c := p.countsLocked()
-	if c.Warm+c.PoolBoot >= p.cfg.MaxReady || !p.canCreateLocked() {
+	if c.Warm+c.PoolBoot >= p.cfg.MaxReady || !p.canCreateLocked(shape.MemoryMiB) {
 		p.mu.Unlock()
 		return "", ErrNoCapacity
 	}
-	p.vms[id] = &poolVM{id: id, state: StatePoolBoot}
+	p.vms[id] = &poolVM{id: id, state: StatePoolBoot, vcpus: shape.VCPUs, memoryMiB: shape.MemoryMiB}
 	p.mu.Unlock()
 
-	if err := p.provision(ctx, id); err != nil {
+	if err := p.provision(ctx, id, shape); err != nil {
 		p.mu.Lock()
 		delete(p.vms, id)
 		p.mu.Unlock()
@@ -619,27 +641,36 @@ func (p *Pool) bootIntoWarm(ctx context.Context) (vmm.ID, error) {
 
 // createAndBoot provisions a VM without registering warm (cold bind path).
 // Caller holds responsibility for createInFlight accounting.
-func (p *Pool) createAndBoot(ctx context.Context) (vmm.ID, error) {
+func (p *Pool) createAndBoot(ctx context.Context, shape VMShape) (vmm.ID, error) {
 	id, err := p.newID()
 	if err != nil {
 		return "", err
 	}
-	if err := p.provision(ctx, id); err != nil {
+	if err := p.provision(ctx, id, shape); err != nil {
 		_ = p.cleaner.Destroy(context.Background(), id)
 		return "", err
 	}
 	return id, nil
 }
 
-func (p *Pool) provision(ctx context.Context, id vmm.ID) error {
+func (p *Pool) provision(ctx context.Context, id vmm.ID, shape VMShape) error {
+	if shape.VCPUs <= 0 {
+		shape.VCPUs = p.cfg.VCPUs
+	}
+	if shape.MemoryMiB <= 0 {
+		shape.MemoryMiB = p.cfg.MemoryMiB
+	}
 	cfg := vmm.Config{
 		ID:         id,
-		VCPUs:      p.cfg.VCPUs,
-		MemoryMiB:  p.cfg.MemoryMiB,
+		VCPUs:      shape.VCPUs,
+		MemoryMiB:  shape.MemoryMiB,
 		RootfsPath: p.cfg.ImagePath,
 		KernelPath: p.cfg.KernelPath,
 		Metadata: map[string]string{
-			"role": "pool",
+			"role":   "pool",
+			"shape":  shape.Label,
+			"vcpu":   fmt.Sprintf("%d", shape.VCPUs),
+			"memory": fmt.Sprintf("%d", shape.MemoryMiB),
 		},
 	}
 	if _, err := p.vmm.Create(ctx, cfg); err != nil {
@@ -762,13 +793,16 @@ func (p *Pool) destroyNow(ctx context.Context, id vmm.ID) error {
 	return nil
 }
 
-func (p *Pool) pickWarmLocked() (vmm.ID, bool) {
-	// Prefer oldest warm (FIFO).
+func (p *Pool) pickWarmLocked(vcpus, memoryMiB int) (vmm.ID, bool) {
+	// Prefer oldest matching warm (FIFO).
 	var best vmm.ID
 	var bestTime time.Time
 	found := false
 	for id, vm := range p.vms {
 		if vm.state != StateWarm {
+			continue
+		}
+		if vm.vcpus != vcpus || vm.memoryMiB != memoryMiB {
 			continue
 		}
 		if !found || vm.warmSince.Before(bestTime) {
@@ -778,6 +812,34 @@ func (p *Pool) pickWarmLocked() (vmm.ID, bool) {
 		}
 	}
 	return best, found
+}
+
+func (p *Pool) countShapeLocked(vcpus, memoryMiB int, states ...VMState) int {
+	n := 0
+	for _, vm := range p.vms {
+		if vm.vcpus != vcpus || vm.memoryMiB != memoryMiB {
+			continue
+		}
+		for _, st := range states {
+			if vm.state == st {
+				n++
+				break
+			}
+		}
+	}
+	return n
+}
+
+func (p *Pool) allocatedRAMLocked() int {
+	n := p.createInFlightMem
+	for _, vm := range p.vms {
+		if vm.memoryMiB > 0 {
+			n += vm.memoryMiB
+			continue
+		}
+		n += p.cfg.MemoryMiB
+	}
+	return n
 }
 
 func (p *Pool) countsLocked() Counts {
@@ -799,7 +861,7 @@ func (p *Pool) countsLocked() Counts {
 
 // canCreateLocked reports whether a new instance may be provisioned.
 // Blocks blind replenish when at hard cap (e.g. destroy failures piling up).
-func (p *Pool) canCreateLocked() bool {
+func (p *Pool) canCreateLocked(nextMemoryMiB int) bool {
 	c := p.countsLocked()
 	total := c.Total() + p.createInFlight
 	if total >= p.cfg.MaxTotalVMs {
@@ -820,12 +882,15 @@ func (p *Pool) canCreateLocked() bool {
 		p.noteAdmitRefuse("inventory_error", "refusing create: inventory sample failed", "err", err)
 		return false
 	}
-	dec := p.admission().CanCreate(inv, total)
+	if nextMemoryMiB <= 0 {
+		nextMemoryMiB = p.cfg.MemoryMiB
+	}
+	dec := p.admission().CanCreateMemory(inv, p.allocatedRAMLocked(), nextMemoryMiB)
 	if !dec.OK {
 		p.noteAdmitRefuse(dec.Reason, "refusing create: host resources",
 			"reason", dec.Reason,
-			"allocated", total,
-			"memory_mib", p.cfg.MemoryMiB,
+			"allocated_ram_mib", p.allocatedRAMLocked(),
+			"memory_mib", nextMemoryMiB,
 			"ram_avail_mib", inv.RAMAvailMiB,
 			"disk_free_mib", inv.DiskFreeMiB,
 		)
@@ -866,6 +931,7 @@ func (p *Pool) remainingCreatesLocked() int {
 		return 0
 	}
 	total := p.countsLocked().Total() + p.createInFlight
+	// Slot estimate uses the default shape; Bind still checks the requested size.
 	return p.admission().Remaining(inv, total)
 }
 

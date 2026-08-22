@@ -8,12 +8,12 @@ import (
 
 // RealtimeSnapshot is pushed over the dashboard WebSocket.
 type RealtimeSnapshot struct {
-	Type    string          `json:"type"` // "snapshot"
-	Time    time.Time       `json:"time"`
-	Overview map[string]any `json:"overview"`
-	Hosts   []api.AgentInfo `json:"hosts"`
-	Jobs    []jobRowWS      `json:"jobs"`
-	VMs     []vmRowWS       `json:"vms"`
+	Type     string          `json:"type"` // "snapshot"
+	Time     time.Time       `json:"time"`
+	Overview map[string]any  `json:"overview"`
+	Hosts    []api.AgentInfo `json:"hosts"`
+	Jobs     []jobRowWS      `json:"jobs"`
+	VMs      []vmRowWS       `json:"vms"`
 }
 
 type jobRowWS struct {
@@ -21,6 +21,8 @@ type jobRowWS struct {
 	RunID           int64     `json:"run_id"`
 	Org             string    `json:"org"`
 	RepoFullName    string    `json:"repo_full_name"`
+	Name            string    `json:"name,omitempty"`
+	WorkflowName    string    `json:"workflow_name,omitempty"`
 	Labels          []string  `json:"labels"`
 	Status          string    `json:"status"`
 	AssignedAgentID string    `json:"assigned_agent_id,omitempty"`
@@ -83,6 +85,8 @@ func (s *Server) BuildSnapshot() RealtimeSnapshot {
 			RunID:           a.RunID,
 			Org:             a.Org,
 			RepoFullName:    a.RepoFullName,
+			Name:            a.Name,
+			WorkflowName:    a.WorkflowName,
 			Labels:          a.Labels,
 			Status:          string(a.Status),
 			AssignedAgentID: a.AssignedAgentID,
