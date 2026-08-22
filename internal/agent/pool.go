@@ -58,6 +58,11 @@ type Pool struct {
 	// createInFlight counts cold-bind provisions not yet registered in vms.
 	createInFlight int
 
+	inventory     InventorySource
+	configuredMax int
+	clampReason   string
+	lastAdmit     string
+
 	reconcileMu sync.Mutex
 
 	cancel context.CancelFunc
@@ -75,6 +80,8 @@ type PoolDeps struct {
 	Now func() time.Time
 	// NewID optional id generator for tests.
 	NewID func() (vmm.ID, error)
+	// Inventory optional host sample; nil keeps slot-only create checks.
+	Inventory InventorySource
 }
 
 // NewPool builds a pool. Call Start to sweep orphans and run the reconciler.
@@ -137,16 +144,47 @@ func NewPool(cfg PoolConfig, deps PoolDeps) (*Pool, error) {
 		newID = randomVMID
 	}
 
+	if cfg.DiskPerVMMiB <= 0 {
+		cfg.DiskPerVMMiB = OverlayEstimateMiB(cfg.ImagePath)
+	}
+	configuredMax := cfg.MaxReady
+	clampReason := ""
+	if deps.Inventory != nil {
+		inv, err := deps.Inventory.Sample()
+		if err != nil {
+			log.Error("host inventory failed; refusing VMs", "err", err)
+			cfg.MinReady = 0
+			cfg.MaxReady = 0
+			clampReason = "inventory_error"
+		} else {
+			var why string
+			cfg, _, why = ClampPoolToHost(cfg, inv)
+			if cfg.MaxReady < configuredMax {
+				clampReason = why
+				log.Info("host admission clamped max_ready",
+					"configured", configuredMax,
+					"effective", cfg.MaxReady,
+					"reason", why,
+					"ram_total_mib", inv.RAMTotalMiB,
+					"disk_free_mib", inv.DiskFreeMiB,
+				)
+			}
+		}
+	}
+
 	return &Pool{
-		cfg:     cfg,
-		vmm:     deps.VMM,
-		cleaner: deps.Cleaner,
-		runner:  runner,
-		log:     log,
-		now:     now,
-		newID:   newID,
-		vms:     make(map[vmm.ID]*poolVM),
-		wake:    make(chan struct{}, 1),
+		cfg:           cfg,
+		vmm:           deps.VMM,
+		cleaner:       deps.Cleaner,
+		runner:        runner,
+		log:           log,
+		now:           now,
+		newID:         newID,
+		vms:           make(map[vmm.ID]*poolVM),
+		wake:          make(chan struct{}, 1),
+		inventory:     deps.Inventory,
+		configuredMax: configuredMax,
+		clampReason:   clampReason,
 	}, nil
 }
 
@@ -756,6 +794,7 @@ func (p *Pool) canCreateLocked() bool {
 	c := p.countsLocked()
 	total := c.Total() + p.createInFlight
 	if total >= p.cfg.MaxTotalVMs {
+		p.lastAdmit = "max_total_vms"
 		p.log.Error("refusing create: at max_total_vms",
 			"total", total,
 			"max_total_vms", p.cfg.MaxTotalVMs,
@@ -764,7 +803,90 @@ func (p *Pool) canCreateLocked() bool {
 		)
 		return false
 	}
+	if p.inventory == nil {
+		return true
+	}
+	inv, err := p.inventory.Sample()
+	if err != nil {
+		p.lastAdmit = "inventory_error"
+		p.log.Error("refusing create: inventory sample failed", "err", err)
+		return false
+	}
+	dec := p.admission().CanCreate(inv, total)
+	if !dec.OK {
+		p.lastAdmit = dec.Reason
+		p.log.Error("refusing create: host resources",
+			"reason", dec.Reason,
+			"allocated", total,
+			"memory_mib", p.cfg.MemoryMiB,
+			"ram_avail_mib", inv.RAMAvailMiB,
+			"disk_free_mib", inv.DiskFreeMiB,
+		)
+		return false
+	}
 	return true
+}
+
+func (p *Pool) admission() Admission {
+	return Admission{
+		MemoryMiB:      p.cfg.MemoryMiB,
+		DiskMiB:        p.cfg.DiskPerVMMiB,
+		ReserveRAMMiB:  p.cfg.ReserveRAMMiB,
+		ReserveDiskMiB: p.cfg.ReserveDiskMiB,
+	}
+}
+
+func (p *Pool) remainingCreatesLocked() int {
+	if p.inventory == nil {
+		return 1 << 20
+	}
+	inv, err := p.inventory.Sample()
+	if err != nil {
+		p.lastAdmit = "inventory_error"
+		return 0
+	}
+	total := p.countsLocked().Total() + p.createInFlight
+	return p.admission().Remaining(inv, total)
+}
+
+func (p *Pool) EffectiveMaxReady() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.cfg.MaxReady
+}
+
+func (p *Pool) ConfiguredMaxReady() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.configuredMax > 0 {
+		return p.configuredMax
+	}
+	return p.cfg.MaxReady
+}
+
+func (p *Pool) RemainingCreates() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.remainingCreatesLocked()
+}
+
+func (p *Pool) LastAdmitReason() string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.lastAdmit
+}
+
+func (p *Pool) ClampReason() string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.clampReason
+}
+
+func (p *Pool) InventorySample() (HostInventory, error) {
+	if p == nil || p.inventory == nil {
+		return HostInventory{}, nil
+	}
+	return p.inventory.Sample()
 }
 
 func randomVMID() (vmm.ID, error) {

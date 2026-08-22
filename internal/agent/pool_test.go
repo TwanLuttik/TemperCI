@@ -445,10 +445,10 @@ func TestBindColdDirect(t *testing.T) {
 // flakyVMM fails Destroy the first failN times globally, then succeeds.
 type flakyVMM struct {
 	vmm.Manager
-	mu     sync.Mutex
-	failN  int
-	fails  atomic.Int64
-	calls  atomic.Int64
+	mu    sync.Mutex
+	failN int
+	fails atomic.Int64
+	calls atomic.Int64
 }
 
 func (f *flakyVMM) Destroy(ctx context.Context, id vmm.ID) error {
@@ -461,4 +461,89 @@ func (f *flakyVMM) Destroy(ctx context.Context, id vmm.ID) error {
 		return fmt.Errorf("simulated destroy failure #%d", n)
 	}
 	return f.Manager.Destroy(ctx, id)
+}
+
+func TestPool_ClampsMinReadyToHostRAM(t *testing.T) {
+	inv := agent.StaticInventory{Inv: agent.HostInventory{
+		RAMTotalMiB: 16384, RAMAvailMiB: 14000, DiskTotalMiB: 200000, DiskFreeMiB: 200000, NumCPU: 8,
+	}}
+	p := testPool(t, agent.PoolConfig{
+		MinReady: 3, MaxReady: 3, MemoryMiB: 8192, DiskPerVMMiB: 256,
+		ReserveRAMMiB: 2048, ReserveDiskMiB: 0,
+	}, func(d *agent.PoolDeps, _ *fake.Manager) {
+		d.Inventory = inv
+	})
+	waitFor(t, 2*time.Second, func() bool { return p.Counts().Warm+p.Counts().PoolBoot >= 1 })
+	time.Sleep(150 * time.Millisecond)
+	c := p.Counts()
+	if c.Warm+c.PoolBoot+c.Busy > 1 {
+		t.Fatalf("clamped host must not boot >1 VM: %+v", c)
+	}
+	if p.EffectiveMaxReady() != 1 {
+		t.Fatalf("EffectiveMaxReady=%d", p.EffectiveMaxReady())
+	}
+	if p.ConfiguredMaxReady() != 3 {
+		t.Fatalf("ConfiguredMaxReady=%d", p.ConfiguredMaxReady())
+	}
+	if p.ClampReason() != agent.ReasonRAMFit {
+		t.Fatalf("ClampReason=%q", p.ClampReason())
+	}
+}
+
+func TestPool_LiveRAMBlocksColdCreate(t *testing.T) {
+	inv := agent.StaticInventory{Inv: agent.HostInventory{
+		RAMTotalMiB: 65536, RAMAvailMiB: 512, DiskTotalMiB: 200000, DiskFreeMiB: 200000, NumCPU: 8,
+	}}
+	p := testPool(t, agent.PoolConfig{
+		MinReady: 0, MaxReady: 2, MemoryMiB: 4096, DiskPerVMMiB: 256,
+		ReserveRAMMiB: 0, ReserveDiskMiB: 0,
+	}, func(d *agent.PoolDeps, _ *fake.Manager) {
+		d.Inventory = inv
+	})
+	_, err := p.Bind(context.Background(), agent.JobPayload{JobID: "cold", JITConfig: "x"})
+	if err == nil || !errors.Is(err, agent.ErrNoCapacity) {
+		t.Fatalf("want ErrNoCapacity, got %v", err)
+	}
+	if p.LastAdmitReason() != agent.ReasonRAMAvail {
+		t.Fatalf("LastAdmitReason=%q", p.LastAdmitReason())
+	}
+}
+
+func TestPool_WarmBindWhenCreateBlocked(t *testing.T) {
+	// Huge RAM at start so one warm VM boots; then flip live RAM down.
+	cur := &atomicInventory{inv: agent.HostInventory{
+		RAMTotalMiB: 65536, RAMAvailMiB: 60000, DiskTotalMiB: 200000, DiskFreeMiB: 200000,
+	}}
+	p := testPool(t, agent.PoolConfig{
+		MinReady: 1, MaxReady: 2, MemoryMiB: 4096, DiskPerVMMiB: 256,
+		ReserveRAMMiB: 0, ReserveDiskMiB: 0, BindWait: 200 * time.Millisecond,
+	}, func(d *agent.PoolDeps, _ *fake.Manager) {
+		d.Inventory = cur
+	})
+	waitFor(t, 2*time.Second, func() bool { return p.Counts().Warm >= 1 })
+	cur.set(agent.HostInventory{RAMTotalMiB: 65536, RAMAvailMiB: 100, DiskTotalMiB: 200000, DiskFreeMiB: 200000})
+	res, err := p.Bind(context.Background(), agent.JobPayload{JobID: "warm", JITConfig: "x"})
+	if err != nil {
+		t.Fatalf("warm bind must succeed: %v", err)
+	}
+	if !res.WarmStart {
+		t.Fatal("expected warm bind")
+	}
+}
+
+type atomicInventory struct {
+	mu  sync.Mutex
+	inv agent.HostInventory
+}
+
+func (a *atomicInventory) Sample() (agent.HostInventory, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.inv, nil
+}
+
+func (a *atomicInventory) set(inv agent.HostInventory) {
+	a.mu.Lock()
+	a.inv = inv
+	a.mu.Unlock()
 }
