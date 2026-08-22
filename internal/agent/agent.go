@@ -26,17 +26,22 @@ const (
 
 // PoolConfig configures the warm pool.
 type PoolConfig struct {
-	MinReady           int
-	MaxReady           int
-	MaxTotalVMs        int
-	VCPUs              int
-	MemoryMiB          int
-	ImagePath          string
-	KernelPath         string
-	IdleRecycle        time.Duration
-	ReconcileInterval  time.Duration
-	DestroyRetryBase   time.Duration
-	DestroyRetryMax    time.Duration
+	MinReady    int
+	MaxReady    int
+	MaxTotalVMs int
+	VCPUs       int
+	MemoryMiB   int
+	// DiskPerVMMiB is the overlay estimate used by admission (0 = derive from image).
+	DiskPerVMMiB int
+	// ReserveRAMMiB / ReserveDiskMiB are host headroom. 0 is a valid "no extra reserve".
+	ReserveRAMMiB     int
+	ReserveDiskMiB    int
+	ImagePath         string
+	KernelPath        string
+	IdleRecycle       time.Duration
+	ReconcileInterval time.Duration
+	DestroyRetryBase  time.Duration
+	DestroyRetryMax   time.Duration
 	// BindWait is how long Bind waits for a warm VM before cold-booting.
 	BindWait time.Duration
 }
@@ -77,17 +82,17 @@ type JobPayload struct {
 
 // BindResult is returned after a successful bind.
 type BindResult struct {
-	VMID       vmm.ID
-	WarmStart  bool // true if bound from warm pool; false if cold-booted
-	JobID      string
+	VMID      vmm.ID
+	WarmStart bool // true if bound from warm pool; false if cold-booted
+	JobID     string
 }
 
 // Counts is a snapshot of pool membership by state.
 type Counts struct {
-	PoolBoot    int
-	Warm        int
-	Busy        int
-	Destroying  int
+	PoolBoot   int
+	Warm       int
+	Busy       int
+	Destroying int
 }
 
 // Total returns the number of tracked VMs.
