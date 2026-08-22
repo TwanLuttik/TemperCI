@@ -68,7 +68,7 @@ export function VMsPage() {
         description={
           <span className="inline-flex flex-wrap items-center gap-2">
             Host-side Firecracker samples (CPU / RSS / disk).
-            <LiveDot live={rt.connected} />
+            <LiveDot status={rt.status} />
           </span>
         }
       />

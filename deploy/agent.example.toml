@@ -77,3 +77,5 @@ reconcile_interval_seconds = 1
 cache_listen_addr = ""
 # cache_listen_addr = "127.0.0.1:8743"
 # cache_max_bytes = 53687091200  # 50 GiB LRU across all repos on this host
+# The same intercept also terminates Docker Hub + GHCR (oci_cache_max_bytes).
+# oci_cache_max_bytes = 107374182400  # 100 GiB LRU for image layers + build cache

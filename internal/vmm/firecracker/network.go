@@ -101,7 +101,7 @@ func realTeardownNetwork(id vmm.ID, net vmm.NetworkState) error {
 
 // bootArgs builds Linux kernel cmdline including static IP for the guest NIC.
 func bootArgs(id vmm.ID, netDir string) string {
-	base := "console=ttyS0 reboot=k panic=1 pci=off root=/dev/vda rw"
+	base := "console=ttyS0 reboot=k panic=1 pci=off root=/dev/vda rw systemd.unified_cgroup_hierarchy=1 selinux=0"
 	guestIP := readTrim(filepath.Join(netDir, "guest_ip"))
 	gw := readTrim(filepath.Join(netDir, "gateway"))
 	prefix := readTrim(filepath.Join(netDir, "prefix"))

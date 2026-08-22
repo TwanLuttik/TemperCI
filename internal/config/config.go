@@ -213,6 +213,8 @@ type AgentConfig struct {
 	CacheMaxBytes int64 `toml:"cache_max_bytes"`
 	// CacheListenAddr binds the Actions cache gateway (empty = disabled).
 	CacheListenAddr string `toml:"cache_listen_addr"`
+	// OCICacheMaxBytes is the LRU cap for host-local OCI/build cache (default 100 GiB).
+	OCICacheMaxBytes int64 `toml:"oci_cache_max_bytes"`
 
 	// Optional TLS when control_url is https://
 	TLSCAFile             string `toml:"tls_ca_file"`
@@ -322,6 +324,12 @@ func (c *AgentConfig) Validate() error {
 	}
 	if c.CacheMaxBytes == 0 {
 		c.CacheMaxBytes = 50 << 30
+	}
+	if c.OCICacheMaxBytes < 0 {
+		return fmt.Errorf("config: oci_cache_max_bytes must be >= 0")
+	}
+	if c.OCICacheMaxBytes == 0 {
+		c.OCICacheMaxBytes = 100 << 30
 	}
 	c.TLSCAFile = strings.TrimSpace(c.TLSCAFile)
 	c.TLSCertFile = strings.TrimSpace(c.TLSCertFile)

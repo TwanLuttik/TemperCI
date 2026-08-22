@@ -30,6 +30,11 @@ func (l Layout) CacheDir() string {
 	return filepath.Join(l.Root, "cache")
 }
 
+// OCICacheDir is host-local OCI pull-through / build cache (not deleted per job).
+func (l Layout) OCICacheDir() string {
+	return filepath.Join(l.Root, "ocicache")
+}
+
 // InstancesDir is the parent of all per-VM instance directories.
 func (l Layout) InstancesDir() string {
 	return filepath.Join(l.Root, "instances")

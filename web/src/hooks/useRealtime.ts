@@ -23,8 +23,11 @@ export type RealtimeSnapshot = {
   vms?: VMRow[];
 };
 
+export type RealtimeStatus = "connecting" | "live" | "rest";
+
 export type RealtimeState = {
   connected: boolean;
+  status: RealtimeStatus;
   last?: RealtimeSnapshot;
   error?: string;
 };
@@ -39,12 +42,19 @@ function wsURL(): string {
  * Falls back silently when the socket cannot connect (pages still use REST).
  */
 export function useRealtime(enabled = true): RealtimeState {
-  const [state, setState] = useState<RealtimeState>({ connected: false });
+  const [state, setState] = useState<RealtimeState>({
+    connected: false,
+    status: enabled ? "connecting" : "rest",
+  });
   const retryRef = useRef(0);
   const wsRef = useRef<WebSocket | null>(null);
 
   useEffect(() => {
-    if (!enabled) return;
+    if (!enabled) {
+      setState((s) => ({ ...s, connected: false, status: "rest" }));
+      return;
+    }
+    setState((s) => ({ ...s, connected: false, status: "connecting" }));
 
     let closed = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -57,7 +67,7 @@ export function useRealtime(enabled = true): RealtimeState {
 
         ws.onopen = () => {
           retryRef.current = 0;
-          setState((s) => ({ ...s, connected: true, error: undefined }));
+          setState((s) => ({ ...s, connected: true, status: "live", error: undefined }));
         };
 
         ws.onmessage = (ev) => {
@@ -65,7 +75,7 @@ export function useRealtime(enabled = true): RealtimeState {
             const data = JSON.parse(String(ev.data)) as RealtimeSnapshot;
             if (data.type === "snapshot" || data.type === "hello") {
               if (data.type === "snapshot") {
-                setState({ connected: true, last: data });
+                setState({ connected: true, status: "live", last: data });
               }
             }
           } catch {
@@ -74,11 +84,11 @@ export function useRealtime(enabled = true): RealtimeState {
         };
 
         ws.onerror = () => {
-          setState((s) => ({ ...s, connected: false, error: "websocket error" }));
+          setState((s) => ({ ...s, connected: false, status: "connecting", error: "websocket error" }));
         };
 
         ws.onclose = () => {
-          setState((s) => ({ ...s, connected: false }));
+          setState((s) => ({ ...s, connected: false, status: "connecting" }));
           wsRef.current = null;
           if (closed) return;
           const delay = Math.min(10_000, 500 * 2 ** retryRef.current);
@@ -86,7 +96,7 @@ export function useRealtime(enabled = true): RealtimeState {
           timer = setTimeout(connect, delay);
         };
       } catch (e) {
-        setState({ connected: false, error: (e as Error).message });
+        setState({ connected: false, status: "connecting", error: (e as Error).message });
         timer = setTimeout(connect, 2000);
       }
     };

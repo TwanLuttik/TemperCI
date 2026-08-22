@@ -26,11 +26,14 @@ func TestCollectJobLogs(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(arch, "agent.log"), []byte("agent ok"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(arch, "workflow.log"), []byte("##[group]Run checkout"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(filepath.Join(layout.LogDir(id), "console.log"), []byte("serial boot"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	got := CollectJobLogs(layout, id)
-	if got.RunnerLog != "runner ok" || got.AgentLog != "agent ok" || got.ConsoleLog != "serial boot" {
+	if got.RunnerLog != "runner ok" || got.AgentLog != "agent ok" || got.ConsoleLog != "serial boot" || got.WorkflowLog != "##[group]Run checkout" {
 		t.Fatalf("got %+v", got)
 	}
 

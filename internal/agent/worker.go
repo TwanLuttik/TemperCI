@@ -11,6 +11,7 @@ import (
 
 	"github.com/TwanLuttik/TemperCI/internal/api"
 	"github.com/TwanLuttik/TemperCI/internal/ghacache"
+	"github.com/TwanLuttik/TemperCI/internal/ocicache"
 	"github.com/TwanLuttik/TemperCI/internal/vmm"
 )
 
@@ -35,6 +36,8 @@ type Worker struct {
 	WaitRealRunner bool
 	// Cache is the optional host-local Actions cache gateway.
 	Cache *ghacache.Gateway
+	// OCI is the optional host-local registry / build-cache gateway.
+	OCI *ocicache.Gateway
 	// BeforeBind, if set, runs after claim and before Pool.Bind (tests).
 	BeforeBind func()
 
@@ -173,11 +176,22 @@ func (w *Worker) snapshot() CapacitySnapshot {
 		free = 0
 	}
 	var repos []string
-	var cache *api.CacheUsage
-	if w.Cache != nil && w.Cache.Store != nil {
-		repos = w.Cache.Store.Repos()
-		cache = CacheUsageFromStore(w.Cache.Store)
+	var ghaStore *ghacache.Store
+	var ociStore *ocicache.Store
+	if w.Cache != nil {
+		ghaStore = w.Cache.Store
 	}
+	if w.OCI != nil {
+		ociStore = w.OCI.Store
+	}
+	if ghaStore != nil {
+		repos = append(repos, ghaStore.Repos()...)
+	}
+	if ociStore != nil {
+		repos = append(repos, ociStore.Repos()...)
+	}
+	repos = uniqueSorted(repos)
+	cache := CacheUsageFromStores(ghaStore, ociStore)
 	return CapacitySnapshot{
 		MaxCapacity: w.Capacity,
 		FreeSlots:   free,
@@ -195,10 +209,18 @@ func (w *Worker) register(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if len(ops) == 0 || w.Cache == nil || w.Cache.Store == nil {
+	var ghaStore *ghacache.Store
+	var ociStore *ocicache.Store
+	if w.Cache != nil {
+		ghaStore = w.Cache.Store
+	}
+	if w.OCI != nil {
+		ociStore = w.OCI.Store
+	}
+	if len(ops) == 0 || (ghaStore == nil && ociStore == nil) {
 		return nil
 	}
-	n, err := ApplyCacheOps(w.Cache.Store, ops)
+	n, err := ApplyCacheOps(ghaStore, ociStore, ops)
 	if err != nil {
 		if w.Log != nil {
 			w.Log.Error("apply cache ops", "err", err, "applied", n)
@@ -236,13 +258,19 @@ func (w *Worker) handleJob(ctx context.Context, job *api.JobAssignment) error {
 		_ = w.finish(ctx, job.JobID, job.RepoFullName, "error", "", false, err.Error(), JobLogs{})
 		return err
 	}
-	if w.Cache != nil && job.RepoFullName != "" {
+	if job.RepoFullName != "" && (w.Cache != nil || w.OCI != nil) {
 		guestIP := w.Pool.GuestIP(res.VMID)
 		if guestIP == "" {
 			guestIP = "127.0.0.1"
 		}
-		w.Cache.BindRemote(guestIP, job.RepoFullName)
-		defer w.Cache.UnbindRemote(guestIP)
+		if w.Cache != nil {
+			w.Cache.BindRemote(guestIP, job.RepoFullName)
+			defer w.Cache.UnbindRemote(guestIP)
+		}
+		if w.OCI != nil {
+			w.OCI.BindRemote(guestIP, job.RepoFullName)
+			defer w.OCI.UnbindRemote(guestIP)
+		}
 	}
 
 	if err := w.Client.ReportStarted(ctx, job.JobID, string(res.VMID), res.WarmStart); err != nil {
@@ -255,7 +283,7 @@ func (w *Worker) handleJob(ctx context.Context, job *api.JobAssignment) error {
 		"warm_bind", res.WarmStart,
 	)
 
-	outcome, waitErr := w.waitForJob(ctx, res.VMID)
+	outcome, waitErr := w.waitForJob(ctx, res.VMID, job.JobID)
 	logs := w.collectLogs(res.VMID)
 	if waitErr != nil && !errors.Is(waitErr, context.DeadlineExceeded) {
 		_ = w.Pool.JobFinished(context.Background(), res.VMID, "cancelled")
@@ -318,7 +346,7 @@ func (w *Worker) finish(ctx context.Context, jobID int64, repo, outcome, vmID st
 }
 
 // waitForJob blocks until the guest runner finishes, JobSimulate elapses, deadline hits, or ctx cancels.
-func (w *Worker) waitForJob(ctx context.Context, vmID vmm.ID) (outcome string, err error) {
+func (w *Worker) waitForJob(ctx context.Context, vmID vmm.ID, jobID int64) (outcome string, err error) {
 	sim := w.JobSimulate
 	if sim < 0 {
 		sim = 0
@@ -356,6 +384,11 @@ func (w *Worker) waitForJob(ctx context.Context, vmID vmm.ID) (outcome string, e
 		}
 		waitCtx, cancel := context.WithTimeout(ctx, deadline)
 		defer cancel()
+		streamCtx, stopStream := context.WithCancel(waitCtx)
+		defer stopStream()
+		if jobID != 0 && w.Client != nil {
+			go w.streamLogs(streamCtx, jobID, vmID)
+		}
 		log.Info("waiting for guest runner.exit",
 			"vm_id", string(vmID),
 			"deadline", deadline.String(),
@@ -379,4 +412,32 @@ func (w *Worker) waitForJob(ctx context.Context, vmID vmm.ID) (outcome string, e
 		w.Log.Warn("WaitRealRunner disabled; finishing job without guest runner wait")
 	}
 	return "success", nil
+}
+
+func (w *Worker) streamLogs(ctx context.Context, jobID int64, vmID vmm.ID) {
+	if w.Client == nil || jobID == 0 {
+		return
+	}
+	t := time.NewTicker(2 * time.Second)
+	defer t.Stop()
+	var last string
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			logs := w.collectLogs(vmID)
+			if logs.RunnerLog == "" && logs.AgentLog == "" && logs.ConsoleLog == "" && logs.WorkflowLog == "" {
+				continue
+			}
+			sig := logs.RunnerLog + "\x00" + logs.AgentLog + "\x00" + logs.ConsoleLog + "\x00" + logs.WorkflowLog
+			if sig == last {
+				continue
+			}
+			last = sig
+			if err := w.Client.ReportLogs(ctx, jobID, logs); err != nil && w.Log != nil {
+				w.Log.Info("live log upload failed", "job_id", jobID, "err", err)
+			}
+		}
+	}
 }

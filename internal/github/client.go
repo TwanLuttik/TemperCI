@@ -18,8 +18,8 @@ const defaultAPIBase = "https://api.github.com"
 
 // Config configures a GitHub App API client.
 type Config struct {
-	AppID          int64
-	PrivateKeyPEM  []byte
+	AppID         int64
+	PrivateKeyPEM []byte
 	// InstallationID is used when generating installation tokens if not
 	// overridden per-call. Webhook-driven flows pass the event installation id.
 	InstallationID int64
@@ -83,8 +83,8 @@ type GenerateJITConfigRequest struct {
 
 // GenerateJITConfigResponse is the subset of the API response we keep.
 type GenerateJITConfigResponse struct {
-	Runner            RunnerInfo `json:"runner"`
-	EncodedJITConfig  string     `json:"encoded_jit_config"`
+	Runner           RunnerInfo `json:"runner"`
+	EncodedJITConfig string     `json:"encoded_jit_config"`
 }
 
 // RunnerInfo is the runner metadata returned with a JIT config.
@@ -218,6 +218,128 @@ func (c *Client) installationToken(ctx context.Context, installationID int64) (s
 	c.cachedInstall = installationID
 	c.mu.Unlock()
 	return tok.Token, nil
+}
+
+// WorkflowJobDetail is GET /repos/{owner}/{repo}/actions/jobs/{job_id}.
+type WorkflowJobDetail struct {
+	ID         int64             `json:"id"`
+	Name       string            `json:"name"`
+	Status     string            `json:"status"`
+	Conclusion string            `json:"conclusion"`
+	HTMLURL    string            `json:"html_url"`
+	Steps      []WorkflowJobStep `json:"steps"`
+}
+
+// WorkflowJobStep is one step inside a GitHub Actions job.
+type WorkflowJobStep struct {
+	Name        string `json:"name"`
+	Status      string `json:"status"`
+	Conclusion  string `json:"conclusion"`
+	Number      int    `json:"number"`
+	StartedAt   string `json:"started_at,omitempty"`
+	CompletedAt string `json:"completed_at,omitempty"`
+}
+
+// GetJob fetches a GitHub Actions job including its step list.
+// installationID may be 0 to use the client default.
+func (c *Client) GetJob(ctx context.Context, owner, repo string, jobID, installationID int64) (*WorkflowJobDetail, error) {
+	if owner == "" || repo == "" {
+		return nil, fmt.Errorf("github: owner and repo are required")
+	}
+	if jobID == 0 {
+		return nil, fmt.Errorf("github: job id is required")
+	}
+	installID := installationID
+	if installID == 0 {
+		installID = c.installationID
+	}
+	if installID == 0 {
+		return nil, fmt.Errorf("github: installation id is required")
+	}
+	token, err := c.installationToken(ctx, installID)
+	if err != nil {
+		return nil, err
+	}
+	url := c.baseURL + "/repos/" + owner + "/" + repo + "/actions/jobs/" + strconv.FormatInt(jobID, 10)
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	httpReq.Header.Set("Accept", "application/vnd.github+json")
+	httpReq.Header.Set("Authorization", "Bearer "+token)
+	httpReq.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+
+	resp, err := c.http.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("github: get job request: %w", err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return nil, fmt.Errorf("github: read job: %w", err)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("github: get job: status %d: %s", resp.StatusCode, truncate(string(body), 256))
+	}
+	var out WorkflowJobDetail
+	if err := json.Unmarshal(body, &out); err != nil {
+		return nil, fmt.Errorf("github: decode job: %w", err)
+	}
+	if out.ID == 0 {
+		out.ID = jobID
+	}
+	return &out, nil
+}
+
+const maxJobLogBytes = 2 << 20
+
+// DownloadJobLogs fetches the official GitHub Actions job log (step output).
+// installationID may be 0 to use the client default.
+func (c *Client) DownloadJobLogs(ctx context.Context, owner, repo string, jobID, installationID int64) (string, error) {
+	if owner == "" || repo == "" {
+		return "", fmt.Errorf("github: owner and repo are required")
+	}
+	if jobID == 0 {
+		return "", fmt.Errorf("github: job id is required")
+	}
+	installID := installationID
+	if installID == 0 {
+		installID = c.installationID
+	}
+	if installID == 0 {
+		return "", fmt.Errorf("github: installation id is required")
+	}
+	token, err := c.installationToken(ctx, installID)
+	if err != nil {
+		return "", err
+	}
+	url := c.baseURL + "/repos/" + owner + "/" + repo + "/actions/jobs/" + strconv.FormatInt(jobID, 10) + "/logs"
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return "", err
+	}
+	httpReq.Header.Set("Accept", "application/vnd.github+json")
+	httpReq.Header.Set("Authorization", "Bearer "+token)
+	httpReq.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+
+	resp, err := c.http.Do(httpReq)
+	if err != nil {
+		return "", fmt.Errorf("github: job logs request: %w", err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxJobLogBytes+1))
+	if err != nil {
+		return "", fmt.Errorf("github: read job logs: %w", err)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", fmt.Errorf("github: job logs: status %d: %s", resp.StatusCode, truncate(string(body), 256))
+	}
+	if len(body) > maxJobLogBytes {
+		body = body[len(body)-maxJobLogBytes:]
+	}
+	text := string(body)
+	text = strings.TrimPrefix(text, "\uFEFF")
+	return text, nil
 }
 
 // DeleteOrgRunner removes an organization self-hosted runner by id.

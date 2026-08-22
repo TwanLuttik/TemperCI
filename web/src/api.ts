@@ -138,11 +138,22 @@ export type Host = {
   }[];
 };
 
+export type JobStep = {
+  name: string;
+  status: string;
+  conclusion?: string;
+  number: number;
+  started_at?: string;
+  completed_at?: string;
+};
+
 export type Job = {
   job_id: number;
   run_id?: number;
   org?: string;
   repo_full_name?: string;
+  name?: string;
+  steps?: JobStep[];
   labels?: string[];
   status: string;
   assigned_agent_id?: string;
@@ -216,6 +227,7 @@ export type JobLogs = {
   runner_log?: string;
   agent_log?: string;
   console_log?: string;
+  workflow_log?: string;
   events?: JobEvent[];
   updated_at?: string;
 };

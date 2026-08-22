@@ -9,9 +9,11 @@ package webui
 
 import (
 	"embed"
+	"io"
 	"io/fs"
 	"net/http"
 	"strings"
+	"time"
 )
 
 // Dist holds the Vite production build (index.html + assets/).
@@ -47,16 +49,34 @@ func SPAHandler() http.Handler {
 			path = "index.html"
 		}
 
-		// Serve real files (hashed assets, index.html, favicon, etc.).
-		if f, err := sub.Open(path); err == nil {
-			_ = f.Close()
-			fileServer.ServeHTTP(w, r)
-			return
+		// Serve real files (hashed assets, favicon, etc.). Do not pass
+		// "/index.html" through FileServer: it 301s that path to "./",
+		// and the browser resolves "./" against /jobs/123 → /jobs/.
+		if path != "index.html" {
+			if f, err := sub.Open(path); err == nil {
+				_ = f.Close()
+				fileServer.ServeHTTP(w, r)
+				return
+			}
 		}
 
-		// SPA fallback: client routes like /hosts, /jobs
-		r2 := r.Clone(r.Context())
-		r2.URL.Path = "/index.html"
-		fileServer.ServeHTTP(w, r2)
+		// SPA fallback: keep the request URL so client routes survive refresh.
+		serveIndex(w, r, sub)
 	})
+}
+
+func serveIndex(w http.ResponseWriter, r *http.Request, fsys fs.FS) {
+	f, err := fsys.Open("index.html")
+	if err != nil {
+		http.Error(w, "dashboard index missing; run: make build-ui", http.StatusServiceUnavailable)
+		return
+	}
+	defer f.Close()
+	rs, ok := f.(io.ReadSeeker)
+	if !ok {
+		http.Error(w, "dashboard index not seekable", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	http.ServeContent(w, r, "index.html", time.Time{}, rs)
 }

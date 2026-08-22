@@ -17,6 +17,7 @@ import (
 
 	"github.com/TwanLuttik/TemperCI/internal/api"
 	"github.com/TwanLuttik/TemperCI/internal/config"
+	"github.com/TwanLuttik/TemperCI/internal/github"
 	"github.com/TwanLuttik/TemperCI/internal/store"
 	"github.com/TwanLuttik/TemperCI/internal/webui"
 )
@@ -971,7 +972,16 @@ func (s *Server) handleJobDetail(w http.ResponseWriter, r *http.Request, _ *uiPr
 	if logs == nil {
 		logs = &store.JobLog{JobID: id, Events: []store.JobEvent{}}
 	}
+	s.ensureWorkflowLog(r, a, logs)
 	tm := timingsFromAssignment(a, time.Now().UTC())
+	name := ""
+	steps := []github.WorkflowJobStep{}
+	if meta := s.ensureJobMeta(r, a); meta != nil {
+		name = meta.Name
+		if meta.Steps != nil {
+			steps = meta.Steps
+		}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok": true,
 		"job": map[string]any{
@@ -1000,6 +1010,8 @@ func (s *Server) handleJobDetail(w http.ResponseWriter, r *http.Request, _ *uiPr
 			"cache_misses":      a.CacheMisses,
 			"cache_bytes_in":    a.CacheBytesIn,
 			"cache_bytes_out":   a.CacheBytesOut,
+			"name":              name,
+			"steps":             steps,
 		},
 		"logs": logs,
 	})

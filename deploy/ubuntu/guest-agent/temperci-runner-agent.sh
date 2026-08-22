@@ -145,6 +145,89 @@ if ! touch "$RUNNER_DIR/.temperci_write_test" 2>/dev/null; then
 fi
 rm -f "$RUNNER_DIR/.temperci_write_test"
 
+docker_ready() {
+  [ -S /var/run/docker.sock ] && /usr/bin/docker info >/dev/null 2>&1
+}
+
+prefer_iptables_legacy() {
+  # Guest kernel has CONFIG_IP_NF_* but not CONFIG_NF_TABLES. nft iptables
+  # then dies with "Failed to initialize nft: Protocol not supported".
+  if [ -x /usr/sbin/iptables-legacy ]; then
+    update-alternatives --set iptables /usr/sbin/iptables-legacy >/dev/null 2>&1 || true
+  fi
+  if [ -x /usr/sbin/ip6tables-legacy ]; then
+    update-alternatives --set ip6tables /usr/sbin/ip6tables-legacy >/dev/null 2>&1 || true
+  fi
+  # Kernel also lacks iptables `raw`; Docker 28+ uses it for bridge isolation.
+  export DOCKER_INSECURE_NO_IPTABLES_RAW=1
+}
+
+ensure_docker() {
+  if [ ! -x /usr/bin/dockerd ]; then
+    log "dockerd not installed; skipping"
+    return 0
+  fi
+  prefer_iptables_legacy
+  if docker_ready; then
+    if iptables -t raw -L >/dev/null 2>&1; then
+      log "docker already running"
+      return 0
+    fi
+    log "docker is up but iptables raw table is missing; restarting with DOCKER_INSECURE_NO_IPTABLES_RAW"
+    systemctl stop docker.service 2>/dev/null || true
+    pkill -x dockerd 2>/dev/null || true
+    sleep 1
+  fi
+  log "starting docker.service"
+  systemctl reset-failed docker.service 2>/dev/null || true
+  systemctl start docker.service 2>/dev/null || true
+  local i
+  for i in 1 2 3 4 5 6 7 8 9 10 11 12; do
+    if docker_ready; then
+      log "docker is up"
+      return 0
+    fi
+    sleep 1
+  done
+  log "docker.service failed; journal: $(journalctl -u docker -n 40 --no-pager 2>/dev/null | tr '\n' '|' | tail -c 1500)"
+  if [ -f /etc/docker/daemon.json ] && grep -q overlay2 /etc/docker/daemon.json; then
+    log "retrying dockerd with vfs storage-driver"
+    mkdir -p /etc/docker
+    cat >/etc/docker/daemon.json <<'EOF'
+{
+  "storage-driver": "vfs",
+  "iptables": true,
+  "ip6tables": false,
+  "live-restore": false
+}
+EOF
+    systemctl reset-failed docker.service 2>/dev/null || true
+    systemctl restart docker.service 2>/dev/null || true
+    for i in 1 2 3 4 5 6 7 8 9 10; do
+      if docker_ready; then
+        log "docker is up (vfs)"
+        return 0
+      fi
+      sleep 1
+    done
+  fi
+  if ! docker_ready && [ -x /usr/bin/dockerd ]; then
+    log "starting dockerd directly"
+    mkdir -p /var/run
+    /usr/bin/dockerd --host=unix:///var/run/docker.sock >/var/log/dockerd.direct.log 2>&1 &
+    for i in 1 2 3 4 5 6 7 8; do
+      if docker_ready; then
+        log "docker is up (direct)"
+        return 0
+      fi
+      sleep 1
+    done
+    log "direct dockerd log: $(tail -c 800 /var/log/dockerd.direct.log 2>/dev/null | tr '\n' '|')"
+  fi
+  log "WARNING: docker still not ready; compose jobs will fail"
+  return 1
+}
+
 # Official actions/runner refuses root unless this is set (microVM runs as root).
 export RUNNER_ALLOW_RUNASROOT=1
 # Avoid the "Must not run interactively with sudo" guard when no TTY is present.
@@ -168,11 +251,29 @@ if [ -z "$JIT_B64" ]; then
   log "jitconfig file is empty"
   write_exit 90
 fi
+ensure_docker || true
+publish_live_logs() {
+  umount "$MNT" 2>/dev/null || true
+  if mount "$INJECT_DEV" "$MNT" 2>/dev/null || mount -o rw "$INJECT_DEV" "$MNT" 2>/dev/null; then
+    cp -a "$WORKDIR/agent.log" "$MNT/agent.log" 2>/dev/null || true
+    cp -a "$WORKDIR/runner.log" "$MNT/runner.log" 2>/dev/null || true
+    sync
+    umount "$MNT" 2>/dev/null || true
+  fi
+}
+
 log "starting $RUNNER --jitconfig <${#JIT_B64} bytes> (as root, RUNNER_ALLOW_RUNASROOT=1)"
 set +e
-"$RUNNER" --jitconfig "$JIT_B64" >"$WORKDIR/runner.log" 2>&1
+"$RUNNER" --jitconfig "$JIT_B64" >"$WORKDIR/runner.log" 2>&1 &
+rpid=$!
+while kill -0 "$rpid" 2>/dev/null; do
+  publish_live_logs
+  sleep 2
+done
+wait "$rpid"
 code=$?
 set -e
+publish_live_logs
 log "runner exited code=$code"
 
 # Upstream run.sh exits 0 for almost every helper failure (only code 2 restarts).

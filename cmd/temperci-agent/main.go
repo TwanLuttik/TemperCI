@@ -21,6 +21,7 @@ import (
 	"github.com/TwanLuttik/TemperCI/internal/config"
 	"github.com/TwanLuttik/TemperCI/internal/ghacache"
 	"github.com/TwanLuttik/TemperCI/internal/logging"
+	"github.com/TwanLuttik/TemperCI/internal/ocicache"
 	"github.com/TwanLuttik/TemperCI/internal/vmm"
 	"github.com/TwanLuttik/TemperCI/internal/vmm/fake"
 	"github.com/TwanLuttik/TemperCI/internal/vmm/firecracker"
@@ -161,6 +162,7 @@ func main() {
 			"vmm_backend", cfg.VMMBackend,
 		)
 		var cacheGW *ghacache.Gateway
+		var ociGW *ocicache.Gateway
 		if cfg.CacheListenAddr != "" {
 			st, err := ghacache.Open(layout.CacheDir(), cfg.CacheMaxBytes)
 			if err != nil {
@@ -168,16 +170,27 @@ func main() {
 				os.Exit(1)
 			}
 			cacheGW = ghacache.NewGateway(st)
+			ociStore, err := ocicache.Open(layout.OCICacheDir(), cfg.OCICacheMaxBytes)
+			if err != nil {
+				log.Error("open oci cache store", "err", err)
+				os.Exit(1)
+			}
+			ociGW = ocicache.NewGateway(ociStore)
 			ca, err := ghacache.LoadOrCreateCA(filepath.Join(layout.CacheDir(), "ca"))
 			if err != nil {
 				log.Error("cache CA", "err", err)
 				os.Exit(1)
 			}
-			ix := &ghacache.Intercept{Handler: cacheGW.Handler(), CA: ca}
+			ix := &ghacache.Intercept{
+				Handler:  ocicache.Mux(ociGW.Handler(), cacheGW.Handler()),
+				CA:       ca,
+				Classify: ocicache.ShouldTerminate,
+			}
 			go func() {
-				log.Info("actions cache gateway listening",
+				log.Info("actions+oci cache gateway listening",
 					"addr", cfg.CacheListenAddr,
 					"dir", layout.CacheDir(),
+					"oci_dir", layout.OCICacheDir(),
 					"mode", "sni-intercept",
 				)
 				if err := ix.ListenAndServe(cfg.CacheListenAddr); err != nil && err != http.ErrServerClosed {
@@ -195,6 +208,7 @@ func main() {
 			Capacity:       pool.EffectiveMaxReady(),
 			WaitRealRunner: waitReal,
 			Cache:          cacheGW,
+			OCI:            ociGW,
 		}
 		workerDone = make(chan struct{})
 		go func() {

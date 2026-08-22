@@ -106,6 +106,12 @@ vmm_backend = "fake"
 	if cfg.MaxTotalVMs != 4+32 {
 		t.Errorf("MaxTotalVMs default = %d", cfg.MaxTotalVMs)
 	}
+	if cfg.CacheMaxBytes != 50<<30 {
+		t.Errorf("CacheMaxBytes default = %d", cfg.CacheMaxBytes)
+	}
+	if cfg.OCICacheMaxBytes != 100<<30 {
+		t.Errorf("OCICacheMaxBytes default = %d", cfg.OCICacheMaxBytes)
+	}
 }
 
 func TestLoadAgentFile_ScratchDirDerivesDataDir(t *testing.T) {

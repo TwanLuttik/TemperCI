@@ -77,13 +77,14 @@ func main() {
 	}
 
 	var handler *control.Handler
+	var ghClient *github.Client
 	if !cfg.NeedsSetup() {
 		keyPEM, err := os.ReadFile(cfg.GitHubAppPrivateKeyPath)
 		if err != nil {
 			log.Error("read github app private key", "err", err, "path", cfg.GitHubAppPrivateKeyPath)
 			os.Exit(1)
 		}
-		ghClient, err := github.NewClient(github.Config{
+		ghClient, err = github.NewClient(github.Config{
 			AppID:         cfg.GitHubAppID,
 			PrivateKeyPEM: keyPEM,
 		})
@@ -104,6 +105,10 @@ func main() {
 
 	hub := control.NewHub(log)
 	dash.Hub = hub
+	var jobLogs control.JobLogDownloader
+	if ghClient != nil {
+		jobLogs = ghClient
+	}
 	srv := control.NewServer(control.ServerConfig{
 		Handler:       handler,
 		Store:         storeMem,
@@ -113,6 +118,7 @@ func main() {
 		Logger:        log,
 		Dashboard:     dash,
 		Hub:           hub,
+		JobLogs:       jobLogs,
 	})
 
 	tlsFiles := control.TLSFiles{

@@ -91,7 +91,7 @@ For each finished or aborted job:
 ### What may remain
 
 - Shared **base images** and templates used to spawn new VMs.
-- Optional **shared cache storage** (future feature), which must be separate from guest rootfs and scoped intentionally — never “leftover job files.”
+- Host-local **Actions cache** (`data_dir/cache/`) and **OCI / build cache** (`data_dir/ocicache/`), never under `instances/`.
 
 ### What must not remain
 

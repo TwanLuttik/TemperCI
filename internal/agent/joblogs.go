@@ -15,6 +15,7 @@ type JobLogs struct {
 	RunnerLog     string
 	AgentLog      string
 	ConsoleLog    string
+	WorkflowLog   string
 	CacheHits     int
 	CacheMisses   int
 	CacheBytesIn  int64
@@ -40,6 +41,10 @@ func CollectJobLogs(layout vmm.Layout, id vmm.ID) JobLogs {
 	out.ConsoleLog = readLogFile(
 		filepath.Join(arch, "console.log"),
 		filepath.Join(layout.LogDir(id), "console.log"),
+	)
+	out.WorkflowLog = readLogFile(
+		filepath.Join(arch, "workflow.log"),
+		filepath.Join(layout.GuestDir(id), "workflow.log"),
 	)
 	return out
 }

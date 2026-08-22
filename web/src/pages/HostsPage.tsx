@@ -39,7 +39,7 @@ export function HostsPage() {
         description={
           <span className="inline-flex flex-wrap items-center gap-2">
             Capacity is leftover job slots. Max is clamped to host RAM/disk. CPU is informational.
-            <LiveDot live={rt.connected} />
+            <LiveDot status={rt.status} />
           </span>
         }
       />

@@ -142,3 +142,100 @@ func TestClient_GenerateJITConfig_APIError(t *testing.T) {
 		t.Fatal("expected API error")
 	}
 }
+
+func TestClient_DownloadJobLogs(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/access_tokens") {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"token":      "ghs_install_token",
+				"expires_at": time.Now().Add(time.Hour).Format(time.RFC3339),
+			})
+			return
+		}
+		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/actions/jobs/99/logs") {
+			if r.Header.Get("Authorization") != "Bearer ghs_install_token" {
+				http.Error(w, "bad token", http.StatusUnauthorized)
+				return
+			}
+			_, _ = io.WriteString(w, "\uFEFF##[group]Run actions/checkout@v4\nSyncing repository\n")
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
+
+	c, err := NewClient(Config{
+		AppID:          1,
+		PrivateKeyPEM:  testRSAPrivateKeyPEM(t),
+		BaseURL:        srv.URL,
+		HTTPClient:     srv.Client(),
+		InstallationID: 9,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := c.DownloadJobLogs(context.Background(), "acme", "demo", 99, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, "actions/checkout") || strings.HasPrefix(got, "\uFEFF") {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestClient_GetJob(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/access_tokens") {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"token":      "ghs_install_token",
+				"expires_at": time.Now().Add(time.Hour).Format(time.RFC3339),
+			})
+			return
+		}
+		if r.Method == http.MethodGet && r.URL.Path == "/repos/acme/demo/actions/jobs/88" {
+			if r.Header.Get("Authorization") != "Bearer ghs_install_token" {
+				http.Error(w, "bad token", http.StatusUnauthorized)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"id":         88,
+				"name":       "e2e",
+				"status":     "in_progress",
+				"conclusion": nil,
+				"html_url":   "https://github.com/acme/demo/actions/runs/1/job/88",
+				"steps": []map[string]any{
+					{"name": "Set up job", "status": "completed", "conclusion": "success", "number": 1},
+					{"name": "Run tests", "status": "in_progress", "conclusion": nil, "number": 2},
+					{"name": "Complete job", "status": "pending", "conclusion": nil, "number": 3},
+				},
+			})
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
+
+	c, err := NewClient(Config{
+		AppID:          1,
+		PrivateKeyPEM:  testRSAPrivateKeyPEM(t),
+		BaseURL:        srv.URL,
+		HTTPClient:     srv.Client(),
+		InstallationID: 9,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := c.GetJob(context.Background(), "acme", "demo", 88, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ID != 88 || got.Name != "e2e" || got.Status != "in_progress" {
+		t.Fatalf("job = %+v", got)
+	}
+	if len(got.Steps) != 3 {
+		t.Fatalf("steps = %#v", got.Steps)
+	}
+	if got.Steps[1].Name != "Run tests" || got.Steps[1].Status != "in_progress" || got.Steps[1].Number != 2 {
+		t.Fatalf("current step = %+v", got.Steps[1])
+	}
+}

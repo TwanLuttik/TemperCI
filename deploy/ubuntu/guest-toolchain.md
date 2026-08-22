@@ -42,6 +42,7 @@ there).
 | Package | Role |
 |---------|------|
 | `docker.io` | Docker CLI + `dockerd` (moby). Not NodeSource / Docker CE. |
+| `docker-compose-v2` | `docker compose` plugin (`docker compose -f … up`) |
 | `nodejs`, `npm` | System Node **18.x** + npm **9.x** from noble apt |
 | `python3`, `python3-pip`, `python3-venv` | System Python **3.12** |
 | `build-essential`, `gcc`, `g++`, `make`, `pkg-config` | Native builds / node-gyp |
@@ -80,12 +81,29 @@ The hook writes `/etc/docker/daemon.json`:
 }
 ```
 
+It also installs `/usr/local/bin/docker` (`docker-cache-wrapper.sh`) ahead of
+`/usr/bin/docker`. When `GITHUB_REPOSITORY` is set, `docker build` and
+`docker buildx build` get BuildKit `--cache-from/--cache-to type=registry`
+flags aimed at `ghcr.io/__temperci_cache/<org>/<repo>/buildkit`. The host
+SNI intercept stores those layers locally and never forwards them to GHCR.
+`DOCKER_BUILDKIT=1` is added to `/etc/environment`. Existing `--cache-to` is
+left unchanged. `docker run` / `docker pull` are unchanged (Hub/GHCR layers
+are cached by the host pull-through).
+
 `policy-rc.d` blocks `dockerd` from starting **during the image build**. The hook
 then tries to **enable** `docker.service` (`systemctl --root=… enable`, with a
 multi-user.target symlink fallback) so a booted guest starts Docker for jobs
 that need it. If enable fails in chroot, it logs a warning and continues.
 `/usr/bin/dockerd` is still present; a guest oneshot or the operator can start
 it later.
+
+The Firecracker CI kernel has legacy iptables (`xtables`) but **not** `nf_tables`.
+The hook therefore pins `iptables` / `ip6tables` to the `-legacy` alternatives.
+Leaving Ubuntu’s default `iptables-nft` makes dockerd fail with
+`Failed to initialize nft: Protocol not supported` and no `docker.sock`.
+The kernel also omits `CONFIG_IP_NF_RAW`; Docker is started with
+`DOCKER_INSECURE_NO_IPTABLES_RAW=1` so compose networks do not require the
+`raw` table.
 
 The guest rootfs is presented to Firecracker as a block device (ext4). Overlay2
 inside the guest is therefore not overlay-on-overlay from the guest’s point of
@@ -147,6 +165,6 @@ sudo umount /mnt
 ## Out of scope
 
 - Custom kernel build
-- Docker Desktop / BuildKit extras / `docker compose` v2 plugin
+- Docker Desktop
 - Full `runner-images` package set (browsers, Android SDK, every language)
 - Changing the guest-agent so the official runner runs as `runner` instead of root

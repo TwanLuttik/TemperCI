@@ -19,6 +19,8 @@ type Intercept struct {
 	CA      *Authority
 	// Dial is used for splice. Nil uses net.DialTimeout (10s).
 	Dial func(network, address string) (net.Conn, error)
+	// Classify reports whether SNI should be terminated. Nil uses ShouldIntercept.
+	Classify func(sni string) bool
 }
 
 // PeekClientHello reads a TLS ClientHello from c and returns the SNI plus the
@@ -64,6 +66,13 @@ func (ix *Intercept) ListenAndServe(addr string) error {
 	return ix.Serve(ln)
 }
 
+func (ix *Intercept) shouldTerminate(sni string) bool {
+	if ix.Classify != nil {
+		return ix.Classify(sni)
+	}
+	return ShouldIntercept(sni)
+}
+
 func (ix *Intercept) handle(c net.Conn) {
 	defer c.Close()
 	_ = c.SetDeadline(time.Now().Add(15 * time.Second))
@@ -72,7 +81,7 @@ func (ix *Intercept) handle(c net.Conn) {
 		return
 	}
 	_ = c.SetDeadline(time.Time{})
-	if !ShouldIntercept(sni) {
+	if !ix.shouldTerminate(sni) {
 		ix.splice(c, hello, sni)
 		return
 	}

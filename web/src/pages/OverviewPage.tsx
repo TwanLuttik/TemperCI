@@ -44,7 +44,7 @@ export function OverviewPage({ onOverview }: Props) {
         description={
           <span className="inline-flex flex-wrap items-center gap-2">
             Live capacity and job flow across TemperCI agents.
-            <LiveDot live={rt.connected} />
+            <LiveDot status={rt.status} />
           </span>
         }
       />

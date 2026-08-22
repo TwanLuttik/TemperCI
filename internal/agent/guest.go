@@ -194,57 +194,35 @@ func (f *FirecrackerGuestExec) WaitRunner(ctx context.Context, id vmm.ID) (int, 
 	}
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
-	start := time.Now()
 	for {
-		if b, err := firecracker.ReadInjectFile(layout, id, "runner.exit"); err == nil {
+		files, _ := firecracker.CopyInjectFiles(layout, id, layout.GuestDir(id),
+			[]string{"runner.exit", "runner.log", "agent.log", "workflow.log"})
+		if layout.Root != "" && len(files) > 0 {
+			arch := filepath.Join(layout.Root, "job-logs", string(id))
+			_ = os.MkdirAll(arch, 0o755)
+			for name, body := range files {
+				_ = os.WriteFile(filepath.Join(arch, name), body, 0o600)
+			}
+			if _, ok := files["console.log"]; !ok {
+				ArchiveConsole(layout, id)
+			}
+		}
+		if b, ok := files["runner.exit"]; ok {
 			text := strings.TrimSpace(string(b))
-			if text == "" {
-				// Ignore empty file races; keep waiting.
-			} else {
+			if text != "" {
 				code := 0
 				if _, err := fmt.Sscanf(text, "%d", &code); err != nil {
 					code = 1
-				}
-				// Mirror artifacts for operators and surface failure reason in host logs.
-				guestDir := layout.GuestDir(id)
-				_ = os.WriteFile(filepath.Join(guestDir, "runner.exit"), b, 0o600)
-				var runnerLog, agentLog []byte
-				if logb, err := firecracker.ReadInjectFile(layout, id, "runner.log"); err == nil {
-					runnerLog = logb
-					_ = os.WriteFile(filepath.Join(guestDir, "runner.log"), logb, 0o600)
-				}
-				if logb, err := firecracker.ReadInjectFile(layout, id, "agent.log"); err == nil {
-					agentLog = logb
-					_ = os.WriteFile(filepath.Join(guestDir, "agent.log"), logb, 0o600)
-				}
-				// Persist under data_dir/job-logs so destroy does not erase evidence.
-				if layout.Root != "" {
-					arch := filepath.Join(layout.Root, "job-logs", string(id))
-					_ = os.MkdirAll(arch, 0o755)
-					_ = os.WriteFile(filepath.Join(arch, "runner.exit"), b, 0o600)
-					if len(runnerLog) > 0 {
-						_ = os.WriteFile(filepath.Join(arch, "runner.log"), runnerLog, 0o600)
-					}
-					if len(agentLog) > 0 {
-						_ = os.WriteFile(filepath.Join(arch, "agent.log"), agentLog, 0o600)
-					}
-					ArchiveConsole(layout, id)
 				}
 				if code != 0 {
 					slog.Default().Warn("guest runner failed",
 						"vm_id", string(id),
 						"exit_code", code,
-						"runner_log", truncateForLog(string(runnerLog), 1500),
-						"agent_log", truncateForLog(string(agentLog), 800),
+						"runner_log", truncateForLog(string(files["runner.log"]), 1500),
+						"agent_log", truncateForLog(string(files["agent.log"]), 800),
 					)
 				}
 				return code, nil
-			}
-		}
-		// Periodically surface agent.log if present (still waiting).
-		if time.Since(start) > 15*time.Second && int(time.Since(start).Seconds())%15 < 1 {
-			if logb, err := firecracker.ReadInjectFile(layout, id, "agent.log"); err == nil {
-				_ = os.WriteFile(filepath.Join(layout.GuestDir(id), "agent.log"), logb, 0o600)
 			}
 		}
 		select {

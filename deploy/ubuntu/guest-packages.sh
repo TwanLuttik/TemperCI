@@ -144,7 +144,7 @@ temperci_install_guest_packages() {
 
     # Ubuntu noble apt: nodejs 18.x + npm 9.x. actions/setup-node downloads its
     # own runtime; system node is only a baseline. See guest-toolchain.md.
-    apt_group docker.io iptables iproute2 || true
+    apt_group docker.io docker-compose-v2 iptables iproute2 || true
     apt_group nodejs npm || true
     apt_group python3 python3-pip python3-venv python3.12-venv || true
     apt_group build-essential gcc g++ make pkg-config \
@@ -155,10 +155,35 @@ temperci_install_guest_packages() {
     cat >"$rootfs/etc/docker/daemon.json" <<'EOF'
 {
   "storage-driver": "overlay2",
-  "iptables": true
+  "iptables": true,
+  "ip6tables": false,
+  "live-restore": false
 }
 EOF
     chmod 0644 "$rootfs/etc/docker/daemon.json"
+
+    # Firecracker CI kernels have xtables (legacy) NAT, not nf_tables.
+    # Ubuntu's default iptables-nft then fails: "Failed to initialize nft".
+    if [[ -x "$rootfs/usr/sbin/iptables-legacy" ]]; then
+      chroot "$rootfs" update-alternatives --set iptables /usr/sbin/iptables-legacy || true
+    fi
+    if [[ -x "$rootfs/usr/sbin/ip6tables-legacy" ]]; then
+      chroot "$rootfs" update-alternatives --set ip6tables /usr/sbin/ip6tables-legacy || true
+    fi
+
+    mkdir -p "$rootfs/etc/systemd/system/docker.service.d"
+    cat >"$rootfs/etc/systemd/system/docker.service.d/temperci.conf" <<'EOF'
+[Unit]
+After=network-pre.target containerd.service
+Wants=containerd.service
+
+[Service]
+# Type=notify can fail closed in Firecracker if dockerd exits before sd_notify.
+Type=simple
+ExecStartPre=/bin/sh -c 'update-alternatives --set iptables /usr/sbin/iptables-legacy >/dev/null 2>&1 || true'
+# Firecracker CI kernels omit CONFIG_IP_NF_RAW; skip Docker's raw DROP rules.
+Environment=DOCKER_INSECURE_NO_IPTABLES_RAW=1
+EOF
 
     # Prefer docker.service enabled so jobs that need Docker have dockerd at boot.
     # systemctl --root works without a running guest systemd; chroot enable often fails.
@@ -166,6 +191,19 @@ EOF
     if ! enable_docker_service; then
       echo "temperci_install_guest_packages: warning: could not enable docker.service; leaving disabled" >&2
     fi
+
+    # PATH wrapper so docker build / docker buildx build export host-local
+    # BuildKit cache without workflow YAML changes.
+    wrap_src="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/docker-cache-wrapper.sh"
+    if [[ -f "$wrap_src" ]]; then
+      mkdir -p "$rootfs/usr/local/bin"
+      install -m 0755 "$wrap_src" "$rootfs/usr/local/bin/docker"
+    else
+      echo "temperci_install_guest_packages: warning: docker-cache-wrapper.sh not found next to guest-packages.sh" >&2
+    fi
+    mkdir -p "$rootfs/etc"
+    touch "$rootfs/etc/environment"
+    grep -q '^DOCKER_BUILDKIT=' "$rootfs/etc/environment" || echo 'DOCKER_BUILDKIT=1' >>"$rootfs/etc/environment"
 
     # Official actions/runner in this product runs as root (RUNNER_ALLOW_RUNASROOT).
     # Do not chown /opt/actions-runner. uid 1001 exists for workflow steps that

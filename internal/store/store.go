@@ -123,6 +123,7 @@ CREATE TABLE IF NOT EXISTS job_logs (
   runner_log TEXT NOT NULL DEFAULT '',
   agent_log TEXT NOT NULL DEFAULT '',
   console_log TEXT NOT NULL DEFAULT '',
+  workflow_log TEXT NOT NULL DEFAULT '',
   events_json TEXT NOT NULL DEFAULT '[]',
   updated_at TEXT NOT NULL
 );
@@ -135,6 +136,7 @@ CREATE TABLE IF NOT EXISTS job_logs (
 		`ALTER TABLE assignments ADD COLUMN cache_misses INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE assignments ADD COLUMN cache_bytes_in INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE assignments ADD COLUMN cache_bytes_out INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE job_logs ADD COLUMN workflow_log TEXT NOT NULL DEFAULT ''`,
 	} {
 		if _, err := s.db.Exec(q); err != nil && !strings.Contains(err.Error(), "duplicate column") {
 			return fmt.Errorf("store: migrate alter: %w", err)

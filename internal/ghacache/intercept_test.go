@@ -140,3 +140,46 @@ func TestIntercept_TerminatesCacheSNI(t *testing.T) {
 		t.Fatalf("status=%d body=%q", resp.StatusCode, body)
 	}
 }
+
+func TestIntercept_ClassifyTerminatesRegistrySNI(t *testing.T) {
+	ca, err := GenerateCA()
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool := x509.NewCertPool()
+	pool.AddCert(ca.Cert)
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+
+	ix := &Intercept{
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_, _ = io.WriteString(w, "oci-hit")
+		}),
+		CA: ca,
+		Classify: func(sni string) bool {
+			return sni == "ghcr.io"
+		},
+	}
+	go func() { _ = ix.Serve(ln) }()
+
+	tr := &http.Transport{
+		TLSClientConfig: &tls.Config{RootCAs: pool, ServerName: "ghcr.io"},
+		Dial: func(network, addr string) (net.Conn, error) {
+			return net.Dial("tcp", ln.Addr().String())
+		},
+	}
+	client := &http.Client{Transport: tr, Timeout: 3 * time.Second}
+	resp, err := client.Get("https://ghcr.io/v2/")
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 200 || string(body) != "oci-hit" {
+		t.Fatalf("status=%d body=%q", resp.StatusCode, body)
+	}
+}

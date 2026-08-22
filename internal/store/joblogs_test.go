@@ -2,6 +2,7 @@ package store
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -67,5 +68,68 @@ func TestJobLogs_MissingIsEmpty(t *testing.T) {
 	}
 	if got.RunnerLog != "" || len(got.Events) != 0 {
 		t.Fatalf("expected empty, got %+v", got)
+	}
+}
+
+func TestAcceptWorkflowLog_RejectsRunnerDiag(t *testing.T) {
+	diag := "[2026-08-22 17:07:28Z INFO JobServerQueue] Try to append 1 batches web console lines\n[2026-08-22 17:07:27Z INFO HostContext] Well known directory 'Work'\n"
+	if AcceptWorkflowLog(diag) {
+		t.Fatal("runner _diag must not be treated as workflow log")
+	}
+	steps := "2026-08-22T17:07:28Z ##[group]Run actions/checkout@v4\nSyncing repository\n"
+	if !AcceptWorkflowLog(steps) {
+		t.Fatal("GitHub step log must be accepted")
+	}
+}
+
+func TestJobLogs_MergeIgnoresRunnerDiagWorkflow(t *testing.T) {
+	dir := t.TempDir()
+	s, err := Open(filepath.Join(dir, "c.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	diag := "[2026-08-22 17:07:28Z INFO JobServerQueue] Try to append 1 batches\n"
+	if err := s.MergeJobLogs(9, "listener", "", "", diag); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.GetJobLog(9)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.WorkflowLog != "" {
+		t.Fatalf("diag leaked into workflow_log: %q", got.WorkflowLog)
+	}
+	if err := s.SetWorkflowLog(9, diag); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = s.GetJobLog(9)
+	if got.WorkflowLog != "" {
+		t.Fatalf("SetWorkflowLog accepted diag: %q", got.WorkflowLog)
+	}
+}
+
+func TestJobLogs_WorkflowLogPersistsAcrossMerge(t *testing.T) {
+	dir := t.TempDir()
+	s, err := Open(filepath.Join(dir, "c.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if err := s.SetWorkflowLog(8, "##[group]Run actions/checkout@v4\nok\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.MergeJobLogs(8, "listener-only", "agent", ""); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.GetJobLog(8)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.WorkflowLog == "" || !strings.Contains(got.WorkflowLog, "actions/checkout") {
+		t.Fatalf("workflow log lost: %+v", got)
+	}
+	if got.RunnerLog != "listener-only" {
+		t.Fatalf("runner=%q", got.RunnerLog)
 	}
 }

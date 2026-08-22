@@ -199,9 +199,10 @@ type JobFinishedRequest struct {
 	// Error is optional non-secret failure detail.
 	Error string `json:"error,omitempty"`
 	// Guest diagnostic logs (truncated by the agent). Never include JIT material.
-	RunnerLog  string `json:"runner_log,omitempty"`
-	AgentLog   string `json:"agent_log,omitempty"`
-	ConsoleLog string `json:"console_log,omitempty"`
+	RunnerLog   string `json:"runner_log,omitempty"`
+	AgentLog    string `json:"agent_log,omitempty"`
+	ConsoleLog  string `json:"console_log,omitempty"`
+	WorkflowLog string `json:"workflow_log,omitempty"`
 	// Host-local actions/cache counters for this job (optional).
 	CacheHits     int   `json:"cache_hits,omitempty"`
 	CacheMisses   int   `json:"cache_misses,omitempty"`
@@ -211,11 +212,12 @@ type JobFinishedRequest struct {
 
 // JobLogsRequest is an incremental log upload while a job is still running.
 type JobLogsRequest struct {
-	AgentID    string `json:"agent_id"`
-	JobID      int64  `json:"job_id"`
-	RunnerLog  string `json:"runner_log,omitempty"`
-	AgentLog   string `json:"agent_log,omitempty"`
-	ConsoleLog string `json:"console_log,omitempty"`
+	AgentID     string `json:"agent_id"`
+	JobID       int64  `json:"job_id"`
+	RunnerLog   string `json:"runner_log,omitempty"`
+	AgentLog    string `json:"agent_log,omitempty"`
+	ConsoleLog  string `json:"console_log,omitempty"`
+	WorkflowLog string `json:"workflow_log,omitempty"`
 }
 
 // JobLogsResponse acknowledges a log upload.

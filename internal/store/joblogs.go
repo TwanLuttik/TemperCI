@@ -20,12 +20,13 @@ type JobEvent struct {
 
 // JobLog is persisted guest + control diagnostic material for one job.
 type JobLog struct {
-	JobID      int64      `json:"job_id"`
-	RunnerLog  string     `json:"runner_log"`
-	AgentLog   string     `json:"agent_log"`
-	ConsoleLog string     `json:"console_log"`
-	Events     []JobEvent `json:"events"`
-	UpdatedAt  time.Time  `json:"updated_at"`
+	JobID       int64      `json:"job_id"`
+	RunnerLog   string     `json:"runner_log"`
+	AgentLog    string     `json:"agent_log"`
+	ConsoleLog  string     `json:"console_log"`
+	WorkflowLog string     `json:"workflow_log"`
+	Events      []JobEvent `json:"events"`
+	UpdatedAt   time.Time  `json:"updated_at"`
 }
 
 // GetJobLog returns stored logs for jobID, or an empty record if none.
@@ -33,10 +34,10 @@ func (s *Store) GetJobLog(jobID int64) (*JobLog, error) {
 	if jobID == 0 {
 		return nil, fmt.Errorf("store: job_id required")
 	}
-	var runner, agent, console, eventsJSON, updated string
+	var runner, agent, console, workflow, eventsJSON, updated string
 	err := s.db.QueryRow(`
-SELECT runner_log, agent_log, console_log, events_json, updated_at
-FROM job_logs WHERE job_id = ?`, jobID).Scan(&runner, &agent, &console, &eventsJSON, &updated)
+SELECT runner_log, agent_log, console_log, workflow_log, events_json, updated_at
+FROM job_logs WHERE job_id = ?`, jobID).Scan(&runner, &agent, &console, &workflow, &eventsJSON, &updated)
 	if err == sql.ErrNoRows {
 		return &JobLog{JobID: jobID, Events: []JobEvent{}}, nil
 	}
@@ -44,10 +45,11 @@ FROM job_logs WHERE job_id = ?`, jobID).Scan(&runner, &agent, &console, &eventsJ
 		return nil, fmt.Errorf("store: get job log: %w", err)
 	}
 	out := &JobLog{
-		JobID:      jobID,
-		RunnerLog:  runner,
-		AgentLog:   agent,
-		ConsoleLog: console,
+		JobID:       jobID,
+		RunnerLog:   runner,
+		AgentLog:    agent,
+		ConsoleLog:  console,
+		WorkflowLog: workflow,
 	}
 	if updated != "" {
 		out.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updated)
@@ -62,7 +64,7 @@ FROM job_logs WHERE job_id = ?`, jobID).Scan(&runner, &agent, &console, &eventsJ
 }
 
 // MergeJobLogs upserts guest log bodies. Empty incoming fields leave existing text.
-func (s *Store) MergeJobLogs(jobID int64, runnerLog, agentLog, consoleLog string) error {
+func (s *Store) MergeJobLogs(jobID int64, runnerLog, agentLog, consoleLog string, workflowLog ...string) error {
 	if jobID == 0 {
 		return fmt.Errorf("store: job_id required")
 	}
@@ -79,7 +81,52 @@ func (s *Store) MergeJobLogs(jobID int64, runnerLog, agentLog, consoleLog string
 	if consoleLog != "" {
 		cur.ConsoleLog = consoleLog
 	}
+	if len(workflowLog) > 0 && workflowLog[0] != "" && AcceptWorkflowLog(workflowLog[0]) {
+		cur.WorkflowLog = workflowLog[0]
+	}
 	return s.writeJobLog(cur)
+}
+
+// SetWorkflowLog stores the official GitHub Actions job log (step output).
+func (s *Store) SetWorkflowLog(jobID int64, text string) error {
+	if jobID == 0 {
+		return fmt.Errorf("store: job_id required")
+	}
+	cur, err := s.GetJobLog(jobID)
+	if err != nil {
+		return err
+	}
+	if !AcceptWorkflowLog(text) {
+		return nil
+	}
+	cur.WorkflowLog = text
+	return s.writeJobLog(cur)
+}
+
+// AcceptWorkflowLog reports whether text is GitHub Actions step output
+// (##[group] / ##[command]) rather than runner _diag (JobServerQueue, HostContext).
+func AcceptWorkflowLog(text string) bool {
+	if strings.TrimSpace(text) == "" {
+		return false
+	}
+	if looksLikeActionsStepLog(text) {
+		return true
+	}
+	return !looksLikeRunnerDiag(text)
+}
+
+func looksLikeActionsStepLog(s string) bool {
+	return strings.Contains(s, "##[group]") ||
+		strings.Contains(s, "##[section]") ||
+		strings.Contains(s, "##[command]") ||
+		strings.Contains(s, "##[error]")
+}
+
+func looksLikeRunnerDiag(s string) bool {
+	return strings.Contains(s, "INFO JobServerQueue]") ||
+		strings.Contains(s, "INFO HostContext]") ||
+		strings.Contains(s, "INFO JobRunner]") ||
+		strings.Contains(s, "INFO StepsRunner]")
 }
 
 // AppendJobEvent appends a timeline event (oldest dropped after maxJobEvents).
@@ -115,15 +162,16 @@ func (s *Store) writeJobLog(l *JobLog) error {
 	now := time.Now().UTC()
 	l.UpdatedAt = now
 	_, err = s.db.Exec(`
-INSERT INTO job_logs (job_id, runner_log, agent_log, console_log, events_json, updated_at)
-VALUES (?,?,?,?,?,?)
+INSERT INTO job_logs (job_id, runner_log, agent_log, console_log, workflow_log, events_json, updated_at)
+VALUES (?,?,?,?,?,?,?)
 ON CONFLICT(job_id) DO UPDATE SET
   runner_log = excluded.runner_log,
   agent_log = excluded.agent_log,
   console_log = excluded.console_log,
+  workflow_log = excluded.workflow_log,
   events_json = excluded.events_json,
   updated_at = excluded.updated_at
-`, l.JobID, l.RunnerLog, l.AgentLog, l.ConsoleLog, string(raw), now.Format(time.RFC3339Nano))
+`, l.JobID, l.RunnerLog, l.AgentLog, l.ConsoleLog, l.WorkflowLog, string(raw), now.Format(time.RFC3339Nano))
 	if err != nil {
 		return fmt.Errorf("store: write job log: %w", err)
 	}

@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"github.com/TwanLuttik/TemperCI/internal/vmm"
 )
@@ -96,4 +97,40 @@ func ReadInjectFile(layout vmm.Layout, id vmm.ID, name string) ([]byte, error) {
 	}
 	defer func() { _ = exec.Command("umount", mnt).Run() }()
 	return os.ReadFile(filepath.Join(mnt, name))
+}
+
+// CopyInjectFiles mounts inject.ext4 once and copies named files into destDir.
+// Missing names are skipped. Returns the bytes that were copied.
+func CopyInjectFiles(layout vmm.Layout, id vmm.ID, destDir string, names []string) (map[string][]byte, error) {
+	out := make(map[string][]byte)
+	if destDir == "" || len(names) == 0 {
+		return out, nil
+	}
+	drive := layout.InjectDrivePath(id)
+	mnt, err := os.MkdirTemp("", "temperci-inject-ro-*")
+	if err != nil {
+		return nil, err
+	}
+	defer os.RemoveAll(mnt)
+	if outp, err := exec.Command("mount", "-o", "loop,ro", drive, mnt).CombinedOutput(); err != nil {
+		return nil, fmt.Errorf("mount inject ro: %w (%s)", err, string(outp))
+	}
+	defer func() { _ = exec.Command("umount", mnt).Run() }()
+	if err := os.MkdirAll(destDir, 0o700); err != nil {
+		return nil, err
+	}
+	for _, name := range names {
+		if name == "" || name == "." || name == ".." || strings.Contains(name, "/") {
+			continue
+		}
+		b, err := os.ReadFile(filepath.Join(mnt, name))
+		if err != nil || len(b) == 0 {
+			continue
+		}
+		if err := os.WriteFile(filepath.Join(destDir, name), b, 0o600); err != nil {
+			continue
+		}
+		out[name] = b
+	}
+	return out, nil
 }

@@ -7,6 +7,8 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/TwanLuttik/TemperCI/internal/api"
 	"github.com/TwanLuttik/TemperCI/internal/github"
@@ -25,6 +27,11 @@ type Server struct {
 	dash          *DashboardConfig
 	hub           *Hub
 	cacheq        *cacheQueue
+	jobLogs       JobLogDownloader
+	wfFetchMu     sync.Mutex
+	wfFetchAt     map[int64]time.Time
+	jobMetaMu     sync.Mutex
+	jobMeta       map[int64]jobMetaCache
 }
 
 // ServerConfig configures the HTTP server.
@@ -40,6 +47,8 @@ type ServerConfig struct {
 	Dashboard *DashboardConfig
 	// Hub is the optional WebSocket broadcast hub for realtime dashboard updates.
 	Hub *Hub
+	// JobLogs downloads official GitHub Actions job logs for the dashboard.
+	JobLogs JobLogDownloader
 }
 
 // NewServer builds an HTTP handler serving health, GitHub webhooks, agent APIs, and metrics.
@@ -73,6 +82,9 @@ func NewServer(cfg ServerConfig) *Server {
 		mux:           http.NewServeMux(),
 		hub:           hub,
 		cacheq:        newCacheQueue(),
+		jobLogs:       cfg.JobLogs,
+		wfFetchAt:     make(map[int64]time.Time),
+		jobMeta:       make(map[int64]jobMetaCache),
 	}
 	s.mux.HandleFunc("GET /healthz", s.handleHealthz)
 	s.mux.HandleFunc("GET /metrics", s.handleMetrics)
@@ -349,7 +361,7 @@ func (s *Server) handleJobFinished(w http.ResponseWriter, r *http.Request) {
 	if req.CacheHits != 0 || req.CacheMisses != 0 || req.CacheBytesIn != 0 || req.CacheBytesOut != 0 {
 		_ = s.store.SetCacheStats(req.JobID, req.CacheHits, req.CacheMisses, req.CacheBytesIn, req.CacheBytesOut)
 	}
-	s.mergeJobLogs(req.JobID, req.RunnerLog, req.AgentLog, req.ConsoleLog)
+	s.mergeJobLogs(req.JobID, req.RunnerLog, req.AgentLog, req.ConsoleLog, req.WorkflowLog)
 	s.agents.Touch(req.AgentID)
 	s.log.Info("job finished",
 		"job_id", req.JobID,
@@ -381,8 +393,9 @@ func (s *Server) handleJobLogs(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusBadRequest, "agent_id and job_id required")
 		return
 	}
-	s.mergeJobLogs(req.JobID, req.RunnerLog, req.AgentLog, req.ConsoleLog)
+	s.mergeJobLogs(req.JobID, req.RunnerLog, req.AgentLog, req.ConsoleLog, req.WorkflowLog)
 	s.agents.Touch(req.AgentID)
+	s.PublishSnapshot()
 	writeJSON(w, http.StatusOK, api.JobLogsResponse{OK: true})
 }
 
@@ -408,15 +421,19 @@ func (s *Server) recordJobEvent(jobID int64, source, level, message string) {
 	})
 }
 
-func (s *Server) mergeJobLogs(jobID int64, runner, agent, console string) {
-	if jobID == 0 || (runner == "" && agent == "" && console == "") {
+func (s *Server) mergeJobLogs(jobID int64, runner, agent, console string, workflow ...string) {
+	wf := ""
+	if len(workflow) > 0 {
+		wf = workflow[0]
+	}
+	if jobID == 0 || (runner == "" && agent == "" && console == "" && wf == "") {
 		return
 	}
 	db := s.jobDB()
 	if db == nil {
 		return
 	}
-	_ = db.MergeJobLogs(jobID, runner, agent, console)
+	_ = db.MergeJobLogs(jobID, runner, agent, console, wf)
 }
 
 func decodeJSON(r *http.Request, dst any) error {
