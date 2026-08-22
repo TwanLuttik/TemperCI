@@ -322,3 +322,123 @@ func TestWorker_ConcurrentJobsUpToCapacity(t *testing.T) {
 		return true
 	})
 }
+
+func TestWorker_ResourceFullDoesNotClaim(t *testing.T) {
+	var mu sync.Mutex
+	var claims int
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/agent/register":
+			_ = json.NewEncoder(w).Encode(api.RegisterResponse{OK: true, AgentID: "rf"})
+		case "/v1/agent/jobs/claim":
+			mu.Lock()
+			claims++
+			mu.Unlock()
+			_ = json.NewEncoder(w).Encode(api.ClaimResponse{OK: true, Job: nil})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(ts.Close)
+
+	root := t.TempDir()
+	layout := vmm.NewLayout(root)
+	_ = cleanup.EnsureLayout(layout)
+	img := filepath.Join(layout.ImagesDir(), "b")
+	_ = os.WriteFile(img, []byte("b"), 0o600)
+	mgr, _ := fake.New(layout)
+	inv := agent.StaticInventory{Inv: agent.HostInventory{
+		RAMTotalMiB: 65536, RAMAvailMiB: 100, DiskTotalMiB: 200000, DiskFreeMiB: 200000,
+	}}
+	pool, err := agent.NewPool(agent.PoolConfig{
+		MinReady: 0, MaxReady: 2, ImagePath: img, VCPUs: 1, MemoryMiB: 4096,
+		DiskPerVMMiB: 256, ReconcileInterval: time.Hour, BindWait: 50 * time.Millisecond,
+	}, agent.PoolDeps{
+		VMM: mgr, Cleaner: &cleanup.Cleaner{VMM: mgr, Layout: layout},
+		Runner: &agent.StubRunner{}, Inventory: inv,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := pool.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = pool.Shutdown(context.Background()) }()
+
+	w := &agent.Worker{
+		Client: agent.NewControlClient(ts.URL, "rf", "t", ts.Client()),
+		Pool:   pool, Capacity: 2, PollInterval: 15 * time.Millisecond,
+	}
+	go func() { _ = w.Run(ctx) }()
+	time.Sleep(120 * time.Millisecond)
+	mu.Lock()
+	n := claims
+	mu.Unlock()
+	if n != 0 {
+		t.Fatalf("claimed %d times; leftover RAM cannot create and warm=0", n)
+	}
+}
+
+func TestWorker_WarmStillClaimsWhenCreateBlocked(t *testing.T) {
+	var mu sync.Mutex
+	var lastFree int
+	var claims int
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/agent/register":
+			_ = json.NewEncoder(w).Encode(api.RegisterResponse{OK: true, AgentID: "rw"})
+		case "/v1/agent/jobs/claim":
+			var req api.ClaimRequest
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			mu.Lock()
+			claims++
+			lastFree = req.FreeSlots
+			mu.Unlock()
+			_ = json.NewEncoder(w).Encode(api.ClaimResponse{OK: true, Job: nil})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(ts.Close)
+
+	root := t.TempDir()
+	layout := vmm.NewLayout(root)
+	_ = cleanup.EnsureLayout(layout)
+	img := filepath.Join(layout.ImagesDir(), "b")
+	_ = os.WriteFile(img, []byte("b"), 0o600)
+	mgr, _ := fake.New(layout)
+	cur := &atomicInventory{inv: agent.HostInventory{
+		RAMTotalMiB: 65536, RAMAvailMiB: 60000, DiskTotalMiB: 200000, DiskFreeMiB: 200000,
+	}}
+	pool, err := agent.NewPool(agent.PoolConfig{
+		MinReady: 1, MaxReady: 2, ImagePath: img, VCPUs: 1, MemoryMiB: 4096,
+		DiskPerVMMiB: 256, ReconcileInterval: 20 * time.Millisecond, BindWait: time.Second,
+	}, agent.PoolDeps{
+		VMM: mgr, Cleaner: &cleanup.Cleaner{VMM: mgr, Layout: layout},
+		Runner: &agent.StubRunner{}, Inventory: cur,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := pool.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = pool.Shutdown(context.Background()) }()
+	waitFor(t, 2*time.Second, func() bool { return pool.Counts().Warm >= 1 })
+	cur.set(agent.HostInventory{RAMTotalMiB: 65536, RAMAvailMiB: 100, DiskTotalMiB: 200000, DiskFreeMiB: 200000})
+
+	w := &agent.Worker{
+		Client: agent.NewControlClient(ts.URL, "rw", "t", ts.Client()),
+		Pool:   pool, Capacity: 2, PollInterval: 15 * time.Millisecond,
+	}
+	go func() { _ = w.Run(ctx) }()
+	waitFor(t, 2*time.Second, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return claims > 0 && lastFree == 1
+	})
+}

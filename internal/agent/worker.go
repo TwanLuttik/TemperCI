@@ -54,8 +54,8 @@ func (w *Worker) Run(ctx context.Context) error {
 	if poll <= 0 {
 		poll = 500 * time.Millisecond
 	}
-	if w.Capacity <= 0 {
-		w.Capacity = 1
+	if w.Capacity < 0 {
+		w.Capacity = 0
 	}
 
 	if err := w.register(ctx); err != nil {
@@ -154,6 +154,13 @@ func (w *Worker) snapshot() CapacitySnapshot {
 		used = n
 	}
 	free := w.Capacity - used
+	if free < 0 {
+		free = 0
+	}
+	bindBudget := c.Warm + w.Pool.RemainingCreates()
+	if bindBudget < free {
+		free = bindBudget
+	}
 	if free < 0 {
 		free = 0
 	}
