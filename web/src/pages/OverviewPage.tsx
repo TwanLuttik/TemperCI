@@ -1,7 +1,14 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
+
 import { api, formatBytes, formatDuration, type Overview } from "../api";
+import { PageHeader } from "../components/page-header";
+import { ServicesPanel } from "../components/ServicesPanel";
+import { StatCard } from "../components/stat-card";
+import { LiveDot, StatusBadge } from "../components/status-badge";
 import { useRealtime } from "../hooks/useRealtime";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
 type Props = { onOverview: (o: Overview) => void };
 
@@ -26,122 +33,89 @@ export function OverviewPage({ onOverview }: Props) {
       .catch((e: Error) => setErr(e.message));
   }, [onOverview, rt.last]);
 
-  if (err) return <div className="err">{err}</div>;
-  if (!o) return <div className="loading">Loading overview…</div>;
+  if (err) return <p className="text-sm text-destructive">{err}</p>;
+  if (!o) return <p className="text-sm text-muted-foreground">Loading overview…</p>;
 
   return (
     <>
-      <div className="page-head">
-        <p className="page-kicker">/ Console</p>
-        <h1>GitHub Actions, on your hardware</h1>
-        <p className="lead">
-          Live capacity and job flow across TemperCI agents — spot stuck hosts and empty warm pools
-          quickly.{" "}
-          {rt.connected ? (
-            <span className="badge ok">websocket live</span>
-          ) : (
-            <span className="badge warn">rest</span>
-          )}
-        </p>
+      <PageHeader
+        kicker="/ Console"
+        title="GitHub Actions, on your hardware"
+        description={
+          <span className="inline-flex flex-wrap items-center gap-2">
+            Live capacity and job flow across TemperCI agents.
+            <LiveDot live={rt.connected} />
+          </span>
+        }
+      />
+
+      <div className="mb-6">
+        <ServicesPanel />
       </div>
-      <div className="grid">
-        <div className="stat">
-          <div className="label">Agents</div>
-          <div className="value">{o.agents_registered}</div>
-          <div className="hint">registered hosts</div>
-        </div>
-        <div className="stat">
-          <div className="label">Warm</div>
-          <div className="value">{o.warm}</div>
-          <div className="hint">ready microVMs</div>
-        </div>
-        <div className="stat">
-          <div className="label">Busy</div>
-          <div className="value">{o.busy}</div>
-          <div className="hint">running jobs</div>
-        </div>
-        <div className="stat">
-          <div className="label">Queued</div>
-          <div className="value">{o.jobs_pending}</div>
-          <div className="hint">awaiting claim</div>
-        </div>
-        <div className="stat">
-          <div className="label">Started</div>
-          <div className="value">{o.jobs_started}</div>
-          <div className="hint">in flight</div>
-        </div>
-        <div className="stat">
-          <div className="label">Finished</div>
-          <div className="value">{o.jobs_finished}</div>
-          <div className="hint">completed in memory</div>
-        </div>
-        <div className="stat">
-          <div className="label">Run p50</div>
-          <div className="value">{formatDuration(o.run_p50_ms)}</div>
-          <div className="hint">last 100 finished</div>
-        </div>
-        <div className="stat">
-          <div className="label">Run p95</div>
-          <div className="value">{formatDuration(o.run_p95_ms)}</div>
-          <div className="hint">last 100 finished</div>
-        </div>
-        <div className="stat">
-          <div className="label">Cache</div>
-          <div className="value">
-            {(o.cache_hits ?? 0) + (o.cache_misses ?? 0) === 0
+
+      <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+        <StatCard label="Agents" value={o.agents_registered} hint="registered hosts" />
+        <StatCard label="Warm" value={o.warm} hint="ready microVMs" />
+        <StatCard label="Busy" value={o.busy} hint="running jobs" />
+        <StatCard label="Queued" value={o.jobs_pending} hint="awaiting claim" />
+        <StatCard label="Started" value={o.jobs_started} hint="in flight" />
+        <StatCard label="Finished" value={o.jobs_finished} hint="completed in memory" />
+        <StatCard label="Run p50" value={formatDuration(o.run_p50_ms)} hint="last 100 finished" />
+        <StatCard label="Run p95" value={formatDuration(o.run_p95_ms)} hint="last 100 finished" />
+        <StatCard
+          label="Cache"
+          value={
+            (o.cache_hits ?? 0) + (o.cache_misses ?? 0) === 0
               ? "—"
-              : `${o.cache_hits ?? 0}/${(o.cache_hits ?? 0) + (o.cache_misses ?? 0)}`}
-          </div>
-          <div className="hint">
-            hits / lookups
-            {o.cache_bytes ? ` · ${formatBytes(o.cache_bytes)} on disk` : ""}
-          </div>
-        </div>
+              : `${o.cache_hits ?? 0}/${(o.cache_hits ?? 0) + (o.cache_misses ?? 0)}`
+          }
+          hint={`hits / lookups${o.cache_bytes ? ` · ${formatBytes(o.cache_bytes)} on disk` : ""}`}
+        />
       </div>
-      <div className="split">
-        <div className="panel">
-          <div className="panel-head">
-            <h2>Fleet health</h2>
-            <span className="meta">org · {o.org || "—"}</span>
-          </div>
-          <p style={{ margin: "0 0 12px", color: "var(--muted)" }}>
-            {o.fleet_ready
-              ? "Control plane is minting JIT configs and assigning work to agents."
-              : "Setup incomplete or GitHub client not ready — finish wizard / config first."}
-          </p>
-          <div className="row">
-            <span className={`badge ${o.fleet_ready ? "ok" : "warn"}`}>
-              {o.fleet_ready ? "ready" : "limited"}
-            </span>
-            <span className={`badge ${o.hostctl_configured ? "ok" : ""}`}>
-              hostctl {o.hostctl_configured ? "on" : "off"}
-            </span>
-            <span className="badge">{o.jobs_failed || 0} failed</span>
-          </div>
-        </div>
-        <div className="panel">
-          <div className="panel-head">
-            <h2>Next actions</h2>
-            <span className="meta">operator</span>
-          </div>
-          <div className="row">
-            <button type="button" className="ghost" onClick={() => navigate("/hosts")}>
+
+      <div className="grid gap-3 lg:grid-cols-[1.4fr_1fr]">
+        <Card>
+          <CardHeader className="flex-row items-center justify-between">
+            <CardTitle>Fleet health</CardTitle>
+            <span className="font-mono text-[11px] text-muted-foreground">org · {o.org || "—"}</span>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <p className="text-sm text-muted-foreground">
+              {o.fleet_ready
+                ? "Control plane is minting JIT configs and assigning work to agents."
+                : "Setup incomplete or GitHub client not ready — finish wizard / config first."}
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <StatusBadge tone={o.fleet_ready ? "ok" : "warn"}>{o.fleet_ready ? "ready" : "limited"}</StatusBadge>
+              <StatusBadge tone={o.hostctl_configured ? "ok" : "neutral"}>
+                hostctl {o.hostctl_configured ? "on" : "off"}
+              </StatusBadge>
+              <StatusBadge>{o.jobs_failed || 0} failed</StatusBadge>
+            </div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader>
+            <CardTitle>Next actions</CardTitle>
+          </CardHeader>
+          <CardContent className="flex flex-wrap gap-2">
+            <Button variant="secondary" onClick={() => navigate("/hosts")}>
               View runners
-            </button>
-            <button type="button" className="ghost" onClick={() => navigate("/vms")}>
+            </Button>
+            <Button variant="secondary" onClick={() => navigate("/vms")}>
               MicroVM usage
-            </button>
-            <button type="button" className="ghost" onClick={() => navigate("/jobs")}>
+            </Button>
+            <Button variant="secondary" onClick={() => navigate("/jobs")}>
               View jobs
-            </button>
-            <button type="button" className="ghost" onClick={() => navigate("/cache")}>
+            </Button>
+            <Button variant="secondary" onClick={() => navigate("/cache")}>
               View cache
-            </button>
-            <button type="button" className="secondary" onClick={() => navigate("/settings")}>
+            </Button>
+            <Button variant="outline" onClick={() => navigate("/settings")}>
               Settings
-            </button>
-          </div>
-        </div>
+            </Button>
+          </CardContent>
+        </Card>
       </div>
     </>
   );

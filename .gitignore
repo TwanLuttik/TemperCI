@@ -19,3 +19,6 @@
 
 # Local agent/session scratch
 .superpowers/
+
+# Isolated git worktrees
+.worktrees/

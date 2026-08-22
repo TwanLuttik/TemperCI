@@ -33,4 +33,18 @@ install -m 0644 "$CA_CRT" "$ROOT/usr/local/share/ca-certificates/temperci-cache.
 if [[ -x "$ROOT/usr/sbin/update-ca-certificates" ]] || [[ -x /usr/sbin/update-ca-certificates ]]; then
   chroot "$ROOT" /usr/sbin/update-ca-certificates || true
 fi
+# Node ignores the system store; actions/cache and upload-artifact need this.
+install -d -m 0755 "$ROOT/etc/profile.d"
+cat >"$ROOT/etc/profile.d/temperci-cache-ca.sh" <<'EOF'
+export NODE_EXTRA_CA_CERTS=/usr/local/share/ca-certificates/temperci-cache.crt
+export SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
+EOF
+chmod 0644 "$ROOT/etc/profile.d/temperci-cache-ca.sh"
+if [[ -f "$ROOT/etc/environment" ]]; then
+  grep -q '^NODE_EXTRA_CA_CERTS=' "$ROOT/etc/environment" || \
+    echo 'NODE_EXTRA_CA_CERTS=/usr/local/share/ca-certificates/temperci-cache.crt' >>"$ROOT/etc/environment"
+fi
+if [[ -f "$ROOT/etc/hosts" ]] && ! grep -q 'tempercicache.blob.core.windows.net' "$ROOT/etc/hosts"; then
+  echo "10.231.255.254 tempercicache.blob.core.windows.net" >>"$ROOT/etc/hosts"
+fi
 echo "installed TemperCI cache CA into $ROOT"

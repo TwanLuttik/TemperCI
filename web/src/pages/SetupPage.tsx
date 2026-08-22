@@ -1,6 +1,15 @@
 import { useState } from "react";
 import { api, waitForHealth } from "../api";
 import { GitHubAppGuide } from "../components/GitHubAppGuide";
+import { PageHeader } from "../components/page-header";
+import { StatCard } from "../components/stat-card";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
+import { cn } from "@/lib/utils";
 
 type Wizard = {
   auth_mode: string;
@@ -12,6 +21,7 @@ type Wizard = {
   github_app_private_key_pem: string;
   agent_token: string;
   listen_addr: string;
+  cache_listen_addr: string;
 };
 
 type Props = { onDone: () => void | Promise<void> };
@@ -30,6 +40,7 @@ export function SetupPage({ onDone }: Props) {
     github_app_private_key_pem: "",
     agent_token: "",
     listen_addr: "0.0.0.0:8080",
+    cache_listen_addr: "",
   });
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -54,6 +65,7 @@ export function SetupPage({ onDone }: Props) {
           github_app_private_key_pem: data.github_app_private_key_pem,
           agent_token: data.agent_token,
           listen_addr: data.listen_addr,
+          cache_listen_addr: data.cache_listen_addr,
           restart: true,
         }),
       });
@@ -78,45 +90,57 @@ export function SetupPage({ onDone }: Props) {
 
   return (
     <>
-      <div className="page-head">
-        <p className="page-kicker">/ Setup</p>
-        <h1>Get your fleet online</h1>
-        <p className="lead">
-          Same product shape as managed runner platforms — on hardware you own.
-        </p>
-      </div>
-      <div className="wizard-steps">
+      <PageHeader
+        kicker="/ Setup"
+        title="Get your fleet online"
+        description="Same product shape as managed runner platforms — on hardware you own."
+      />
+      <div className="mb-4 flex flex-wrap gap-2">
         {STEPS.map((s, i) => (
-          <span key={s} className={i === step ? "on" : ""}>
+          <span
+            key={s}
+            className={cn(
+              "rounded-full border px-2.5 py-1 font-mono text-[11px]",
+              i === step
+                ? "border-transparent bg-primary/15 text-orange-100"
+                : "border-border text-muted-foreground",
+            )}
+          >
             {String(i + 1).padStart(2, "0")} {s}
           </span>
         ))}
       </div>
-      <div className="panel">
+      <Card>
+        <CardContent className="space-y-4">
         {step === 0 ? (
           <>
-            <label>Auth mode</label>
-            <select
-              value={data.auth_mode}
-              onChange={(e) => patch({ auth_mode: e.target.value })}
-            >
-              <option value="password">Password — local users</option>
-              <option value="open">Open — private network only</option>
-            </select>
+            <div className="space-y-2">
+              <Label>Auth mode</Label>
+              <Select value={data.auth_mode} onValueChange={(v) => patch({ auth_mode: v })}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="password">Password — local users</SelectItem>
+                  <SelectItem value="open">Open — private network only</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
             {data.auth_mode === "password" ? (
               <>
-                <label>Admin email</label>
-                <input
-                  value={data.admin_email}
-                  onChange={(e) => patch({ admin_email: e.target.value })}
-                />
-                <label>Admin password</label>
-                <input
-                  type="password"
-                  value={data.admin_password}
-                  onChange={(e) => patch({ admin_password: e.target.value })}
-                />
-                <p className="lead" style={{ marginTop: 12 }}>
+                <div className="space-y-2">
+                  <Label>Admin email</Label>
+                  <Input value={data.admin_email} onChange={(e) => patch({ admin_email: e.target.value })} />
+                </div>
+                <div className="space-y-2">
+                  <Label>Admin password</Label>
+                  <Input
+                    type="password"
+                    value={data.admin_password}
+                    onChange={(e) => patch({ admin_password: e.target.value })}
+                  />
+                </div>
+                <p className="text-sm text-muted-foreground">
                   Invite teammates later by creating accounts in Users (no email sending).
                 </p>
               </>
@@ -126,106 +150,117 @@ export function SetupPage({ onDone }: Props) {
         {step === 1 ? (
           <>
             <GitHubAppGuide orgSlug={data.github_org} />
-            <label>GitHub organization login</label>
-            <input
-              placeholder="e.g. coatcheckapp (from github.com/orgs/…)"
-              value={data.github_org}
-              onChange={(e) => patch({ github_org: e.target.value })}
-            />
-            <p className="lead" style={{ marginTop: 8 }}>
+            <div className="space-y-2">
+              <Label>GitHub organization login</Label>
+              <Input
+                placeholder="e.g. coatcheckapp (from github.com/orgs/…)"
+                value={data.github_org}
+                onChange={(e) => patch({ github_org: e.target.value })}
+              />
+            </div>
+            <p className="text-sm text-muted-foreground">
               Enter the org login first so the links above point at the right organization.
             </p>
-            <label>GitHub App ID</label>
-            <input
-              value={data.github_app_id}
-              onChange={(e) => patch({ github_app_id: e.target.value })}
-            />
-            <label>Webhook secret</label>
-            <input
-              value={data.github_webhook_secret}
-              onChange={(e) => patch({ github_webhook_secret: e.target.value })}
-            />
-            <label>App private key (PEM)</label>
-            <textarea
-              placeholder="-----BEGIN RSA PRIVATE KEY-----"
-              value={data.github_app_private_key_pem}
-              onChange={(e) => patch({ github_app_private_key_pem: e.target.value })}
-            />
+            <div className="space-y-2">
+              <Label>GitHub App ID</Label>
+              <Input value={data.github_app_id} onChange={(e) => patch({ github_app_id: e.target.value })} />
+            </div>
+            <div className="space-y-2">
+              <Label>Webhook secret</Label>
+              <Input
+                value={data.github_webhook_secret}
+                onChange={(e) => patch({ github_webhook_secret: e.target.value })}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>App private key (PEM)</Label>
+              <Textarea
+                placeholder="-----BEGIN RSA PRIVATE KEY-----"
+                value={data.github_app_private_key_pem}
+                onChange={(e) => patch({ github_app_private_key_pem: e.target.value })}
+                className="font-mono text-xs"
+              />
+            </div>
           </>
         ) : null}
         {step === 2 ? (
           <>
-            <label>
-              Agent token <span style={{ color: "var(--dim)" }}>(blank = auto-generate)</span>
-            </label>
-            <input
-              className="mono"
-              value={data.agent_token}
-              onChange={(e) => patch({ agent_token: e.target.value })}
-            />
-            <label>Listen address</label>
-            <input
-              className="mono"
-              value={data.listen_addr}
-              onChange={(e) => patch({ listen_addr: e.target.value })}
-            />
-            <p className="lead" style={{ marginTop: 12 }}>
-              Use the same <code>agent_token</code> in every host <code>agent.toml</code>.
+            <div className="space-y-2">
+              <Label>
+                Agent token <span className="text-muted-foreground">(blank = auto-generate)</span>
+              </Label>
+              <Input
+                className="font-mono"
+                value={data.agent_token}
+                onChange={(e) => patch({ agent_token: e.target.value })}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Listen address</Label>
+              <Input
+                className="font-mono"
+                value={data.listen_addr}
+                onChange={(e) => patch({ listen_addr: e.target.value })}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>
+                Cache listen address <span className="text-muted-foreground">(blank = disabled)</span>
+              </Label>
+              <Input
+                className="font-mono"
+                placeholder="e.g. 127.0.0.1:8743"
+                value={data.cache_listen_addr}
+                onChange={(e) => patch({ cache_listen_addr: e.target.value })}
+              />
+            </div>
+            <p className="text-sm text-muted-foreground">
+              Use the same <code className="font-mono text-xs">agent_token</code> in every host{" "}
+              <code className="font-mono text-xs">agent.toml</code>. Leave cache listen empty unless you
+              want the host-local Actions cache gateway.
             </p>
           </>
         ) : null}
         {step === 3 ? (
           <>
-            <div className="grid" style={{ margin: 0 }}>
-              <div className="stat">
-                <div className="label">Auth</div>
-                <div className="value" style={{ fontSize: 18 }}>
-                  {data.auth_mode}
-                </div>
-              </div>
-              <div className="stat">
-                <div className="label">Org</div>
-                <div className="value" style={{ fontSize: 18 }}>
-                  {data.github_org || "—"}
-                </div>
-              </div>
-              <div className="stat">
-                <div className="label">App ID</div>
-                <div className="value" style={{ fontSize: 18 }}>
-                  {data.github_app_id || "—"}
-                </div>
-              </div>
-              <div className="stat">
-                <div className="label">Listen</div>
-                <div className="value" style={{ fontSize: 16, fontFamily: "var(--mono)" }}>
-                  {data.listen_addr}
-                </div>
-              </div>
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+              <StatCard label="Auth" value={<span className="text-lg">{data.auth_mode}</span>} />
+              <StatCard label="Org" value={<span className="text-lg">{data.github_org || "—"}</span>} />
+              <StatCard label="App ID" value={<span className="text-lg">{data.github_app_id || "—"}</span>} />
+              <StatCard
+                label="Listen"
+                value={<span className="font-mono text-base">{data.listen_addr}</span>}
+              />
+              <StatCard
+                label="Cache"
+                value={<span className="font-mono text-base">{data.cache_listen_addr || "disabled"}</span>}
+              />
             </div>
-            <p className="lead" style={{ marginTop: 16 }}>
+            <p className="text-sm text-muted-foreground">
               Apply writes config + PEM, then restarts services when hostctl is installed.
             </p>
           </>
         ) : null}
-        <div className="row" style={{ marginTop: 18 }}>
+        <div className="flex flex-wrap gap-2 pt-2">
           {step > 0 ? (
-            <button type="button" className="secondary" onClick={() => setStep((s) => s - 1)}>
+            <Button type="button" variant="outline" onClick={() => setStep((s) => s - 1)}>
               Back
-            </button>
+            </Button>
           ) : null}
           {step < 3 ? (
-            <button type="button" onClick={() => setStep((s) => s + 1)}>
+            <Button type="button" onClick={() => setStep((s) => s + 1)}>
               Continue
-            </button>
+            </Button>
           ) : (
-            <button type="button" disabled={busy} onClick={() => void apply()}>
+            <Button type="button" disabled={busy} onClick={() => void apply()}>
               Apply &amp; restart
-            </button>
+            </Button>
           )}
         </div>
-        {msg ? <div className="okmsg">{msg}</div> : null}
-        {err ? <div className="err">{err}</div> : null}
-      </div>
+        {msg ? <p className="text-sm text-emerald-400">{msg}</p> : null}
+        {err ? <p className="text-sm text-destructive">{err}</p> : null}
+        </CardContent>
+      </Card>
     </>
   );
 }

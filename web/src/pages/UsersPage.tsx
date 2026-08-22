@@ -1,5 +1,15 @@
 import { useEffect, useState } from "react";
+
 import { api, type User } from "../api";
+import { EmptyState } from "../components/empty-state";
+import { PageHeader } from "../components/page-header";
+import { StatusBadge } from "../components/status-badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 
 export function UsersPage() {
   const [users, setUsers] = useState<User[]>([]);
@@ -39,67 +49,78 @@ export function UsersPage() {
 
   return (
     <>
-      <div className="page-head">
-        <p className="page-kicker">/ Users</p>
-        <h1>Team access</h1>
-        <p className="lead">Local accounts only. Create credentials here — no invite emails are sent.</p>
-      </div>
-      <div className="split">
-        <div className="panel" style={{ overflow: "auto", padding: "8px 12px 4px" }}>
-          <table>
-            <thead>
-              <tr>
-                <th>Email</th>
-                <th>Role</th>
-                <th>Created</th>
-              </tr>
-            </thead>
-            <tbody>
+      <PageHeader
+        kicker="/ Users"
+        title="Team access"
+        description="Local accounts only. Create credentials here — no invite emails are sent."
+      />
+      <div className="grid gap-4 lg:grid-cols-[1.4fr_1fr]">
+        <Card className="py-2">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Email</TableHead>
+                <TableHead>Role</TableHead>
+                <TableHead>Created</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
               {users.length === 0 ? (
-                <tr>
-                  <td colSpan={3}>
-                    <div className="empty">No users</div>
-                  </td>
-                </tr>
+                <TableRow>
+                  <TableCell colSpan={3}>
+                    <EmptyState title="No users" />
+                  </TableCell>
+                </TableRow>
               ) : (
                 users.map((u) => (
-                  <tr key={u.id}>
-                    <td>{u.email}</td>
-                    <td>
-                      <span className="badge">{u.role}</span>
-                    </td>
-                    <td style={{ color: "var(--muted)" }}>{u.created_at || ""}</td>
-                  </tr>
+                  <TableRow key={u.id}>
+                    <TableCell>{u.email}</TableCell>
+                    <TableCell>
+                      <StatusBadge>{u.role}</StatusBadge>
+                    </TableCell>
+                    <TableCell className="text-muted-foreground">{u.created_at || ""}</TableCell>
+                  </TableRow>
                 ))
               )}
-            </tbody>
-          </table>
-        </div>
-        <div className="panel">
-          <div className="panel-head">
-            <h2>Create user</h2>
-            <span className="meta">invite</span>
-          </div>
-          <label>Email</label>
-          <input value={email} onChange={(e) => setEmail(e.target.value)} />
-          <label>Temporary password</label>
-          <input
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-          />
-          <label>Role</label>
-          <select value={role} onChange={(e) => setRole(e.target.value)}>
-            <option value="viewer">viewer</option>
-            <option value="admin">admin</option>
-          </select>
-          <div className="row" style={{ marginTop: 14 }}>
-            <button type="button" onClick={() => void create()}>
+            </TableBody>
+          </Table>
+        </Card>
+        <Card>
+          <CardHeader>
+            <CardTitle>Create user</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="user-email">Email</Label>
+              <Input id="user-email" value={email} onChange={(e) => setEmail(e.target.value)} />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="user-pass">Temporary password</Label>
+              <Input
+                id="user-pass"
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Role</Label>
+              <Select value={role} onValueChange={setRole}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="viewer">viewer</SelectItem>
+                  <SelectItem value="admin">admin</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <Button type="button" onClick={() => void create()}>
               Create user
-            </button>
-          </div>
-          {err ? <div className="err">{err}</div> : null}
-        </div>
+            </Button>
+            {err ? <p className="text-sm text-destructive">{err}</p> : null}
+          </CardContent>
+        </Card>
       </div>
     </>
   );

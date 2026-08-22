@@ -19,6 +19,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 
@@ -46,9 +47,10 @@ type Config struct {
 	// Network hooks (optional). Defaults are no-ops that only write markers.
 	SetupNetwork    func(id vmm.ID, netDir string) (vmm.NetworkState, error)
 	TeardownNetwork func(id vmm.ID, net vmm.NetworkState) error
-	// CacheRedirectPort, when > 0, REDIRECTs guest :443 on the tap to this host port
-	// so the Actions cache gateway can intercept results/blob TLS.
-	CacheRedirectPort int
+	// CacheListenAddr, when set, NAT-redirects guest :443 on each tap to this
+	// host:port so the Actions cache gateway can intercept results/blob TLS.
+	// Use 127.0.0.1:port (DNAT + route_localnet); 0.0.0.0:port uses REDIRECT.
+	CacheListenAddr string
 }
 
 // Manager drives Firecracker instances under a host layout root.
@@ -89,24 +91,30 @@ func New(cfg Config) (*Manager, error) {
 	if cfg.SetupNetwork == nil {
 		cfg.SetupNetwork = realSetupNetwork
 	}
-	if cfg.CacheRedirectPort > 0 {
-		inner := cfg.SetupNetwork
-		port := cfg.CacheRedirectPort
+	if cfg.TeardownNetwork == nil {
+		cfg.TeardownNetwork = realTeardownNetwork
+	}
+	if addr := strings.TrimSpace(cfg.CacheListenAddr); addr != "" && ghacache.ListenPort(addr) > 0 {
+		innerSetup := cfg.SetupNetwork
+		innerTear := cfg.TeardownNetwork
 		cfg.SetupNetwork = func(id vmm.ID, netDir string) (vmm.NetworkState, error) {
-			st, err := inner(id, netDir)
+			st, err := innerSetup(id, netDir)
 			if err != nil {
 				return st, err
 			}
 			if st.TapDevice != "" {
-				if rerr := ghacache.RedirectGuestHTTPS(st.TapDevice, port); rerr != nil {
+				if rerr := ghacache.RedirectGuestHTTPS(st.TapDevice, addr); rerr != nil {
 					_ = os.WriteFile(filepath.Join(netDir, "cache.redirect.err"), []byte(rerr.Error()), 0o600)
 				}
 			}
 			return st, nil
 		}
-	}
-	if cfg.TeardownNetwork == nil {
-		cfg.TeardownNetwork = realTeardownNetwork
+		cfg.TeardownNetwork = func(id vmm.ID, net vmm.NetworkState) error {
+			if net.TapDevice != "" {
+				_ = ghacache.ClearGuestHTTPSRedirect(net.TapDevice, addr)
+			}
+			return innerTear(id, net)
+		}
 	}
 	if err := os.MkdirAll(cfg.Layout.ImagesDir(), 0o755); err != nil {
 		return nil, fmt.Errorf("firecracker: images dir: %w", err)
@@ -121,12 +129,12 @@ func New(cfg Config) (*Manager, error) {
 // Production code must use New. Intended for unit tests of destroy/layout.
 func NewForTest(layout vmm.Layout) *Manager {
 	cfg := Config{
-		Layout:         layout,
-		Binary:         "firecracker",
-		SkipKVMCheck:   true,
-		HTTPTimeout:    time.Second,
-		StopGrace:      50 * time.Millisecond,
-		SetupNetwork:   defaultSetupNetwork,
+		Layout:          layout,
+		Binary:          "firecracker",
+		SkipKVMCheck:    true,
+		HTTPTimeout:     time.Second,
+		StopGrace:       50 * time.Millisecond,
+		SetupNetwork:    defaultSetupNetwork,
 		TeardownNetwork: defaultTeardownNetwork,
 	}
 	_ = os.MkdirAll(layout.ImagesDir(), 0o755)

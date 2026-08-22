@@ -1,28 +1,37 @@
 package ghacache
 
 import (
+	"crypto/sha256"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"io"
 	"net"
 	"net/http"
+	"net/http/httputil"
+	"net/url"
+	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 const twirpPrefix = "/twirp/github.actions.results.api.v1.CacheService/"
 
 // Counters are per-repo cache stats for the most recent job traffic.
 type Counters struct {
-	Hits      int
-	Misses    int
-	BytesIn   int64
-	BytesOut  int64
+	Hits     int
+	Misses   int
+	BytesIn  int64
+	BytesOut int64
 }
 
 // Gateway terminates Actions cache v2 Twirp + blob transfer against a Store.
 type Gateway struct {
 	Store *Store
+	// Proxy handles non-cache paths on intercepted hosts (ArtifactService, etc.).
+	// Nil uses a TLS reverse proxy to https://<request Host>.
+	Proxy http.Handler
 	mu    sync.Mutex
 	binds map[string]string // remote host → repo
 	stats map[string]*Counters
@@ -77,14 +86,49 @@ func (g *Gateway) TakeStats(repo string) Counters {
 	return out
 }
 
-// Handler returns the HTTP handler (Twirp + blob).
+// Handler returns the HTTP handler (Twirp + blob). Non-cache paths are
+// proxied to the real origin so upload-artifact (ArtifactService) still works
+// on the same results-receiver host we MITM for cache.
 func (g *Gateway) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST "+twirpPrefix+"CreateCacheEntry", g.handleCreate)
 	mux.HandleFunc("POST "+twirpPrefix+"FinalizeCacheEntry", g.handleFinalize)
+	mux.HandleFunc("POST "+twirpPrefix+"FinalizeCacheEntryUpload", g.handleFinalize)
 	mux.HandleFunc("POST "+twirpPrefix+"GetCacheEntryDownloadURL", g.handleGet)
 	mux.HandleFunc("/blob/", g.handleBlob)
-	return mux
+	mux.HandleFunc("/c/", g.handleAzureBlob)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if localCachePath(r.URL.Path) {
+			mux.ServeHTTP(w, r)
+			return
+		}
+		g.serveNonCache(w, r)
+	})
+}
+
+func localCachePath(path string) bool {
+	return strings.HasPrefix(path, twirpPrefix) || strings.HasPrefix(path, "/blob/") || strings.HasPrefix(path, "/c/")
+}
+
+func (g *Gateway) serveNonCache(w http.ResponseWriter, r *http.Request) {
+	if g.Proxy != nil {
+		g.Proxy.ServeHTTP(w, r)
+		return
+	}
+	host := r.Host
+	if host == "" && r.TLS != nil {
+		host = r.TLS.ServerName
+	}
+	if host == "" {
+		http.Error(w, "no origin host", http.StatusBadGateway)
+		return
+	}
+	rp := &httputil.ReverseProxy{
+		Rewrite: func(pr *httputil.ProxyRequest) {
+			pr.SetURL(&url.URL{Scheme: "https", Host: host})
+		},
+	}
+	rp.ServeHTTP(w, r)
 }
 
 // ListenAndServe serves the gateway on addr.
@@ -127,18 +171,18 @@ func (g *Gateway) handleFinalize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Key       string `json:"key"`
-		Version   string `json:"version"`
-		SizeBytes int64  `json:"size_bytes"`
-		SizeCamel int64  `json:"sizeBytes"`
+		Key       string          `json:"key"`
+		Version   string          `json:"version"`
+		SizeBytes json.RawMessage `json:"size_bytes"`
+		SizeCamel json.RawMessage `json:"sizeBytes"`
 	}
 	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
 		http.Error(w, `{"ok":false}`, http.StatusBadRequest)
 		return
 	}
-	size := req.SizeBytes
+	size := parseSize(req.SizeBytes)
 	if size == 0 {
-		size = req.SizeCamel
+		size = parseSize(req.SizeCamel)
 	}
 	e, err := g.Store.Finalize(repo, req.Key, req.Version, size)
 	if err != nil {
@@ -146,7 +190,8 @@ func (g *Gateway) handleFinalize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	g.addBytesIn(repo, e.Size)
-	writeJSON(w, map[string]any{"ok": true, "entry_id": e.ID, "entryId": e.ID})
+	id := numericEntryID(e.ID)
+	writeJSON(w, map[string]any{"ok": true, "entry_id": id, "entryId": id})
 }
 
 func (g *Gateway) handleGet(w http.ResponseWriter, r *http.Request) {
@@ -182,11 +227,11 @@ func (g *Gateway) handleGet(w http.ResponseWriter, r *http.Request) {
 	g.addHit(repo, e.Size)
 	url := blobURL(r, "e/"+e.ID)
 	writeJSON(w, map[string]any{
-		"ok":                   true,
-		"matched_key":          e.Key,
-		"matchedKey":           e.Key,
-		"signed_download_url":  url,
-		"signedDownloadUrl":    url,
+		"ok":                  true,
+		"matched_key":         e.Key,
+		"matchedKey":          e.Key,
+		"signed_download_url": url,
+		"signedDownloadUrl":   url,
 	})
 }
 
@@ -226,7 +271,7 @@ func (g *Gateway) handleBlobPut(w http.ResponseWriter, r *http.Request, id strin
 				http.Error(w, err.Error(), http.StatusNotFound)
 				return
 			}
-			w.WriteHeader(http.StatusCreated)
+			writeAzureCreated(w)
 			return
 		}
 		if q.Get("comp") == "blocklist" {
@@ -235,17 +280,23 @@ func (g *Gateway) handleBlobPut(w http.ResponseWriter, r *http.Request, id strin
 				http.Error(w, err.Error(), http.StatusBadRequest)
 				return
 			}
-			w.WriteHeader(http.StatusCreated)
+			writeAzureCreated(w)
 			return
 		}
 		if err := g.Store.WriteUpload(rest, body); err != nil {
 			http.Error(w, err.Error(), http.StatusNotFound)
 			return
 		}
-		w.WriteHeader(http.StatusCreated)
+		writeAzureCreated(w)
 	default:
 		http.NotFound(w, r)
 	}
+}
+
+func (g *Gateway) handleAzureBlob(w http.ResponseWriter, r *http.Request) {
+	r2 := r.Clone(r.Context())
+	r2.URL.Path = "/blob/" + strings.TrimPrefix(r.URL.Path, "/c/")
+	g.handleBlob(w, r2)
 }
 
 func (g *Gateway) handleBlobGet(w http.ResponseWriter, r *http.Request, id string) {
@@ -305,12 +356,49 @@ func (g *Gateway) ensureStats(repo string) *Counters {
 	return c
 }
 
+// cacheBlobHost is the fake Azure account the guest resolves via /etc/hosts.
+// The Azure SDK in actions/cache requires a *.blob.core.windows.net URL.
+const cacheBlobHost = "tempercicache.blob.core.windows.net"
+
 func blobURL(r *http.Request, suffix string) string {
-	scheme := "http"
-	if r.TLS != nil {
-		scheme = "https"
+	_ = r
+	return "https://" + cacheBlobHost + "/c/" + suffix
+}
+
+func writeAzureCreated(w http.ResponseWriter) {
+	w.Header().Set("ETag", `"0"`)
+	w.Header().Set("Last-Modified", time.Now().UTC().Format(http.TimeFormat))
+	w.Header().Set("x-ms-request-id", "temperci")
+	w.Header().Set("x-ms-version", "2020-10-02")
+	w.WriteHeader(http.StatusCreated)
+}
+
+func numericEntryID(s string) int64 {
+	sum := sha256.Sum256([]byte(s))
+	v := int64(binary.BigEndian.Uint64(sum[:8]) & 0x7fffffffffffffff)
+	if v == 0 {
+		return 1
 	}
-	return scheme + "://" + r.Host + "/blob/" + suffix
+	return v
+}
+
+func parseSize(raw json.RawMessage) int64 {
+	if len(raw) == 0 {
+		return 0
+	}
+	var n int64
+	if json.Unmarshal(raw, &n) == nil {
+		return n
+	}
+	var s string
+	if json.Unmarshal(raw, &s) == nil {
+		v, err := strconv.ParseInt(s, 10, 64)
+		if err != nil {
+			return 0
+		}
+		return v
+	}
+	return 0
 }
 
 func stripPort(addr string) string {

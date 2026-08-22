@@ -1,14 +1,13 @@
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { api, formatDuration, type JobDetail } from "../api";
 
-function statusBadge(status?: string) {
-  const s = String(status || "").toLowerCase();
-  if (["finished", "success", "ok"].includes(s)) return "ok";
-  if (["failed", "error", "failure", "timeout", "cancelled"].includes(s)) return "bad";
-  if (["started", "assigned", "minted", "pending"].includes(s)) return "warn";
-  return "";
-}
+import { api, formatDuration, type JobDetail } from "../api";
+import { EmptyState } from "../components/empty-state";
+import { PageHeader } from "../components/page-header";
+import { StatCard } from "../components/stat-card";
+import { StatusBadge } from "../components/status-badge";
+import { Card, CardContent } from "@/components/ui/card";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 function fmt(ts?: string) {
   if (!ts) return "—";
@@ -21,7 +20,7 @@ export function JobDetailPage() {
   const { id } = useParams();
   const [data, setData] = useState<JobDetail | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  const [tab, setTab] = useState<"events" | "agent" | "runner" | "console">("events");
+  const [tab, setTab] = useState("events");
 
   useEffect(() => {
     let stop = false;
@@ -45,8 +44,8 @@ export function JobDetailPage() {
     };
   }, [id]);
 
-  if (err) return <div className="err">{err}</div>;
-  if (!data) return <div className="loading">Loading job…</div>;
+  if (err) return <p className="text-sm text-destructive">{err}</p>;
+  if (!data) return <p className="text-sm text-muted-foreground">Loading job…</p>;
 
   const j = data.job;
   const logs = data.logs || {};
@@ -57,144 +56,121 @@ export function JobDetailPage() {
       ? `https://github.com/${j.repo_full_name}/actions/runs/${j.run_id}`
       : null;
 
-  const pane =
-    tab === "agent"
-      ? logs.agent_log
-      : tab === "runner"
-        ? logs.runner_log
-        : tab === "console"
-          ? logs.console_log
-          : "";
-
   return (
     <>
-      <div className="page-head">
-        <p className="page-kicker">
-          <Link to="/jobs">/ Jobs</Link> · {j.job_id}
-        </p>
-        <h1>Job {j.job_id}</h1>
-        <p className="lead">
-          {j.repo_full_name || "unknown repo"} · {j.runner_name || "runner"}
-          {running ? " · refreshing every 2s" : ""}
-        </p>
-      </div>
+      <PageHeader
+        kicker={
+          <>
+            <Link to="/jobs" className="text-primary">
+              / Jobs
+            </Link>{" "}
+            · {j.job_id}
+          </>
+        }
+        title={`Job ${j.job_id}`}
+        description={`${j.repo_full_name || "unknown repo"} · ${j.runner_name || "runner"}${
+          running ? " · refreshing every 2s" : ""
+        }`}
+      />
 
-      <div className="grid" style={{ marginBottom: 18 }}>
-        <div className="stat">
-          <div className="label">Status</div>
-          <div className="hint" style={{ marginTop: 10 }}>
-            <span className={`badge ${statusBadge(j.status)}`}>{j.status}</span>
-          </div>
-        </div>
-        <div className="stat">
-          <div className="label">Outcome</div>
-          <div className="hint" style={{ marginTop: 10 }}>
-            {j.outcome ? <span className={`badge ${statusBadge(j.outcome)}`}>{j.outcome}</span> : "—"}
-          </div>
-        </div>
-        <div className="stat">
-          <div className="label">Agent / VM</div>
-          <div className="hint mono">
-            {j.assigned_agent_id || "—"}
-            {j.vm_id ? ` / ${j.vm_id}` : ""}
-          </div>
-        </div>
-        <div className="stat">
-          <div className="label">Queue</div>
-          <div className="value">{formatDuration(j.queue_ms)}</div>
-          <div className="hint">created → assigned</div>
-        </div>
-        <div className="stat">
-          <div className="label">Bind</div>
-          <div className="value">{formatDuration(j.bind_ms)}</div>
-          <div className="hint">assigned → started</div>
-        </div>
-        <div className="stat">
-          <div className="label">Run</div>
-          <div className="value">{formatDuration(j.run_ms)}</div>
-          <div className="hint">started → finished</div>
-        </div>
-        <div className="stat">
-          <div className="label">Total</div>
-          <div className="value">{formatDuration(j.total_ms)}</div>
-          <div className="hint">created → finished</div>
-        </div>
-        <div className="stat">
-          <div className="label">Cache</div>
-          <div className="value">
-            {(j.cache_hits ?? 0) + (j.cache_misses ?? 0) === 0
+      <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+        <StatCard label="Status" value={<StatusBadge status={j.status} />} />
+        <StatCard
+          label="Outcome"
+          value={j.outcome ? <StatusBadge status={j.outcome} /> : "—"}
+        />
+        <StatCard
+          label="Agent / VM"
+          value={<span className="font-mono text-sm">{j.assigned_agent_id || "—"}</span>}
+          hint={j.vm_id}
+        />
+        <StatCard label="Queue" value={formatDuration(j.queue_ms)} hint="created → assigned" />
+        <StatCard label="Bind" value={formatDuration(j.bind_ms)} hint="assigned → started" />
+        <StatCard label="Run" value={formatDuration(j.run_ms)} hint="started → finished" />
+        <StatCard label="Total" value={formatDuration(j.total_ms)} hint="created → finished" />
+        <StatCard
+          label="Cache"
+          value={
+            (j.cache_hits ?? 0) + (j.cache_misses ?? 0) === 0
               ? "—"
-              : `${j.cache_hits ?? 0} hit / ${j.cache_misses ?? 0} miss`}
-          </div>
-          <div className="hint">
-            {j.cache_bytes_in || j.cache_bytes_out
+              : `${j.cache_hits ?? 0} / ${j.cache_misses ?? 0}`
+          }
+          hint={
+            j.cache_bytes_in || j.cache_bytes_out
               ? `${Math.round(((j.cache_bytes_in ?? 0) + (j.cache_bytes_out ?? 0)) / 1024)} KiB`
-              : "local actions/cache"}
-          </div>
-        </div>
-        <div className="stat">
-          <div className="label">GitHub</div>
-          <div className="hint">
-            {gh ? (
-              <a href={gh} target="_blank" rel="noreferrer">
-                actions run {j.run_id}
+              : "local actions/cache"
+          }
+        />
+        <StatCard
+          label="GitHub"
+          value={
+            gh ? (
+              <a href={gh} target="_blank" rel="noreferrer" className="text-sm text-primary">
+                run {j.run_id}
               </a>
             ) : (
               "—"
-            )}
-          </div>
-        </div>
+            )
+          }
+        />
       </div>
 
-      {j.error ? <div className="err" style={{ marginBottom: 16 }}>{j.error}</div> : null}
+      {j.error ? <p className="mb-4 text-sm text-destructive">{j.error}</p> : null}
 
-      <div className="panel" style={{ padding: "14px 16px 18px" }}>
-        <div className="log-tabs">
-          <button type="button" className={tab === "events" ? "" : "secondary"} onClick={() => setTab("events")}>
-            Timeline ({events.length})
-          </button>
-          <button type="button" className={tab === "agent" ? "" : "secondary"} onClick={() => setTab("agent")}>
-            Guest agent
-          </button>
-          <button type="button" className={tab === "runner" ? "" : "secondary"} onClick={() => setTab("runner")}>
-            actions/runner
-          </button>
-          <button type="button" className={tab === "console" ? "" : "secondary"} onClick={() => setTab("console")}>
-            Serial console
-          </button>
-        </div>
+      <Card>
+        <CardContent>
+          <Tabs value={tab} onValueChange={setTab}>
+            <TabsList className="mb-4">
+              <TabsTrigger value="events">Timeline ({events.length})</TabsTrigger>
+              <TabsTrigger value="agent">Guest agent</TabsTrigger>
+              <TabsTrigger value="runner">actions/runner</TabsTrigger>
+              <TabsTrigger value="console">Serial console</TabsTrigger>
+            </TabsList>
+            <TabsContent value="events">
+              {events.length === 0 ? (
+                <EmptyState title="No events yet">
+                  Dispatch a workflow with runs-on: temperci-… then this timeline fills as the job
+                  progresses.
+                </EmptyState>
+              ) : (
+                <ol className="m-0 flex list-none flex-col gap-2 p-0">
+                  {events.map((e, i) => (
+                    <li
+                      key={`${e.time}-${i}`}
+                      className="flex flex-wrap items-baseline gap-2.5 border-b border-border py-1.5 text-[13px] last:border-0"
+                    >
+                      <span className="font-mono text-xs text-muted-foreground">{fmt(e.time)}</span>
+                      <StatusBadge tone={e.level === "error" || e.level === "warn" ? "bad" : "neutral"}>
+                        {e.source}
+                      </StatusBadge>
+                      <span>{e.message}</span>
+                    </li>
+                  ))}
+                </ol>
+              )}
+            </TabsContent>
+            {(["agent", "runner", "console"] as const).map((key) => {
+              const pane =
+                key === "agent" ? logs.agent_log : key === "runner" ? logs.runner_log : logs.console_log;
+              return (
+                <TabsContent key={key} value={key}>
+                  {pane ? (
+                    <pre className="m-0 max-h-[28rem] overflow-auto rounded-lg border bg-background p-3 font-mono text-[11px] leading-relaxed whitespace-pre-wrap text-zinc-300">
+                      {pane}
+                    </pre>
+                  ) : (
+                    <EmptyState title={`No ${key} log yet`}>
+                      Logs upload when the guest runner exits. Keep this page open.
+                    </EmptyState>
+                  )}
+                </TabsContent>
+              );
+            })}
+          </Tabs>
+        </CardContent>
+      </Card>
 
-        {tab === "events" ? (
-          events.length === 0 ? (
-            <div className="empty">
-              <strong>No events yet</strong>
-              Dispatch a workflow with runs-on: temperci-… then this timeline fills as the webhook,
-              claim, bind, and runner complete.
-            </div>
-          ) : (
-            <ol className="event-list">
-              {events.map((e, i) => (
-                <li key={`${e.time}-${i}`}>
-                  <span className="mono dim">{fmt(e.time)}</span>
-                  <span className={`badge ${e.level === "error" || e.level === "warn" ? "bad" : ""}`}>
-                    {e.source}
-                  </span>
-                  <span>{e.message}</span>
-                </li>
-              ))}
-            </ol>
-          )
-        ) : pane ? (
-          <pre className="log-pre">{pane}</pre>
-        ) : (
-          <div className="empty">
-            <strong>No {tab} log yet</strong>
-            Logs upload when the guest runner exits (or if the job fails). Keep this page open.
-          </div>
-        )}
-      </div>
-
-      <p className="lead" style={{ marginTop: 16, fontSize: 12 }}>
+      <p className="mt-4 text-xs text-muted-foreground">
         Created {fmt(j.created_at)} · started {fmt(j.started_at)} · finished {fmt(j.finished_at)}
         {j.warm_bind ? " · warm bind" : ""}
         {j.labels?.length ? ` · ${(j.labels || []).join(", ")}` : ""}

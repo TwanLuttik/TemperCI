@@ -79,7 +79,7 @@ resolve_agent() {
 
 # --- 1. Linux only ---
 if [[ "$(uname -s)" != "Linux" ]]; then
-  fail "requires Linux+KVM (got $(uname -s)); run on the Proxmox/Ubuntu host"
+  fail "requires Linux+KVM (got $(uname -s)); run on the Ubuntu host"
 fi
 
 echo "smoke: linux ok ($(uname -srm))"

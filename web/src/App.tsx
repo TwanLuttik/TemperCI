@@ -55,17 +55,13 @@ export default function App() {
   }, [setup, me, location.pathname]);
 
   if (loading) {
-    return <div className="content loading">Loading console…</div>;
+    return <div className="p-8 text-muted-foreground">Loading console…</div>;
   }
   if (bootError) {
-    return (
-      <div className="content">
-        <div className="err">Failed to load: {bootError}</div>
-      </div>
-    );
+    return <div className="p-8 text-destructive">Failed to load: {bootError}</div>;
   }
   if (!setup) {
-    return <div className="content err">No setup status</div>;
+    return <div className="p-8 text-destructive">No setup status</div>;
   }
 
   if (setup.needs_setup) {

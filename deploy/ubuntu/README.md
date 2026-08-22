@@ -6,7 +6,6 @@ This document covers host setup for the agent VMM path. Related:
 
 - Single-node job path: [quickstart.md](quickstart.md)
 - Guest image + runner: [guest-image.md](guest-image.md) (`sudo ./deploy/ubuntu/build-guest-image.sh`)
-- Proxmox twin (same agent binary): [../proxmox/README.md](../proxmox/README.md)
 - Control plane / GitHub App: [docs/architecture/control-plane-dry-run.md](../../docs/architecture/control-plane-dry-run.md)
 
 ## Hardware / kernel

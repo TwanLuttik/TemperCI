@@ -1,12 +1,14 @@
 import { useEffect, useState } from "react";
-import { api } from "../api";
-import { useRealtime, type VMRow } from "../hooks/useRealtime";
 
-function barColor(pct: number): string {
-  if (pct >= 85) return "bg-bad";
-  if (pct >= 60) return "bg-warn";
-  return "bg-ok";
-}
+import { api } from "../api";
+import { EmptyState } from "../components/empty-state";
+import { PageHeader } from "../components/page-header";
+import { LiveDot, StatusBadge } from "../components/status-badge";
+import { useRealtime, type VMRow } from "../hooks/useRealtime";
+import { Card } from "@/components/ui/card";
+import { Progress } from "@/components/ui/progress";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { cn } from "@/lib/utils";
 
 function UsageBar({
   label,
@@ -22,7 +24,7 @@ function UsageBar({
   const pct = max > 0 ? Math.min(100, (value / max) * 100) : 0;
   return (
     <div className="min-w-[120px]">
-      <div className="mb-1 flex justify-between font-mono text-[10px] text-dim">
+      <div className="mb-1 flex justify-between font-mono text-[10px] text-muted-foreground">
         <span>{label}</span>
         <span>
           {value.toFixed(1)}
@@ -30,12 +32,13 @@ function UsageBar({
           {max > 0 ? ` / ${max}${unit}` : ""}
         </span>
       </div>
-      <div className="h-1.5 overflow-hidden rounded-full bg-line-soft">
-        <div
-          className={`h-full rounded-full transition-all duration-500 ${barColor(pct)}`}
-          style={{ width: `${pct}%` }}
-        />
-      </div>
+      <Progress
+        value={pct}
+        className={cn(
+          "h-1.5",
+          pct >= 85 ? "*:data-[slot=progress-indicator]:bg-red-400" : pct >= 60 ? "*:data-[slot=progress-indicator]:bg-amber-400" : "",
+        )}
+      />
     </div>
   );
 }
@@ -55,88 +58,70 @@ export function VMsPage() {
       .catch((e: Error) => setErr(e.message));
   }, [rt.last]);
 
-  if (err && vms.length === 0) return <div className="err">{err}</div>;
+  if (err && vms.length === 0) return <p className="text-sm text-destructive">{err}</p>;
 
   return (
     <>
-      <div className="page-head">
-        <p className="page-kicker">/ MicroVMs</p>
-        <h1>Live microVM usage</h1>
-        <p className="lead">
-          Host-side Firecracker process samples (CPU / RSS / instance disk). Updates over WebSocket
-          when connected
-          {rt.connected ? (
-            <span className="badge ok ml-2">live</span>
-          ) : (
-            <span className="badge warn ml-2">polling REST</span>
-          )}
-          .
-        </p>
-      </div>
-
-      <div className="panel" style={{ overflow: "auto", padding: "8px 12px 4px" }}>
-        <table>
-          <thead>
-            <tr>
-              <th>Agent</th>
-              <th>VM</th>
-              <th>State</th>
-              <th>Job</th>
-              <th>CPU</th>
-              <th>Memory (RSS)</th>
-              <th>Disk</th>
-              <th>PID</th>
-            </tr>
-          </thead>
-          <tbody>
+      <PageHeader
+        kicker="/ MicroVMs"
+        title="Live microVM usage"
+        description={
+          <span className="inline-flex flex-wrap items-center gap-2">
+            Host-side Firecracker samples (CPU / RSS / disk).
+            <LiveDot live={rt.connected} />
+          </span>
+        }
+      />
+      <Card className="py-2">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Agent</TableHead>
+              <TableHead>VM</TableHead>
+              <TableHead>State</TableHead>
+              <TableHead>Job</TableHead>
+              <TableHead>CPU</TableHead>
+              <TableHead>Memory (RSS)</TableHead>
+              <TableHead>Disk</TableHead>
+              <TableHead>PID</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
             {vms.length === 0 ? (
-              <tr>
-                <td colSpan={8}>
-                  <div className="empty">
-                    <strong>No microVMs reported</strong>
-                    Warm pool VMs appear after the agent heartbeats (every ~2s). Ensure the agent is
-                    running with Firecracker instances.
-                  </div>
-                </td>
-              </tr>
+              <TableRow>
+                <TableCell colSpan={8}>
+                  <EmptyState title="No microVMs reported">
+                    Warm pool VMs appear after the agent heartbeats. Ensure Firecracker is running.
+                  </EmptyState>
+                </TableCell>
+              </TableRow>
             ) : (
               vms.map((v) => (
-                <tr key={`${v.agent_id}-${v.id}`}>
-                  <td className="mono">{v.agent_id}</td>
-                  <td>
-                    <code>{v.id.slice(0, 12)}</code>
-                  </td>
-                  <td>
-                    <span
-                      className={`badge ${
-                        v.state === "busy" ? "warn" : v.state === "warm" ? "ok" : ""
-                      }`}
-                    >
-                      {v.state}
-                    </span>
-                  </td>
-                  <td className="mono">{v.job_id || "—"}</td>
-                  <td>
+                <TableRow key={`${v.agent_id}-${v.id}`}>
+                  <TableCell className="font-mono text-xs">{v.agent_id}</TableCell>
+                  <TableCell>
+                    <code className="font-mono text-xs">{v.id.slice(0, 12)}</code>
+                  </TableCell>
+                  <TableCell>
+                    <StatusBadge status={v.state} />
+                  </TableCell>
+                  <TableCell className="font-mono text-xs">{v.job_id || "—"}</TableCell>
+                  <TableCell>
                     <UsageBar label="CPU" value={v.cpu_percent || 0} max={100} unit="%" />
-                  </td>
-                  <td>
-                    <UsageBar
-                      label="RSS"
-                      value={v.rss_mib || 0}
-                      max={v.memory_mib || 0}
-                      unit="MiB"
-                    />
-                  </td>
-                  <td className="mono">
+                  </TableCell>
+                  <TableCell>
+                    <UsageBar label="RSS" value={v.rss_mib || 0} max={v.memory_mib || 0} unit="MiB" />
+                  </TableCell>
+                  <TableCell className="font-mono text-xs">
                     {v.disk_mib != null ? `${v.disk_mib.toFixed(1)} MiB` : "—"}
-                  </td>
-                  <td className="mono">{v.pid || "—"}</td>
-                </tr>
+                  </TableCell>
+                  <TableCell className="font-mono text-xs">{v.pid || "—"}</TableCell>
+                </TableRow>
               ))
             )}
-          </tbody>
-        </table>
-      </div>
+          </TableBody>
+        </Table>
+      </Card>
     </>
   );
 }

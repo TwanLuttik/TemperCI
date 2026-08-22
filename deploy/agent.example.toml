@@ -35,7 +35,7 @@ max_ready = 2
 # max_total_vms = 34
 
 # Guest image and kernel. kernel_path is required when vmm_backend = "firecracker".
-# Same paths on Ubuntu and Proxmox host installs (prefer local NVMe; see deploy/proxmox/storage.md).
+# Prefer local NVMe for images + instance scratch (avoid shared Ceph/NFS for instances/).
 image_path = "/var/lib/temperci/images/ubuntu-2404-runner.ext4"
 kernel_path = "/var/lib/temperci/images/vmlinux"
 data_dir = "/var/lib/temperci"
@@ -49,7 +49,7 @@ memory_mib = 8192
 # Idle warm VM recycle after this many seconds (0 = disabled).
 idle_recycle_seconds = 3600
 
-# Production on Linux/KVM (Ubuntu or Proxmox host): firecracker.
+# Production on Linux/KVM (Ubuntu host): firecracker.
 # Use fake only for unit tests / macOS without KVM.
 vmm_backend = "firecracker"
 
@@ -62,7 +62,11 @@ reconcile_interval_seconds = 1
 # metrics_listen_addr = "127.0.0.1:9091"
 
 # Host-local GitHub Actions cache (actions/cache, setup-node, setup-go).
-# Empty cache_listen_addr disables the gateway. Guest image must trust the
-# TemperCI cache CA (see deploy/ubuntu/install-cache-ca.sh).
-cache_listen_addr = "127.0.0.1:8743"
+# Empty disables the gateway. A listen address NAT-redirects ALL guest :443
+# to this bind so the SNI multiplexer can intercept cache hosts and splice
+# everything else (github.com, runner pipelines) to the real destination.
+# Bind 127.0.0.1:port (not the tap IP). Guest image must trust the TemperCI
+# cache CA (deploy/ubuntu/install-cache-ca.sh). Restart the agent after change.
+cache_listen_addr = ""
+# cache_listen_addr = "127.0.0.1:8743"
 # cache_max_bytes = 53687091200  # 50 GiB LRU across all repos on this host

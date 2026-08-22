@@ -36,8 +36,7 @@ temperci/
 │
 ├── deploy/
 │   ├── systemd/             # unit files for control + agent
-│   ├── ubuntu/              # bare Ubuntu install notes/scripts
-│   └── proxmox/             # Proxmox install notes/scripts
+│   └── ubuntu/              # Ubuntu + Firecracker install notes/scripts
 │
 ├── scripts/                 # dev helpers (not production entrypoints)
 │
@@ -76,7 +75,7 @@ Rules:
 | Binary | Runs where | Role |
 |--------|------------|------|
 | `temperci-control` | Lab box, small VM, or container | GitHub webhooks, JIT, assignment |
-| `temperci-agent` | Each job host (Ubuntu/Proxmox) | Warm pool, bind, teardown |
+| `temperci-agent` | Each job host (Ubuntu + KVM) | Warm pool, bind, teardown |
 
 MVP may allow both on one machine for single-node installs.
 

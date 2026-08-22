@@ -1,15 +1,13 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { api, formatDuration, type Job } from "../api";
-import { useRealtime } from "../hooks/useRealtime";
 
-function statusBadge(status?: string) {
-  const s = String(status || "").toLowerCase();
-  if (["finished", "success", "ok"].includes(s)) return "ok";
-  if (["failed", "error", "failure"].includes(s)) return "bad";
-  if (["started", "assigned", "minted", "pending"].includes(s)) return "warn";
-  return "";
-}
+import { api, formatDuration, type Job } from "../api";
+import { EmptyState } from "../components/empty-state";
+import { PageHeader } from "../components/page-header";
+import { StatusBadge } from "../components/status-badge";
+import { useRealtime } from "../hooks/useRealtime";
+import { Card } from "@/components/ui/card";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 
 export function JobsPage() {
   const [jobs, setJobs] = useState<Job[]>([]);
@@ -26,81 +24,66 @@ export function JobsPage() {
       .catch((e: Error) => setErr(e.message));
   }, [rt.last]);
 
-  if (err) return <div className="err">{err}</div>;
+  if (err) return <p className="text-sm text-destructive">{err}</p>;
 
   return (
     <>
-      <div className="page-head">
-        <p className="page-kicker">/ Jobs</p>
-        <h1>Recent assignments</h1>
-        <p className="lead">
-          Assignments persist across control restarts. Open a job to inspect the event timeline,
-          guest agent log, and official runner log after you dispatch a GitHub Actions workflow.
-        </p>
-      </div>
-      <div className="panel" style={{ overflow: "auto", padding: "8px 12px 4px" }}>
-        <table>
-          <thead>
-            <tr>
-              <th>Job</th>
-              <th>Repository</th>
-              <th>Status</th>
-              <th>Agent</th>
-              <th>Duration</th>
-              <th>Labels</th>
-              <th>Outcome</th>
-            </tr>
-          </thead>
-          <tbody>
+      <PageHeader
+        kicker="/ Jobs"
+        title="Recent assignments"
+        description="Assignments persist across control restarts. Open a job to inspect the timeline and logs after you dispatch a workflow."
+      />
+      <Card className="py-2">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Job</TableHead>
+              <TableHead>Repository</TableHead>
+              <TableHead>Status</TableHead>
+              <TableHead>Agent</TableHead>
+              <TableHead>Duration</TableHead>
+              <TableHead>Labels</TableHead>
+              <TableHead>Outcome</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
             {jobs.length === 0 ? (
-              <tr>
-                <td colSpan={7}>
-                  <div className="empty">
-                    <strong>No jobs in memory</strong>
-                    Dispatch a workflow with runs-on: temperci-…
-                  </div>
-                </td>
-              </tr>
+              <TableRow>
+                <TableCell colSpan={7}>
+                  <EmptyState title="No jobs in memory">
+                    Dispatch a workflow with <code>runs-on: temperci-…</code>
+                  </EmptyState>
+                </TableCell>
+              </TableRow>
             ) : (
               jobs.map((j) => (
-                <tr key={j.job_id}>
-                  <td>
-                    <Link to={`/jobs/${j.job_id}`}>
-                      <code>{j.job_id}</code>
+                <TableRow key={j.job_id}>
+                  <TableCell>
+                    <Link to={`/jobs/${j.job_id}`} className="text-primary">
+                      <code className="font-mono text-xs">{j.job_id}</code>
                     </Link>
-                  </td>
-                  <td>{j.repo_full_name || "—"}</td>
-                  <td>
-                    <span className={`badge ${statusBadge(j.status)}`}>{j.status}</span>
-                  </td>
-                  <td className="mono">{j.assigned_agent_id || "—"}</td>
-                  <td className="mono" title={`queue ${formatDuration(j.queue_ms)} · bind ${formatDuration(j.bind_ms)}`}>
-                    {formatDuration(j.run_ms || j.total_ms)}
-                  </td>
-                  <td
-                    style={{
-                      color: "var(--muted)",
-                      maxWidth: 220,
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
-                    }}
+                  </TableCell>
+                  <TableCell>{j.repo_full_name || "—"}</TableCell>
+                  <TableCell>
+                    <StatusBadge status={j.status} />
+                  </TableCell>
+                  <TableCell className="font-mono text-xs">{j.assigned_agent_id || "—"}</TableCell>
+                  <TableCell
+                    className="font-mono text-xs"
+                    title={`queue ${formatDuration(j.queue_ms)} · bind ${formatDuration(j.bind_ms)}`}
                   >
+                    {formatDuration(j.run_ms || j.total_ms)}
+                  </TableCell>
+                  <TableCell className="max-w-[220px] truncate text-muted-foreground">
                     {(j.labels || []).join(", ")}
-                  </td>
-                  <td>
-                    {j.outcome ? (
-                      <span className={`badge ${statusBadge(j.outcome)}`}>{j.outcome}</span>
-                    ) : (
-                      "—"
-                    )}
-                  </td>
-                </tr>
+                  </TableCell>
+                  <TableCell>{j.outcome ? <StatusBadge status={j.outcome} /> : "—"}</TableCell>
+                </TableRow>
               ))
             )}
-          </tbody>
-        </table>
-      </div>
+          </TableBody>
+        </Table>
+      </Card>
     </>
   );
 }

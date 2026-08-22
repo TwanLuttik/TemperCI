@@ -4,7 +4,7 @@ This unit runs **inside** the Firecracker rootfs. The host agent writes JIT to a
 disk (`inject.ext4` → `/dev/vdb`); this script mounts it, starts official
 `actions/runner`, and writes `runner.exit` for the host to wait on.
 
-## Install into an existing image on the Proxmox host
+## Install into an existing image on the Ubuntu host
 
 ```bash
 IMG=/var/lib/temperci/images/ubuntu-2404-runner.ext4

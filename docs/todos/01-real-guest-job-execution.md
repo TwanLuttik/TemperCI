@@ -34,7 +34,7 @@ Known gaps to close:
 - `internal/config/config.go`, `internal/config/config_test.go`
 - `internal/vmm/firecracker/firecracker.go`, `inject.go`, `network.go` + existing tests
 - `deploy/ubuntu/guest-agent/**`
-- `deploy/agent.example.toml`, `deploy/proxmox/agent.example.toml`
+- `deploy/agent.example.toml`
 - `deploy/ubuntu/host-prereqs.sh` (package list only)
 
 Do **not** change: `internal/store`, `internal/control/assignment.go`, guest image build scripts (todo 2/4), e2e smoke scripts (todo 5).

@@ -1,3 +1,4 @@
+import path from "node:path";
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
@@ -6,6 +7,11 @@ import tailwindcss from "@tailwindcss/vite";
 // Output: internal/webui/dist/{index.html,assets/*}
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  resolve: {
+    alias: {
+      "@": path.resolve(__dirname, "./src"),
+    },
+  },
   base: "/",
   build: {
     outDir: "../internal/webui/dist",

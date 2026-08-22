@@ -1,8 +1,8 @@
-# Proof runbook — one real GitHub job on Proxmox
+# Proof runbook — one real GitHub job on Ubuntu+KVM
 
 This is the operator checklist that **unit tests cannot replace**. It proves
 webhook → mint JIT → warm bind → guest `actions/runner` → teardown on a
-Linux+KVM host (typically the Proxmox node that runs `temperci-agent`).
+Linux+KVM host that runs `temperci-agent` (Firecracker).
 
 In-repo automated proof (no GitHub):
 
@@ -18,7 +18,7 @@ sudo ./scripts/real-job-smoke.sh           # also Firecracker create/destroy
 
 ## 0. Host is ready
 
-SSH to the Proxmox (or Ubuntu+KVM) host as root.
+SSH to the Ubuntu+KVM host as root.
 
 ```bash
 ls -l /dev/kvm
@@ -137,7 +137,7 @@ After the job is green:
 ls /var/lib/temperci/instances
 # finished job VM id must be gone; only current warm (or busy) pool members
 pgrep -a firecracker || true
-sudo ./deploy/proxmox/verify-cleanup.sh --data-dir /var/lib/temperci --expect-warm-max 2
+sudo ./scripts/verify-cleanup.sh --data-dir /var/lib/temperci --expect-warm-max 2
 ```
 
 There must be **no** `instances/<finished-vm-id>/` directory and no Firecracker

@@ -2,7 +2,7 @@
 
 > **For agentic workers:** Implement phase-by-phase. Use checkbox (`- [ ]` / `- [x]`) syntax for tracking. Do not skip teardown/orphan requirements when implementing agent work. Prefer TDD for state machines and cleanup logic.
 
-**Goal:** Ship a self-hostable GitHub Actions runner path (control plane + host agent) that uses JIT self-hosted runners, a warm microVM pool, and hard post-job cleanup on bare Ubuntu, with a documented Proxmox install path.
+**Goal:** Ship a self-hostable GitHub Actions runner path (control plane + host agent) that uses JIT self-hosted runners, a warm Firecracker microVM pool, and hard post-job cleanup on bare Ubuntu.
 
 **Architecture:** Go monorepo with `temperci-control` (GitHub webhooks + JIT + scheduling) and `temperci-agent` (warm pool + VMM + teardown). Guests run upstream `actions/runner` for a single job, then are destroyed.
 
@@ -30,7 +30,7 @@
 | 3 | VMM create/destroy + host cleanup | Done |
 | 4 | Warm pool state machine | Done |
 | 5 | End-to-end Ubuntu job | Done |
-| 6 | Proxmox install path | Done |
+| 6 | Host install docs (Proxmox path later withdrawn) | Done |
 | 7 | Hardening (recycle, metrics, multi-host) | Done |
 
 Update the table as phases complete. Check items below as you go.
@@ -197,19 +197,9 @@ deploy/agent.example.toml
 
 ---
 
-## Phase 6 — Proxmox install path
+## Phase 6 — Host install docs
 
-**Outcome:** Documented, repeatable install on Proxmox host using the same agent semantics.
-
-### Tasks
-
-- [x] Validate KVM/microVM requirements on a Proxmox host (documented checklist in `deploy/proxmox/`; live host is operator-side — this workspace is not Proxmox)
-- [x] `deploy/proxmox/` install guide (packages, permissions, storage paths)
-- [x] Note nested virt / policy limitations explicitly
-- [x] Smoke test: one real job on Proxmox host (operator checklist in `deploy/proxmox/quickstart.md`; cannot automate here)
-- [x] Confirm teardown leaves no stale disks on chosen storage path (`verify-cleanup.sh` + documented commands)
-
-**Exit criteria:** Following only `deploy/proxmox/` docs, a new operator runs one green Actions job and cleanup holds.
+**Outcome (historical):** A documented install path for extra host types. The Proxmox QEMU/`qm`/`pct` job path was never the runtime; jobs have always used Firecracker. That extra install tree (`deploy/proxmox/`) was later **withdrawn**. Supported job host: Ubuntu + KVM + Firecracker (`deploy/ubuntu/`). Cleanup check: `scripts/verify-cleanup.sh`.
 
 ---
 

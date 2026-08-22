@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -28,11 +29,48 @@ type DashboardConfig struct {
 	Config *config.ControlConfig
 	// ConfigPath is where setup apply writes TOML.
 	ConfigPath string
-	Store      *store.Store
+	// AgentConfigPath is the host agent.toml (empty = sibling of ConfigPath).
+	AgentConfigPath string
+	Store           *store.Store
 	// Ready is false until GitHub client + full agent APIs are available.
 	FleetReady bool
 	// Hub optional; if nil, server creates one.
 	Hub *Hub
+}
+
+func (d *DashboardConfig) agentConfigPath() string {
+	if d == nil {
+		return "/etc/temperci/agent.toml"
+	}
+	if v := strings.TrimSpace(d.AgentConfigPath); v != "" {
+		return v
+	}
+	return config.AgentPathBeside(d.ConfigPath)
+}
+
+func validateCacheListenAddr(addr string) error {
+	addr = strings.TrimSpace(addr)
+	if addr == "" {
+		return nil
+	}
+	if _, _, err := net.SplitHostPort(addr); err != nil {
+		return fmt.Errorf("cache_listen_addr must be host:port or empty to disable")
+	}
+	return nil
+}
+
+func (s *Server) writeAgentCacheListenAddr(addr string) error {
+	if s.dash == nil {
+		return fmt.Errorf("dashboard not configured")
+	}
+	path := s.dash.agentConfigPath()
+	if _, err := os.Stat(path); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	return config.PatchAgentTOMLString(path, "cache_listen_addr", strings.TrimSpace(addr))
 }
 
 func (s *Server) mountDashboard(d DashboardConfig) {
@@ -55,6 +93,7 @@ func (s *Server) mountDashboard(d DashboardConfig) {
 	s.mux.HandleFunc("POST /api/v1/users", s.withUIAuth(s.handleCreateUser, true))
 	s.mux.HandleFunc("GET /api/v1/system/status", s.withUIAuth(s.handleSystemStatus, false))
 	s.mux.HandleFunc("POST /api/v1/system/restart", s.withUIAuth(s.handleSystemRestart, true))
+	s.mux.HandleFunc("POST /api/v1/system/install", s.withUIAuth(s.handleSystemInstall, true))
 	s.mux.HandleFunc("GET /api/v1/ws", s.handleDashboardWS)
 	s.mux.HandleFunc("GET /api/v1/vms", s.withUIAuth(s.handleVMs, false))
 	s.mux.HandleFunc("GET /api/v1/cache", s.withUIAuth(s.handleCache, false))
@@ -174,6 +213,7 @@ type setupApplyRequest struct {
 	GitHubAppPrivateKeyPEM string `json:"github_app_private_key_pem"`
 	AgentToken             string `json:"agent_token"`
 	ListenAddr             string `json:"listen_addr"`
+	CacheListenAddr        string `json:"cache_listen_addr"`
 	Restart                bool   `json:"restart"`
 }
 
@@ -263,8 +303,16 @@ func (s *Server) handleSetupApply(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	if err := validateCacheListenAddr(req.CacheListenAddr); err != nil {
+		writeAPIError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	if err := config.WriteControlFile(cfgPath, &newCfg); err != nil {
 		writeAPIError(w, http.StatusInternalServerError, "write config: "+err.Error())
+		return
+	}
+	if err := s.writeAgentCacheListenAddr(req.CacheListenAddr); err != nil {
+		writeAPIError(w, http.StatusInternalServerError, "write agent cache_listen_addr: "+err.Error())
 		return
 	}
 
@@ -477,6 +525,14 @@ func (s *Server) handleSettingsConfig(w http.ResponseWriter, r *http.Request, _ 
 	appIDSet := cfg.GitHubAppID != 0
 	orgSet := strings.TrimSpace(cfg.GitHubOrg) != ""
 
+	cacheAddr, cacheOK := config.ReadAgentTOMLString(s.dash.agentConfigPath(), "cache_listen_addr")
+	cacheStatus := "ok"
+	cacheDesc := "Agent cache gateway bind, typically 127.0.0.1:8743. Empty disables intercept. Enabling this NAT-redirects all guest HTTPS; non-cache hosts are spliced to GitHub. Restart the agent (and drain warm VMs) after changing."
+	if !cacheOK {
+		cacheStatus = "warn"
+		cacheDesc = "Could not read " + s.dash.agentConfigPath() + ". Saving this field writes cache_listen_addr there."
+	}
+
 	pemStatus := "missing"
 	if pemExists && pemLooksKey {
 		pemStatus = "ok"
@@ -541,6 +597,12 @@ func (s *Server) handleSettingsConfig(w http.ResponseWriter, r *http.Request, _ 
 			Value:    secretHint(cfg.AgentToken),
 			Editable: true, InputType: "password",
 			Description: "Leave blank to keep current. Must match agent.toml after change.",
+		},
+		{
+			Key: "cache_listen_addr", Label: "Cache listen address", Group: "Cache",
+			Value: cacheAddr, Configured: cacheOK, Status: cacheStatus,
+			Editable: true, InputType: "text",
+			Description: cacheDesc,
 		},
 		{
 			Key: "auth_mode", Label: "Dashboard auth mode", Group: "Dashboard",
@@ -612,21 +674,22 @@ func secretHint(secret string) string {
 // settingsConfigSaveRequest is the body for POST /api/v1/settings/config.
 // Empty secret fields mean "leave unchanged".
 type settingsConfigSaveRequest struct {
-	ListenAddr              string `json:"listen_addr"`
-	GitHubAppID             *int64 `json:"github_app_id"`
-	GitHubOrg               string `json:"github_org"`
-	GitHubWebhookSecret     string `json:"github_webhook_secret"`
-	GitHubAppPrivateKeyPath string `json:"github_app_private_key_path"`
-	GitHubAppPrivateKeyPEM  string `json:"github_app_private_key_pem"`
-	LabelPrefix             string `json:"label_prefix"`
-	RunnerGroupID           *int64 `json:"runner_group_id"`
-	AgentToken              string `json:"agent_token"`
-	AuthMode                string `json:"auth_mode"`
-	SetupCompleted          *bool  `json:"setup_completed"`
-	SQLitePath              string `json:"sqlite_path"`
-	DataDir                 string `json:"data_dir"`
-	HostctlPath             string `json:"hostctl_path"`
-	Restart                 bool   `json:"restart"`
+	ListenAddr              string  `json:"listen_addr"`
+	GitHubAppID             *int64  `json:"github_app_id"`
+	GitHubOrg               string  `json:"github_org"`
+	GitHubWebhookSecret     string  `json:"github_webhook_secret"`
+	GitHubAppPrivateKeyPath string  `json:"github_app_private_key_path"`
+	GitHubAppPrivateKeyPEM  string  `json:"github_app_private_key_pem"`
+	LabelPrefix             string  `json:"label_prefix"`
+	RunnerGroupID           *int64  `json:"runner_group_id"`
+	AgentToken              string  `json:"agent_token"`
+	AuthMode                string  `json:"auth_mode"`
+	SetupCompleted          *bool   `json:"setup_completed"`
+	SQLitePath              string  `json:"sqlite_path"`
+	DataDir                 string  `json:"data_dir"`
+	HostctlPath             string  `json:"hostctl_path"`
+	CacheListenAddr         *string `json:"cache_listen_addr"`
+	Restart                 bool    `json:"restart"`
 }
 
 func (s *Server) handleSettingsConfigSave(w http.ResponseWriter, r *http.Request, _ *uiPrincipal) {
@@ -690,6 +753,12 @@ func (s *Server) handleSettingsConfigSave(w http.ResponseWriter, r *http.Request
 	if v := strings.TrimSpace(req.HostctlPath); v != "" {
 		newCfg.HostctlPath = v
 	}
+	if req.CacheListenAddr != nil {
+		if err := validateCacheListenAddr(*req.CacheListenAddr); err != nil {
+			writeAPIError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
 
 	pemBody := strings.TrimSpace(req.GitHubAppPrivateKeyPEM)
 	if pemBody != "" {
@@ -724,6 +793,12 @@ func (s *Server) handleSettingsConfigSave(w http.ResponseWriter, r *http.Request
 	if err := config.WriteControlFile(cfgPath, &newCfg); err != nil {
 		writeAPIError(w, http.StatusInternalServerError, "write config: "+err.Error())
 		return
+	}
+	if req.CacheListenAddr != nil {
+		if err := config.PatchAgentTOMLString(s.dash.agentConfigPath(), "cache_listen_addr", strings.TrimSpace(*req.CacheListenAddr)); err != nil {
+			writeAPIError(w, http.StatusInternalServerError, "write agent cache_listen_addr: "+err.Error())
+			return
+		}
 	}
 
 	*s.dash.Config = newCfg
@@ -996,9 +1071,10 @@ func (s *Server) handleSystemRestart(w http.ResponseWriter, r *http.Request, _ *
 
 // handleSystemStatus reports control + agent readiness for the dashboard restart UI.
 func (s *Server) handleSystemStatus(w http.ResponseWriter, r *http.Request, _ *uiPrincipal) {
+	hostctl := s.hostctlAvailable()
 	controlUnit := "unknown"
 	agentUnit := "unknown"
-	if s.hostctlAvailable() {
+	if hostctl {
 		controlUnit = s.hostctlUnitState("control")
 		agentUnit = s.hostctlUnitState("agent")
 	}
@@ -1015,33 +1091,18 @@ func (s *Server) handleSystemStatus(w http.ResponseWriter, r *http.Request, _ *u
 			}
 		}
 	}
-	// Agent is "ready" when systemd is active (if known) and at least one agent has registered.
-	agentReady := len(agents) > 0
-	if agentUnit == "active" {
-		// unit up; still prefer registered for full readiness
-	} else if agentUnit == "inactive" || agentUnit == "failed" {
-		agentReady = false
-	}
 
-	writeJSON(w, http.StatusOK, map[string]any{
-		"ok": true,
-		"control": map[string]any{
-			"healthy": true, // this handler is served by control
-			"unit":    controlUnit,
-			"ready":   controlUnit == "active" || controlUnit == "unknown",
-			"label":   "control",
-		},
-		"agent": map[string]any{
-			"unit":           agentUnit,
-			"registered":     len(agents) > 0,
-			"registered_ids": agentIDs,
-			"last_seen_at":   lastSeen,
-			"ready":          agentReady && (agentUnit == "active" || agentUnit == "unknown"),
-			"label":          "agent",
-		},
-		"hostctl": s.hostctlAvailable(),
-		"time":    time.Now().UTC().Format(time.RFC3339),
-	})
+	out := buildSystemStatus(hostctl, controlUnit, agentUnit, agentIDs, lastSeen)
+	out["time"] = time.Now().UTC().Format(time.RFC3339)
+	if agent, ok := out["agent"].(map[string]any); ok {
+		applyAgentInstall(agent, s.probeAgentInstall())
+		if ctrl, ok := out["control"].(map[string]any); ok {
+			cs, _ := ctrl["status"].(string)
+			as, _ := agent["status"].(string)
+			out["overall"] = overallServiceStatus(cs, as)
+		}
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (s *Server) hostctlAvailable() bool {
@@ -1104,13 +1165,14 @@ func (s *Server) hostctlUnitState(target string) string {
 	}
 }
 
-func (s *Server) runHostctl(action, target string) error {
+func (s *Server) runHostctl(action, target string, extra ...string) error {
 	path := s.hostctlPath()
-	cmd := exec.Command(path, action, target)
+	args := append([]string{action, target}, extra...)
+	cmd := exec.Command(path, args...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		s.log.Error("hostctl failed", "err", err, "out", string(out))
-		return err
+		return fmt.Errorf("%w: %s", err, strings.TrimSpace(string(out)))
 	}
 	s.log.Info("hostctl ok", "action", action, "target", target, "out", strings.TrimSpace(string(out)))
 	return nil

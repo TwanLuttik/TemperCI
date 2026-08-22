@@ -1,22 +1,25 @@
 import { useCallback, useEffect, useState } from "react";
+import { toast } from "sonner";
+
 import { api, formatBytes, type CacheClearResponse, type CacheInventory, type Me } from "../api";
+import { EmptyState } from "../components/empty-state";
+import { PageHeader } from "../components/page-header";
+import { StatCard } from "../components/stat-card";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Progress } from "@/components/ui/progress";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { cn } from "@/lib/utils";
 
 function usagePct(bytes: number, max: number): number {
   if (max <= 0) return 0;
   return Math.min(100, (bytes / max) * 100);
 }
 
-function barColor(pct: number): string {
-  if (pct >= 85) return "bg-bad";
-  if (pct >= 60) return "bg-warn";
-  return "bg-ok";
-}
-
 export function CachePage() {
   const [inv, setInv] = useState<CacheInventory | null>(null);
   const [me, setMe] = useState<Me | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  const [msg, setMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
@@ -50,19 +53,22 @@ export function CachePage() {
   const admin = Boolean(me?.admin || me?.open);
 
   const clear = async (agentId?: string, repo?: string) => {
-    const target = repo ? `${repo}${agentId ? ` on ${agentId}` : " on all hosts"}` : agentId ? `all cache on ${agentId}` : "ALL cache on every host";
+    const target = repo
+      ? `${repo}${agentId ? ` on ${agentId}` : " on all hosts"}`
+      : agentId
+        ? `all cache on ${agentId}`
+        : "ALL cache on every host";
     if (!window.confirm(`Clear ${target}? Jobs currently saving cache may fail. This cannot be undone.`)) {
       return;
     }
     setBusy(true);
-    setMsg(null);
     setErr(null);
     try {
       const res = await api<CacheClearResponse>("/api/v1/cache/clear", {
         method: "POST",
         body: JSON.stringify({ agent_id: agentId || "", repo: repo || "" }),
       });
-      setMsg(`Queued clear on ${res.queued} host${res.queued === 1 ? "" : "s"}. Agents apply it on the next heartbeat (~2s).`);
+      toast.success(`Queued clear on ${res.queued} host${res.queued === 1 ? "" : "s"}.`);
       await load();
     } catch (e) {
       setErr((e as Error).message);
@@ -71,8 +77,8 @@ export function CachePage() {
     }
   };
 
-  if (err && !inv) return <div className="err">{err}</div>;
-  if (!inv) return <div className="loading">Loading cache…</div>;
+  if (err && !inv) return <p className="text-sm text-destructive">{err}</p>;
+  if (!inv) return <p className="text-sm text-muted-foreground">Loading cache…</p>;
 
   const rows = inv.hosts.flatMap((h) =>
     (h.repos || []).map((r) => ({
@@ -86,150 +92,128 @@ export function CachePage() {
 
   return (
     <>
-      <div className="page-head">
-        <p className="page-kicker">/ Cache</p>
-        <h1>Actions cache</h1>
-        <p className="lead">
-          Host-local <code>actions/cache</code> storage. Blobs stay on the agent disk (never in the
-          guest). Clear queues a purge the agent applies on its next heartbeat.
-        </p>
+      <PageHeader
+        kicker="/ Cache"
+        title="Actions cache"
+        description={
+          <>
+            Host-local <code className="font-mono text-xs">actions/cache</code> storage. Blobs stay on
+            the agent disk. Clear queues a purge the agent applies on its next heartbeat.
+          </>
+        }
+        actions={
+          admin ? (
+            <Button variant="outline" disabled={busy || inv.hosts.length === 0} onClick={() => void clear()}>
+              Clear all hosts
+            </Button>
+          ) : null
+        }
+      />
+
+      {err ? <p className="mb-4 text-sm text-destructive">{err}</p> : null}
+
+      <div className="mb-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <StatCard
+          label="Used"
+          value={formatBytes(inv.bytes)}
+          hint={inv.max_bytes ? `of ${formatBytes(inv.max_bytes)} LRU cap` : "reported by agents"}
+        />
+        <StatCard label="Entries" value={inv.entries} hint="finalized cache keys" />
+        <StatCard label="Repos" value={inv.repos} hint="namespaces across hosts" />
+        <StatCard label="Hosts" value={inv.hosts.length} hint="agents reporting inventory" />
       </div>
-
-      {err ? <div className="err" style={{ marginBottom: 16 }}>{err}</div> : null}
-      {msg ? (
-        <div className="panel" style={{ marginBottom: 16, padding: "12px 16px", color: "var(--ok)" }}>
-          {msg}
-        </div>
-      ) : null}
-
-      <div className="grid" style={{ marginBottom: 18 }}>
-        <div className="stat">
-          <div className="label">Used</div>
-          <div className="value">{formatBytes(inv.bytes)}</div>
-          <div className="hint">{inv.max_bytes ? `of ${formatBytes(inv.max_bytes)} LRU cap` : "reported by agents"}</div>
-        </div>
-        <div className="stat">
-          <div className="label">Entries</div>
-          <div className="value">{inv.entries}</div>
-          <div className="hint">finalized cache keys</div>
-        </div>
-        <div className="stat">
-          <div className="label">Repos</div>
-          <div className="value">{inv.repos}</div>
-          <div className="hint">namespaces across hosts</div>
-        </div>
-        <div className="stat">
-          <div className="label">Hosts</div>
-          <div className="value">{inv.hosts.length}</div>
-          <div className="hint">agents reporting inventory</div>
-        </div>
-      </div>
-
-      {admin ? (
-        <div className="row" style={{ marginBottom: 18 }}>
-          <button type="button" className="secondary" disabled={busy || inv.hosts.length === 0} onClick={() => void clear()}>
-            Clear all hosts
-          </button>
-        </div>
-      ) : null}
 
       {inv.hosts.map((h) => {
         const pct = usagePct(h.bytes, h.max_bytes);
         return (
-          <div className="panel" key={h.agent_id} style={{ marginBottom: 16, padding: "14px 16px" }}>
-            <div className="panel-head">
-              <h2 className="mono">{h.agent_id}</h2>
-              <span className="meta">
+          <Card key={h.agent_id} className="mb-4">
+            <CardHeader className="flex-row items-center justify-between">
+              <CardTitle className="font-mono text-sm">{h.agent_id}</CardTitle>
+              <span className="font-mono text-[11px] text-muted-foreground">
                 {h.last_seen_at ? new Date(h.last_seen_at).toLocaleString() : "never"}
               </span>
-            </div>
-            <div className="mb-2 flex items-center justify-between gap-4">
-              <div className="min-w-[180px] flex-1">
-                <div className="mb-1 flex justify-between font-mono text-[10px] text-dim">
-                  <span>
-                    {formatBytes(h.bytes)}
-                    {h.max_bytes ? ` / ${formatBytes(h.max_bytes)}` : ""}
-                  </span>
-                  <span>{h.entries} entries</span>
-                </div>
-                <div className="h-1.5 overflow-hidden rounded-full bg-line-soft">
-                  <div
-                    className={`h-full rounded-full ${barColor(pct)}`}
-                    style={{ width: `${pct}%` }}
+            </CardHeader>
+            <CardContent>
+              <div className="flex items-center justify-between gap-4">
+                <div className="min-w-[180px] flex-1">
+                  <div className="mb-1 flex justify-between font-mono text-[10px] text-muted-foreground">
+                    <span>
+                      {formatBytes(h.bytes)}
+                      {h.max_bytes ? ` / ${formatBytes(h.max_bytes)}` : ""}
+                    </span>
+                    <span>{h.entries} entries</span>
+                  </div>
+                  <Progress
+                    value={pct}
+                    className={cn(
+                      "h-1.5",
+                      pct >= 85
+                        ? "*:data-[slot=progress-indicator]:bg-red-400"
+                        : pct >= 60
+                          ? "*:data-[slot=progress-indicator]:bg-amber-400"
+                          : "",
+                    )}
                   />
                 </div>
+                {admin ? (
+                  <Button variant="outline" size="sm" disabled={busy} onClick={() => void clear(h.agent_id)}>
+                    Clear host
+                  </Button>
+                ) : null}
               </div>
-              {admin ? (
-                <button
-                  type="button"
-                  className="secondary"
-                  disabled={busy}
-                  onClick={() => void clear(h.agent_id)}
-                >
-                  Clear host
-                </button>
+              {(h.repos || []).length === 0 ? (
+                <p className="mt-3 text-sm text-muted-foreground">No repo namespaces on this host.</p>
               ) : null}
-            </div>
-            {(h.repos || []).length === 0 ? (
-              <p className="text-muted" style={{ margin: "8px 0 0" }}>
-                No repo namespaces on this host.
-              </p>
-            ) : null}
-          </div>
+            </CardContent>
+          </Card>
         );
       })}
 
-      <div className="panel" style={{ overflow: "auto", padding: "8px 12px 4px" }}>
-        <table>
-          <thead>
-            <tr>
-              <th>Repository</th>
-              <th>Host</th>
-              <th>Entries</th>
-              <th>Size</th>
-              <th>Last access</th>
-              {admin ? <th /> : null}
-            </tr>
-          </thead>
-          <tbody>
+      <Card className="py-2">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Repository</TableHead>
+              <TableHead>Host</TableHead>
+              <TableHead>Entries</TableHead>
+              <TableHead>Size</TableHead>
+              <TableHead>Last access</TableHead>
+              {admin ? <TableHead /> : null}
+            </TableRow>
+          </TableHeader>
+          <TableBody>
             {rows.length === 0 ? (
-              <tr>
-                <td colSpan={admin ? 6 : 5}>
-                  <div className="empty">
-                    <strong>No cached repos</strong>
-                    Enable <code>cache_listen_addr</code> on the agent and run a job that uses{" "}
-                    <code>actions/cache</code>.
-                  </div>
-                </td>
-              </tr>
+              <TableRow>
+                <TableCell colSpan={admin ? 6 : 5}>
+                  <EmptyState title="No cached repos">
+                    Enable <code className="font-mono text-xs">cache_listen_addr</code> and run a job
+                    that uses <code className="font-mono text-xs">actions/cache</code>.
+                  </EmptyState>
+                </TableCell>
+              </TableRow>
             ) : (
               rows.map((r) => (
-                <tr key={`${r.agent}:${r.repo}`}>
-                  <td className="mono">{r.repo}</td>
-                  <td className="mono">{r.agent}</td>
-                  <td className="mono">{r.entries}</td>
-                  <td className="mono">{formatBytes(r.bytes)}</td>
-                  <td style={{ color: "var(--muted)" }}>
+                <TableRow key={`${r.agent}:${r.repo}`}>
+                  <TableCell className="font-mono text-xs">{r.repo}</TableCell>
+                  <TableCell className="font-mono text-xs">{r.agent}</TableCell>
+                  <TableCell className="font-mono text-xs">{r.entries}</TableCell>
+                  <TableCell className="font-mono text-xs">{formatBytes(r.bytes)}</TableCell>
+                  <TableCell className="text-muted-foreground">
                     {r.last ? new Date(r.last).toLocaleString() : "—"}
-                  </td>
+                  </TableCell>
                   {admin ? (
-                    <td>
-                      <button
-                        type="button"
-                        className="ghost"
-                        disabled={busy}
-                        onClick={() => void clear(r.agent, r.repo)}
-                      >
+                    <TableCell>
+                      <Button variant="ghost" size="sm" disabled={busy} onClick={() => void clear(r.agent, r.repo)}>
                         Clear
-                      </button>
-                    </td>
+                      </Button>
+                    </TableCell>
                   ) : null}
-                </tr>
+                </TableRow>
               ))
             )}
-          </tbody>
-        </table>
-      </div>
+          </TableBody>
+        </Table>
+      </Card>
     </>
   );
 }

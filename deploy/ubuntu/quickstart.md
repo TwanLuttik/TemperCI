@@ -107,6 +107,7 @@ After the job finishes:
 ```bash
 ls /var/lib/temperci/instances   # only warm pool members, not the finished job VM
 pgrep -a firecracker || true
+sudo ./scripts/verify-cleanup.sh --data-dir /var/lib/temperci --expect-warm-max 2
 ```
 
 ## Success demo checklist

@@ -4,6 +4,7 @@
 //
 //	temperci-hostctl restart control|agent|all
 //	temperci-hostctl status control|agent|all
+//	temperci-hostctl install agent [src-binary]
 package main
 
 import (
@@ -16,10 +17,27 @@ import (
 func main() {
 	if len(os.Args) < 3 {
 		fmt.Fprintf(os.Stderr, "usage: %s restart|status control|agent|all\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "       %s install agent [src-binary]\n", os.Args[0])
 		os.Exit(2)
 	}
 	action := os.Args[1]
 	target := os.Args[2]
+	switch action {
+	case "install":
+		if target != "agent" {
+			fmt.Fprintln(os.Stderr, "install target must be agent")
+			os.Exit(2)
+		}
+		src := ""
+		if len(os.Args) >= 4 {
+			src = os.Args[3]
+		}
+		if err := installAgent(src, defaultAgentBinary, defaultAgentUnit); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
 	units, err := unitsFor(target)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)

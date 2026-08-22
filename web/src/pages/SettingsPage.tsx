@@ -9,7 +9,15 @@ import {
   type SettingsConfigSave,
 } from "../api";
 import { GitHubAppGuide } from "../components/GitHubAppGuide";
+import { PageHeader } from "../components/page-header";
 import { RestartStatus } from "../components/RestartStatus";
+import { ServicesPanel } from "../components/ServicesPanel";
+import { StatusBadge } from "../components/status-badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
 
 type Props = { onOverview: (o: Overview) => void };
 
@@ -28,6 +36,7 @@ type FormState = {
   sqlite_path: string;
   data_dir: string;
   hostctl_path: string;
+  cache_listen_addr: string;
 };
 
 function emptyForm(): FormState {
@@ -46,6 +55,7 @@ function emptyForm(): FormState {
     sqlite_path: "",
     data_dir: "",
     hostctl_path: "",
+    cache_listen_addr: "",
   };
 }
 
@@ -64,6 +74,7 @@ function formFromConfig(cfg: SettingsConfig): FormState {
   f.sqlite_path = get("sqlite_path");
   f.data_dir = get("data_dir");
   f.hostctl_path = get("hostctl_path");
+  f.cache_listen_addr = get("cache_listen_addr");
   // secrets stay blank (leave unchanged unless user types)
   f.github_webhook_secret = "";
   f.agent_token = "";
@@ -78,7 +89,6 @@ export function SettingsPage({ onOverview }: Props) {
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [restarting, setRestarting] = useState(false);
   const [restartTarget, setRestartTarget] = useState<RestartTarget | null>(null);
   const [restartProgress, setRestartProgress] = useState<RestartProgress | null>(null);
 
@@ -115,56 +125,6 @@ export function SettingsPage({ onOverview }: Props) {
     setForm((prev) => ({ ...prev, [key]: value }));
   };
 
-  const restart = async (target: RestartTarget) => {
-    setMsg(null);
-    setErr(null);
-    setRestarting(true);
-    setRestartTarget(target);
-    setRestartProgress({
-      control: target === "agent" ? "idle" : "restarting",
-      agent: target === "control" ? "idle" : "restarting",
-      done: false,
-    });
-    try {
-      await api<{ reconnect?: boolean }>("/api/v1/system/restart", {
-        method: "POST",
-        body: JSON.stringify({ target }),
-      });
-      setMsg(
-        target === "all"
-          ? "Restart requested for control + agent…"
-          : `Restart requested for ${target}…`,
-      );
-      const progress = await waitForServicesReady(target, setRestartProgress);
-      if (progress.done) {
-        setMsg(
-          target === "all"
-            ? "Control and agent restarted successfully."
-            : target === "control"
-              ? "Control restarted successfully."
-              : "Agent restarted successfully.",
-        );
-        await reload();
-      } else {
-        setErr(progress.error || "Restart did not complete cleanly.");
-      }
-    } catch (e) {
-      setErr((e as Error).message);
-      setRestartProgress((p) =>
-        p
-          ? {
-              ...p,
-              control: p.control === "restarting" ? "error" : p.control,
-              agent: p.agent === "restarting" ? "error" : p.agent,
-              error: (e as Error).message,
-            }
-          : p,
-      );
-    } finally {
-      setRestarting(false);
-    }
-  };
-
   const save = async (withRestart: boolean) => {
     setBusy(true);
     setMsg(null);
@@ -180,6 +140,7 @@ export function SettingsPage({ onOverview }: Props) {
         sqlite_path: form.sqlite_path,
         data_dir: form.data_dir,
         hostctl_path: form.hostctl_path,
+        cache_listen_addr: form.cache_listen_addr,
         restart: withRestart,
       };
       if (form.github_app_id.trim() !== "") {
@@ -204,7 +165,6 @@ export function SettingsPage({ onOverview }: Props) {
       });
       if (res.reconnect) {
         setMsg("Config saved. Restarting control + agent…");
-        setRestarting(true);
         setRestartTarget("all");
         setRestartProgress({
           control: "restarting",
@@ -212,7 +172,6 @@ export function SettingsPage({ onOverview }: Props) {
           done: false,
         });
         const progress = await waitForServicesReady("all", setRestartProgress);
-        setRestarting(false);
         if (progress.done) {
           setMsg("Config saved. Control and agent restarted successfully.");
           await reload();
@@ -239,128 +198,104 @@ export function SettingsPage({ onOverview }: Props) {
     if (key in form) patch(key as keyof FormState, value);
   };
 
-  if (err && !o) return <div className="err">{err}</div>;
-  if (!o || !cfg) return <div className="loading">Loading settings…</div>;
+  if (err && !o) return <p className="text-sm text-destructive">{err}</p>;
+  if (!o || !cfg) return <p className="text-sm text-muted-foreground">Loading settings…</p>;
 
   return (
     <>
-      <div className="page-head">
-        <p className="page-kicker">/ Settings</p>
-        <h1>Control plane</h1>
-        <p className="lead">
-          View and edit control-plane configuration. Secrets stay blank unless you enter a new
-          value. Save writes the TOML on this host.
-        </p>
+      <PageHeader
+        kicker="/ Settings"
+        title="Control plane"
+        description="View and edit configuration. Secrets stay blank unless you enter a new value. Save writes the TOML on this host."
+      />
+
+      <Card className="mb-4">
+        <CardHeader className="flex-row items-center justify-between">
+          <CardTitle>GitHub App setup</CardTitle>
+          <span className="font-mono text-[11px] text-muted-foreground">
+            org · {form.github_org || o.org || "—"}
+          </span>
+        </CardHeader>
+        <CardContent>
+          <GitHubAppGuide orgSlug={form.github_org || o.org} compact />
+        </CardContent>
+      </Card>
+
+      <div className="mb-4">
+        <ServicesPanel onRestarted={() => void reload()} />
       </div>
 
-      <div className="panel" style={{ marginBottom: 14 }}>
-        <div className="panel-head">
-          <h2>GitHub App setup</h2>
-          <span className="meta">org · {form.github_org || o.org || "—"}</span>
-        </div>
-        <GitHubAppGuide orgSlug={form.github_org || o.org} compact />
-      </div>
-
-      <div className="panel" style={{ marginBottom: 14 }}>
-        <div className="panel-head">
-          <h2>Runtime</h2>
-          <span className="meta">{o.org || "—"}</span>
-        </div>
-        <div className="row" style={{ marginBottom: 16 }}>
-          <span className={`badge ${o.fleet_ready ? "ok" : "warn"}`}>
+      <Card className="mb-4">
+        <CardHeader className="flex-row items-center justify-between">
+          <CardTitle>Runtime</CardTitle>
+          <span className="font-mono text-[11px] text-muted-foreground">{o.org || "—"}</span>
+        </CardHeader>
+        <CardContent className="space-y-3">
+        <div className="flex flex-wrap gap-2">
+          <StatusBadge tone={o.fleet_ready ? "ok" : "warn"}>
             fleet {o.fleet_ready ? "ready" : "limited"}
-          </span>
-          <span className={`badge ${o.hostctl_configured ? "ok" : "warn"}`}>
+          </StatusBadge>
+          <StatusBadge tone={o.hostctl_configured ? "ok" : "warn"}>
             hostctl {o.hostctl_configured ? "available" : "missing"}
-          </span>
-          <span className={`badge ${cfg.missing_count === 0 ? "ok" : "warn"}`}>
+          </StatusBadge>
+          <StatusBadge tone={cfg.missing_count === 0 ? "ok" : "warn"}>
             {cfg.missing_count === 0
               ? "config complete"
               : `${cfg.missing_count} field(s) missing`}
-          </span>
-        </div>
-        <div className="row">
-          <button
-            type="button"
-            className="danger"
-            disabled={restarting || busy}
-            onClick={() => void restart("all")}
-          >
-            {restarting && restartTarget === "all" ? (
-              <>
-                <span className="spinner" aria-hidden /> Restarting…
-              </>
-            ) : (
-              "Restart control + agent"
-            )}
-          </button>
-          <button
-            type="button"
-            className="secondary"
-            disabled={restarting || busy}
-            onClick={() => void restart("control")}
-          >
-            Control only
-          </button>
-          <button
-            type="button"
-            className="ghost"
-            disabled={restarting || busy}
-            onClick={() => void restart("agent")}
-          >
-            Agent only
-          </button>
+          </StatusBadge>
         </div>
         <RestartStatus
           active={Boolean(restartProgress)}
           target={restartTarget}
           progress={restartProgress}
         />
-        {msg ? <div className="okmsg">{msg}</div> : null}
-        {err ? <div className="err">{err}</div> : null}
-      </div>
+        {msg ? <p className="text-sm text-emerald-400">{msg}</p> : null}
+        {err ? <p className="text-sm text-destructive">{err}</p> : null}
+        </CardContent>
+      </Card>
 
       <form
-        className="panel"
-        style={{ marginBottom: 14 }}
         onSubmit={(e) => {
           e.preventDefault();
           void save(false);
         }}
       >
-        <div className="panel-head">
-          <h2>Configuration</h2>
-          <span className="meta mono">{cfg.config_path || "—"}</span>
-        </div>
-        <p style={{ margin: "0 0 14px", color: "var(--muted)", fontSize: 13 }}>
-          Writes to <code>{cfg.config_path || "/etc/temperci/control.toml"}</code>. After changing
+        <Card>
+          <CardHeader className="flex-row items-center justify-between">
+            <CardTitle>Configuration</CardTitle>
+            <span className="font-mono text-[11px] text-muted-foreground">{cfg.config_path || "—"}</span>
+          </CardHeader>
+          <CardContent>
+        <p className="mb-4 text-sm text-muted-foreground">
+          Writes to <code className="font-mono text-xs">{cfg.config_path || "/etc/temperci/control.toml"}</code>. After changing
           GitHub App or agent token, use <strong>Save &amp; restart</strong> so services reload.
         </p>
 
         {groups.map((g) => (
-          <div key={g.name} className="config-group">
-            <div className="config-group-title">{g.name}</div>
+          <div key={g.name} className="mb-6 last:mb-0">
+            <div className="mb-2.5 font-mono text-[11px] tracking-wider text-primary uppercase">{g.name}</div>
             {g.fields.map((f) => (
-              <div key={f.key} className="config-field">
-                <div className="config-field-meta">
-                  <div className="config-label">
+              <div
+                key={f.key}
+                className="grid items-start gap-3 border-b border-border py-3 last:border-0 md:grid-cols-[minmax(200px,1fr)_minmax(220px,1.2fr)]"
+              >
+                <div>
+                  <div className="mb-1 flex flex-wrap items-center gap-2 font-medium">
                     {f.label}{" "}
-                    <span
-                      className={`badge ${
-                        f.status === "ok" ? "ok" : f.status === "warn" ? "warn" : "bad"
-                      }`}
+                    <StatusBadge
+                      tone={f.status === "ok" ? "ok" : f.status === "warn" ? "warn" : "bad"}
                     >
                       {f.status === "ok" ? "set" : f.status === "warn" ? "check" : "missing"}
-                    </span>
+                    </StatusBadge>
                   </div>
-                  {f.description ? <div className="config-desc">{f.description}</div> : null}
-                  <div className="config-key mono">{f.key}</div>
+                  {f.description ? <div className="mb-1 max-w-[42ch] text-xs text-muted-foreground">{f.description}</div> : null}
+                  <div className="font-mono text-[10px] text-muted-foreground">{f.key}</div>
                 </div>
-                <div className="config-field-input">
+                <div>
                   {!f.editable || f.input_type === "readonly" ? (
-                    <div className="mono config-value readonly">
+                    <div className="py-2 font-mono text-xs break-all">
                       {f.secret ? (
-                        <span className={f.configured ? "secret-set" : "secret-missing"}>
+                        <span className={f.configured ? "text-emerald-400" : "text-destructive"}>
                           {f.value || (f.configured ? "set" : "not set")}
                         </span>
                       ) : (
@@ -368,7 +303,7 @@ export function SettingsPage({ onOverview }: Props) {
                       )}
                     </div>
                   ) : f.input_type === "textarea" ? (
-                    <textarea
+                    <Textarea
                       placeholder={
                         f.secret
                           ? "Leave blank to keep current PEM on disk"
@@ -377,20 +312,23 @@ export function SettingsPage({ onOverview }: Props) {
                       value={formValue(f.key)}
                       onChange={(e) => setFormKey(f.key, e.target.value)}
                       rows={5}
+                      className="font-mono text-xs"
                     />
                   ) : f.input_type === "select" ? (
-                    <select
-                      value={formValue(f.key)}
-                      onChange={(e) => setFormKey(f.key, e.target.value)}
-                    >
-                      {(f.options || []).map((opt) => (
-                        <option key={opt} value={opt}>
-                          {opt}
-                        </option>
-                      ))}
-                    </select>
+                    <Select value={formValue(f.key)} onValueChange={(v) => setFormKey(f.key, v)}>
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {(f.options || []).map((opt) => (
+                          <SelectItem key={opt} value={opt}>
+                            {opt}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                   ) : (
-                    <input
+                    <Input
                       type={
                         f.input_type === "password"
                           ? "password"
@@ -398,7 +336,7 @@ export function SettingsPage({ onOverview }: Props) {
                             ? "number"
                             : "text"
                       }
-                      className={f.input_type === "password" ? undefined : "mono"}
+                      className={f.input_type === "password" ? undefined : "font-mono"}
                       autoComplete="off"
                       placeholder={
                         f.secret
@@ -417,29 +355,26 @@ export function SettingsPage({ onOverview }: Props) {
           </div>
         ))}
 
-        <div className="row" style={{ marginTop: 8 }}>
-          <button type="submit" disabled={busy}>
+        <div className="mt-4 flex flex-wrap gap-2">
+          <Button type="submit" disabled={busy}>
             Save config
-          </button>
-          <button
-            type="button"
-            className="secondary"
-            disabled={busy}
-            onClick={() => void save(true)}
-          >
+          </Button>
+          <Button type="button" variant="outline" disabled={busy} onClick={() => void save(true)}>
             Save &amp; restart
-          </button>
-          <button
+          </Button>
+          <Button
             type="button"
-            className="ghost"
+            variant="ghost"
             disabled={busy}
             onClick={() => void reload().catch((e: Error) => setErr(e.message))}
           >
             Reload
-          </button>
+          </Button>
         </div>
-        {msg ? <div className="okmsg">{msg}</div> : null}
-        {err ? <div className="err">{err}</div> : null}
+        {msg ? <p className="mt-3 text-sm text-emerald-400">{msg}</p> : null}
+        {err ? <p className="mt-3 text-sm text-destructive">{err}</p> : null}
+          </CardContent>
+        </Card>
       </form>
     </>
   );

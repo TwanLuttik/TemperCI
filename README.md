@@ -1,6 +1,6 @@
 # TemperCI
 
-**TemperCI** is a self-hostable, open-source GitHub Actions runner platform. It follows the same integration model as managed services like [Blacksmith](https://blacksmith.sh): install a GitHub App, change `runs-on`, and jobs execute on **your** hardware — Proxmox hosts or bare Ubuntu servers.
+**TemperCI** is a self-hostable, open-source GitHub Actions runner platform. It follows the same integration model as managed services like [Blacksmith](https://blacksmith.sh): install a GitHub App, change `runs-on`, and jobs execute on **your** hardware — Ubuntu servers with KVM, isolated in Firecracker microVMs.
 
 ## What you get
 
@@ -12,7 +12,7 @@
 
 ## Status
 
-Phase 6 complete on the documentation path: same agent semantics on Proxmox VE (Firecracker on host KVM), with Ubuntu single-node job path from Phase 5.
+Ubuntu single-node job path is in place: control plane + host agent, Firecracker warm pool, hard teardown.
 
 | Doc | Purpose |
 |-----|---------|
@@ -54,7 +54,6 @@ Example operator configs live under [`deploy/`](deploy/) (`control.example.toml`
 - Webhook + JIT dry-run: [docs/architecture/control-plane-dry-run.md](docs/architecture/control-plane-dry-run.md)
 - Single-node Ubuntu quickstart: [deploy/ubuntu/quickstart.md](deploy/ubuntu/quickstart.md)
 - Guest image pipeline: [deploy/ubuntu/guest-image.md](deploy/ubuntu/guest-image.md)
-- Proxmox VE install + smoke checklist: [deploy/proxmox/README.md](deploy/proxmox/README.md), [deploy/proxmox/quickstart.md](deploy/proxmox/quickstart.md)
 
 ## High-level flow
 

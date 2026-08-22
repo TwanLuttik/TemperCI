@@ -20,7 +20,7 @@ This todo may run **after** todos 1–3. If persistence or inject helpers are mi
 - Create: `internal/vmm/firecracker/inject_test.go` if not present
 - Create: `deploy/ubuntu/guest-agent/protocol_test.sh` or a Go test that execs the guest agent in a fake mount (optional)
 - Modify: `internal/e2e/e2e_test.go` only to add a second test if needed (do not break the existing one)
-- Create: `docs/todos/proof-runbook.md` with the exact commands to prove a GitHub job on Proxmox
+- Create: `docs/todos/proof-runbook.md` with the exact commands to prove a GitHub job on Ubuntu+KVM
 
 Do **not** rewrite agent/control production code except tiny test hooks. Do **not** own image build or persistence schema.
 

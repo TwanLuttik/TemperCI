@@ -1,21 +1,22 @@
 # Install targets
 
-TemperCI is designed to run on infrastructure you own. MVP targets:
+TemperCI is designed to run on infrastructure you own. MVP target:
 
-1. **Bare Ubuntu server** (primary development target)
-2. **Proxmox VE host** (same agent model; host provides KVM)
+1. **Bare Ubuntu server** with KVM (Firecracker microVMs)
+
+Job isolation is **Firecracker only**. TemperCI does not create QEMU, Proxmox `qm`/`pct`, or LXC guests for jobs.
 
 ## Shared model
 
-Regardless of install target, each physical (or nested) machine that runs jobs installs the **TemperCI host agent**. The **control plane** may run on the same machine for small labs, or on a separate small VM/container for multi-host fleets.
+Each physical (or nested) machine that runs jobs installs the **TemperCI host agent**. The **control plane** may run on the same machine for small labs, or on a separate small VM/container for multi-host fleets.
 
 ```text
 Small lab (single box)
 ┌─────────────────────────────────────┐
-│ Ubuntu or Proxmox host              │
+│ Ubuntu host                         │
 │  · control plane                    │
 │  · host agent                       │
-│  · microVMs for jobs                │
+│  · Firecracker microVMs for jobs    │
 └─────────────────────────────────────┘
 
 Multi-host
@@ -32,19 +33,12 @@ Multi-host
 - Ubuntu LTS (document exact versions during implementation; target 22.04/24.04).
 - KVM available (`/dev/kvm`).
 - Host agent runs as a systemd service.
-- MicroVMs via a lightweight hypervisor suitable for ephemeral CI (Firecracker or Cloud Hypervisor — decision locked in implementation spike; both require KVM).
+- MicroVMs via Firecracker (requires KVM). See [hypervisor.md](../decisions/hypervisor.md).
 - Networking: host bridge or tap setup managed by the agent (documented install script).
 
-## Proxmox VE
+If nested virtualization or policy blocks `/dev/kvm` on a given host, document that limitation rather than silently falling back to unclean long-lived VMs.
 
-- Agent runs **on the Proxmox host** (or in a privileged context that can create KVM guests quickly).
-- Goal: same warm-pool semantics as bare Ubuntu.
-- Preferred approach: use the same microVM stack (Firecracker) on the Proxmox host’s KVM, rather than inventing a separate “full Proxmox VM per job” path that is slower and harder to clean up.
-- Proxmox-specific packaging: install docs, host prereq script, storage guidance, cleanup verification, and resource-budget notes for coexisting with PVE guests.
-
-**Operator install path:** [deploy/proxmox/README.md](../../deploy/proxmox/README.md) · [quickstart.md](../../deploy/proxmox/quickstart.md) · [nested-virt.md](../../deploy/proxmox/nested-virt.md) · [storage.md](../../deploy/proxmox/storage.md)
-
-If nested virtualization or policy blocks microVMs on a given Proxmox setup, document that limitation rather than silently falling back to unclean long-lived VMs. See [nested-virt.md](../../deploy/proxmox/nested-virt.md).
+**Operator install path:** [deploy/ubuntu/README.md](../../deploy/ubuntu/README.md) · [quickstart.md](../../deploy/ubuntu/quickstart.md)
 
 ## Resource layout on a host
 
@@ -54,7 +48,7 @@ Operators should be able to configure:
 |---------|---------|
 | `min_ready` / `max_ready` | Warm pool size |
 | vCPU / memory per VM | Job shape |
-| Disk path for images + scratch (`data_dir`) | Prefer fast **local** NVMe; avoid shared Ceph/NFS for `instances/` (see [storage.md](../../deploy/proxmox/storage.md)) |
+| Disk path for images + scratch (`data_dir`) | Prefer fast **local** NVMe; avoid shared Ceph/NFS for `instances/` |
 | Max concurrent busy VMs | Protect the host |
 
 ## Security notes for self-host
@@ -66,6 +60,7 @@ Operators should be able to configure:
 
 ## Non-goals for first install story
 
-- Kubernetes-first install (may come later; not required for Proxmox/Ubuntu lab)
+- Kubernetes-first install (may come later; not required for an Ubuntu lab)
+- Proxmox QEMU / LXC guests as a job runtime
 - Windows/macOS job hosts
 - Multi-tenant public SaaS hardening

@@ -1,6 +1,12 @@
 import { useEffect, useState } from "react";
+
 import { api, type Host } from "../api";
+import { EmptyState } from "../components/empty-state";
+import { PageHeader } from "../components/page-header";
+import { LiveDot } from "../components/status-badge";
 import { useRealtime } from "../hooks/useRealtime";
+import { Card } from "@/components/ui/card";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 
 export function HostsPage() {
   const [hosts, setHosts] = useState<Host[]>([]);
@@ -17,63 +23,60 @@ export function HostsPage() {
       .catch((e: Error) => setErr(e.message));
   }, [rt.last]);
 
-  if (err) return <div className="err">{err}</div>;
+  if (err) return <p className="text-sm text-destructive">{err}</p>;
 
   return (
     <>
-      <div className="page-head">
-        <p className="page-kicker">/ Runners</p>
-        <h1>Host agents</h1>
-        <p className="lead">
-          Capacity-aware hosts in your fleet. Warm pool size is the main lever for pickup latency.{" "}
-          {rt.connected ? (
-            <span className="badge ok">live</span>
-          ) : (
-            <span className="badge warn">rest</span>
-          )}
-        </p>
-      </div>
-      <div className="panel" style={{ overflow: "auto", padding: "8px 12px 4px" }}>
-        <table>
-          <thead>
-            <tr>
-              <th>Agent</th>
-              <th>Free</th>
-              <th>Max</th>
-              <th>Warm</th>
-              <th>Busy</th>
-              <th>Last seen</th>
-            </tr>
-          </thead>
-          <tbody>
+      <PageHeader
+        kicker="/ Runners"
+        title="Host agents"
+        description={
+          <span className="inline-flex flex-wrap items-center gap-2">
+            Capacity-aware hosts. Warm pool size is the main lever for pickup latency.
+            <LiveDot live={rt.connected} />
+          </span>
+        }
+      />
+      <Card className="py-2">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Agent</TableHead>
+              <TableHead>Free</TableHead>
+              <TableHead>Max</TableHead>
+              <TableHead>Warm</TableHead>
+              <TableHead>Busy</TableHead>
+              <TableHead>Last seen</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
             {hosts.length === 0 ? (
-              <tr>
-                <td colSpan={6}>
-                  <div className="empty">
-                    <strong>No agents registered</strong>
+              <TableRow>
+                <TableCell colSpan={6}>
+                  <EmptyState title="No agents registered">
                     Start temperci-agent and confirm agent_token matches control.
-                  </div>
-                </td>
-              </tr>
+                  </EmptyState>
+                </TableCell>
+              </TableRow>
             ) : (
               hosts.map((h) => (
-                <tr key={h.agent_id}>
-                  <td>
-                    <code>{h.agent_id}</code>
-                  </td>
-                  <td className="mono">{h.capacity ?? "—"}</td>
-                  <td className="mono">{h.max_capacity ?? "—"}</td>
-                  <td className="mono">{h.warm ?? 0}</td>
-                  <td className="mono">{h.busy ?? 0}</td>
-                  <td style={{ color: "var(--muted)" }}>
+                <TableRow key={h.agent_id}>
+                  <TableCell>
+                    <code className="font-mono text-xs">{h.agent_id}</code>
+                  </TableCell>
+                  <TableCell className="font-mono text-xs">{h.capacity ?? "—"}</TableCell>
+                  <TableCell className="font-mono text-xs">{h.max_capacity ?? "—"}</TableCell>
+                  <TableCell className="font-mono text-xs">{h.warm ?? 0}</TableCell>
+                  <TableCell className="font-mono text-xs">{h.busy ?? 0}</TableCell>
+                  <TableCell className="text-muted-foreground">
                     {h.last_seen_at ? new Date(h.last_seen_at).toLocaleString() : "—"}
-                  </td>
-                </tr>
+                  </TableCell>
+                </TableRow>
               ))
             )}
-          </tbody>
-        </table>
-      </div>
+          </TableBody>
+        </Table>
+      </Card>
     </>
   );
 }

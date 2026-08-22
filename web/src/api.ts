@@ -166,6 +166,18 @@ export function formatBytes(n?: number): string {
   return `${v < 10 ? v.toFixed(1) : Math.round(v)} ${units[i]}`;
 }
 
+export function formatAge(iso?: string): string {
+  if (!iso) return "";
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) return iso;
+  const sec = Math.max(0, Math.round((Date.now() - t) / 1000));
+  if (sec < 5) return "just now";
+  if (sec < 60) return `${sec}s ago`;
+  if (sec < 3600) return `${Math.round(sec / 60)}m ago`;
+  if (sec < 86400) return `${Math.round(sec / 3600)}h ago`;
+  return `${Math.round(sec / 86400)}d ago`;
+}
+
 export function formatDuration(ms?: number): string {
   if (ms == null || ms < 0) return "—";
   if (ms < 1000) return `${Math.round(ms)}ms`;
@@ -239,20 +251,37 @@ export type SettingsConfigSave = {
   note?: string;
 };
 
+export type ServiceStatus =
+  | "running"
+  | "starting"
+  | "stopping"
+  | "stopped"
+  | "failed"
+  | "unknown"
+  | "not_installed";
+
 export type ServiceSlice = {
-  healthy?: boolean;
+  name?: string;
+  label?: string;
   unit?: string;
+  status?: ServiceStatus | string;
+  detail?: string;
+  healthy?: boolean;
   ready?: boolean;
   registered?: boolean;
   registered_ids?: string[];
   last_seen_at?: string;
-  label?: string;
+  installed?: boolean;
+  installable?: boolean;
+  install_hint?: string;
+  binary?: boolean;
 };
 
 export type SystemStatus = {
   ok: boolean;
   control: ServiceSlice;
   agent: ServiceSlice;
+  overall?: ServiceStatus | string;
   hostctl: boolean;
   time?: string;
 };

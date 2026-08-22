@@ -7,13 +7,13 @@
 #   - no empty leftover overlay files outside instances/
 #
 # Usage:
-#   ./deploy/proxmox/verify-cleanup.sh [--data-dir DIR] [--expect-warm-max N]
+#   ./scripts/verify-cleanup.sh [--data-dir DIR] [--expect-warm-max N]
 #
 # Notes:
 #   - Warm pool VMs legitimately leave dirs under instances/; use --expect-warm-max
 #     to bound how many may remain (default 8).
 #   - Pass --expect-warm-max 0 after a full drain / smoke with no pool.
-#   - This script does not call Proxmox APIs; TemperCI disks are plain files.
+#   - TemperCI disks are plain files under data_dir (Firecracker instance dirs).
 set -euo pipefail
 
 DATA_DIR="${TEMPERCI_DATA_ROOT:-/var/lib/temperci}"

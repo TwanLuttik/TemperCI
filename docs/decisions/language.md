@@ -14,7 +14,7 @@ All core TemperCI services are written in Go:
 
 | Requirement | How Go fits |
 |-------------|------------|
-| Single static-ish binaries for Ubuntu/Proxmox hosts | Straightforward cross-compile and packaging |
+| Single static-ish binaries for Ubuntu hosts | Straightforward cross-compile and packaging |
 | Long-running agents, systemd services | Mature standard library and ops ecosystem |
 | Concurrent webhook handling + pool management | Goroutines fit control plane and agent loops |
 | GitHub API / webhooks | Well-supported HTTP ecosystem; existing runner ecosystem often uses Go (e.g. Actions Runner Controller) |

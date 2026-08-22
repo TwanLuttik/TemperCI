@@ -8,7 +8,9 @@ func TestShouldIntercept(t *testing.T) {
 		want bool
 	}{
 		{"results-receiver.actions.githubusercontent.com", true},
-		{"productionresultssa0.blob.core.windows.net", true},
+		{"tempercicache.blob.core.windows.net", true},
+		// Real Actions artifact/cache Azure accounts stay spliced.
+		{"productionresultssa0.blob.core.windows.net", false},
 		{"api.github.com", false},
 		{"github.com", false},
 		{"objects.githubusercontent.com", false},

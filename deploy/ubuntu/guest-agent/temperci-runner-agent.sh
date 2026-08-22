@@ -64,6 +64,12 @@ elif [ -L /etc/resolv.conf ]; then
   fi
 fi
 
+# Azure SDK in actions/cache requires a *.blob.core.windows.net URL. Point
+# our fake account at a routed dummy so SNI intercept can terminate it.
+if ! grep -q 'tempercicache.blob.core.windows.net' /etc/hosts 2>/dev/null; then
+  echo "10.231.255.254 tempercicache.blob.core.windows.net" >>/etc/hosts 2>/dev/null || true
+fi
+
 log "starting; waiting for JIT (ip=$(hostname -I 2>/dev/null | tr -d '\n' || true); gw=$(ip route 2>/dev/null | awk '/default/{print $3; exit}' || true))"
 log "devices: $(ls /dev/vd* 2>/dev/null | tr '\n' ' ' || true)"
 
@@ -143,6 +149,17 @@ rm -f "$RUNNER_DIR/.temperci_write_test"
 export RUNNER_ALLOW_RUNASROOT=1
 # Avoid the "Must not run interactively with sudo" guard when no TTY is present.
 export RUNNER_MANUALLY_TRAP_SIG=1
+# Node (actions/cache, upload-artifact) does not use the system trust store.
+# Point it at the TemperCI intercept CA so results-receiver MITM succeeds.
+for ca in /usr/local/share/ca-certificates/temperci-cache.crt /etc/ssl/certs/temperci-cache.pem; do
+  if [ -f "$ca" ]; then
+    export NODE_EXTRA_CA_CERTS="$ca"
+    break
+  fi
+done
+if [ -f /etc/ssl/certs/ca-certificates.crt ]; then
+  export SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
+fi
 
 # --jitconfig takes the encoded base64 string itself, NOT a filesystem path.
 # Passing a path makes Runner.Listener try to Base64-decode the path text and exit.

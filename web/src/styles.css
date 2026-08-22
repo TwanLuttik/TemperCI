@@ -1,518 +1,92 @@
 @import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+@import "@fontsource-variable/geist";
 
-/* TemperCI console theme (Blacksmith-inspired) */
-@theme {
-  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, sans-serif;
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --font-sans: "Geist Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-heading: var(--font-sans);
   --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-ok: var(--ok);
+  --color-warn: var(--warn);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+}
 
-  --color-canvas: #09090b;
-  --color-elevated: #0f0f12;
-  --color-sidebar: #0c0c0f;
-  --color-panel: #141418;
-  --color-panel-hover: #1a1a20;
-  --color-line: #27272a;
-  --color-line-soft: #1f1f23;
-  --color-ink: #fafafa;
-  --color-muted: #a1a1aa;
-  --color-dim: #71717a;
-  --color-accent: #f97316;
-  --color-accent-dim: rgb(249 115 22 / 0.14);
-  --color-accent-text: #ffedd5;
-  --color-ok: #34d399;
-  --color-ok-dim: rgb(52 211 153 / 0.12);
-  --color-warn: #fbbf24;
-  --color-warn-dim: rgb(251 191 36 / 0.12);
-  --color-bad: #f87171;
-  --color-bad-dim: rgb(248 113 113 / 0.12);
-
-  --radius-panel: 12px;
-  --spacing-sidebar: 15rem;
+/* Dark console by default — orange primary, no light-mode flip. */
+:root,
+.dark {
+  --background: oklch(0.145 0.005 80);
+  --foreground: oklch(0.985 0 0);
+  --card: oklch(0.185 0.006 80);
+  --card-foreground: oklch(0.985 0 0);
+  --popover: oklch(0.185 0.006 80);
+  --popover-foreground: oklch(0.985 0 0);
+  --primary: oklch(0.72 0.19 45);
+  --primary-foreground: oklch(0.2 0.04 50);
+  --secondary: oklch(0.24 0.008 80);
+  --secondary-foreground: oklch(0.97 0 0);
+  --muted: oklch(0.24 0.008 80);
+  --muted-foreground: oklch(0.72 0.015 80);
+  --accent: oklch(0.24 0.008 80);
+  --accent-foreground: oklch(0.97 0 0);
+  --destructive: oklch(0.704 0.191 22.216);
+  --border: oklch(1 0 0 / 10%);
+  --input: oklch(1 0 0 / 14%);
+  --ring: oklch(0.72 0.19 45);
+  --ok: oklch(0.8 0.16 160);
+  --warn: oklch(0.84 0.14 85);
+  --sidebar: oklch(0.16 0.006 80);
+  --sidebar-foreground: oklch(0.97 0 0);
+  --sidebar-primary: oklch(0.72 0.19 45);
+  --sidebar-primary-foreground: oklch(0.2 0.04 50);
+  --sidebar-accent: oklch(0.22 0.02 50);
+  --sidebar-accent-foreground: oklch(0.96 0.03 70);
+  --sidebar-border: oklch(1 0 0 / 8%);
+  --sidebar-ring: oklch(0.72 0.19 45);
+  --radius: 0.625rem;
 }
 
 @layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
   html,
   body,
   #root {
     @apply h-full;
   }
-
   body {
-    @apply m-0 bg-canvas text-ink font-sans text-sm leading-normal antialiased;
-  }
-
-  a {
-    @apply text-accent no-underline;
-  }
-
-  a:hover {
-    @apply underline;
-  }
-
-  code,
-  .mono {
-    @apply font-mono text-xs text-zinc-200;
-  }
-
-  label {
-    @apply mt-3.5 mb-1.5 block text-xs font-medium text-muted;
-  }
-
-  input,
-  select,
-  textarea {
-    @apply w-full rounded-lg border border-line bg-canvas px-3 py-2.5 text-ink outline-none;
-  }
-
-  input:focus,
-  select:focus,
-  textarea:focus {
-    @apply border-accent/55 ring-2 ring-accent-dim;
-  }
-
-  textarea {
-    @apply min-h-[8.125rem] font-mono text-xs leading-snug;
-  }
-
-  button {
-    @apply cursor-pointer rounded-lg border-0 bg-accent px-3.5 py-2.5 text-[13px] font-semibold text-zinc-900;
-  }
-
-  button:hover {
-    @apply brightness-105;
-  }
-
-  button:disabled {
-    @apply cursor-not-allowed opacity-55;
-  }
-
-  button.secondary {
-    @apply border border-line bg-transparent text-ink;
-  }
-
-  button.ghost {
-    @apply bg-panel-hover text-ink;
-  }
-
-  button.danger {
-    @apply bg-red-900 text-red-200;
-  }
-}
-
-@layer components {
-  .shell {
-    @apply flex min-h-full;
-  }
-
-  .sidebar {
-    @apply sticky top-0 flex h-screen w-sidebar shrink-0 flex-col border-r border-line-soft bg-sidebar;
-  }
-
-  .brand {
-    @apply flex items-center gap-2.5 border-b border-line-soft px-[18px] py-5 pb-4;
-  }
-
-  .brand-mark {
-    @apply grid size-7 place-items-center rounded-lg bg-linear-to-br from-orange-400 to-orange-600 text-[13px] font-bold text-zinc-900 shadow-[0_0_0_1px_rgb(249_115_22_/_0.35),0_8px_24px_rgb(249_115_22_/_0.2)];
-  }
-
-  .brand-text {
-    @apply text-[15px] font-semibold tracking-tight;
-  }
-
-  .brand-sub {
-    @apply mt-px font-mono text-[10px] tracking-wider text-dim uppercase;
-  }
-
-  .side-section {
-    @apply px-[18px] pt-[18px] pb-2 font-mono text-[10px] tracking-widest text-dim uppercase;
-  }
-
-  .side-nav {
-    @apply flex flex-col gap-0.5 px-2.5;
-  }
-
-  .side-nav a {
-    @apply flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-[13.5px] font-medium text-muted no-underline;
-  }
-
-  .side-nav a:hover {
-    @apply bg-panel text-ink no-underline;
-  }
-
-  .side-nav a.active {
-    @apply bg-accent-dim text-accent-text;
-  }
-
-  .side-nav a .dot {
-    @apply size-1.5 rounded-sm bg-current opacity-55;
-  }
-
-  .side-nav a.active .dot {
-    @apply bg-accent opacity-100;
-  }
-
-  .side-footer {
-    @apply mt-auto border-t border-line-soft px-4 py-3.5 pb-[18px] text-xs text-dim;
-  }
-
-  .pill {
-    @apply inline-flex items-center gap-1.5 rounded-full border border-line bg-panel px-2 py-1 font-mono text-[11px] text-muted;
-  }
-
-  .pill .live {
-    @apply size-1.5 rounded-full bg-ok shadow-[0_0_0_3px_var(--color-ok-dim)];
-  }
-
-  .main {
-    @apply flex min-w-0 flex-1 flex-col bg-[radial-gradient(900px_400px_at_10%_-10%,rgb(249_115_22_/_0.07),transparent_55%),var(--color-canvas)];
-  }
-
-  .topbar {
-    @apply sticky top-0 z-5 flex items-center justify-between gap-4 border-b border-line-soft bg-canvas/70 px-7 py-4 backdrop-blur-[10px];
-  }
-
-  .crumb {
-    @apply font-mono text-xs text-dim;
-  }
-
-  .crumb strong {
-    @apply font-medium text-ink;
-  }
-
-  .topbar-actions {
-    @apply flex items-center gap-2;
-  }
-
-  .content {
-    @apply mx-auto w-full max-w-[1200px] p-7;
-  }
-
-  .page-head {
-    @apply mb-[22px];
-  }
-
-  .page-kicker {
-    @apply mb-2 font-mono text-[11px] tracking-wider text-accent uppercase;
-  }
-
-  .page-head h1,
-  h1 {
-    @apply m-0 mb-1.5 text-[26px] font-semibold tracking-tight;
-  }
-
-  .lead {
-    @apply m-0 max-w-[56ch] text-muted;
-  }
-
-  .grid {
-    @apply mb-[22px] grid grid-cols-[repeat(auto-fit,minmax(170px,1fr))] gap-3;
-  }
-
-  .stat {
-    @apply relative overflow-hidden rounded-panel border border-line bg-linear-to-b from-panel to-elevated px-4 py-3.5 pb-3.5;
-  }
-
-  .stat::after {
-    content: "";
-    @apply absolute inset-y-0 left-0 w-0.5 bg-accent opacity-55;
-  }
-
-  .stat .label {
-    @apply font-mono text-[10px] tracking-widest text-dim uppercase;
-  }
-
-  .stat .value {
-    @apply mt-2 text-[30px] font-semibold tracking-tight tabular-nums;
-  }
-
-  .stat .hint {
-    @apply mt-1 text-xs text-dim;
-  }
-
-  .panel {
-    @apply rounded-panel border border-line bg-panel p-[18px];
-  }
-
-  .panel-head {
-    @apply mb-3.5 flex items-center justify-between gap-3;
-  }
-
-  .panel-head h2 {
-    @apply m-0 text-sm font-semibold tracking-tight;
-  }
-
-  .panel-head .meta {
-    @apply font-mono text-[11px] text-dim;
-  }
-
-  table {
-    @apply w-full border-collapse text-[13px];
-  }
-
-  th,
-  td {
-    @apply border-b border-line-soft px-2.5 py-2.5 text-left;
-  }
-
-  th {
-    @apply font-mono text-[10px] font-medium tracking-wider text-dim uppercase;
-  }
-
-  tr:last-child td {
-    @apply border-b-0;
-  }
-
-  tbody tr:hover td {
-    @apply bg-panel-hover;
-  }
-
-  .badge {
-    @apply inline-flex items-center gap-1.5 rounded-full border border-line bg-panel-hover px-2.5 py-0.5 font-mono text-[11px] font-medium text-muted;
-  }
-
-  .badge.ok {
-    @apply border-transparent bg-ok-dim text-ok;
-  }
-
-  .badge.warn {
-    @apply border-transparent bg-warn-dim text-warn;
-  }
-
-  .badge.bad {
-    @apply border-transparent bg-bad-dim text-bad;
-  }
-
-  .badge.accent {
-    @apply border-transparent bg-accent-dim text-accent-text;
-  }
-
-  .row {
-    @apply flex flex-wrap items-center gap-2.5;
-  }
-
-  .err {
-    @apply mt-3 text-[13px] text-bad;
-  }
-
-  .log-tabs {
-    @apply mb-3.5 flex flex-wrap gap-2;
-  }
-
-  .log-tabs button {
-    @apply px-3 py-1.5 text-xs;
-  }
-
-  .event-list {
-    @apply m-0 flex list-none flex-col gap-2 p-0;
-  }
-
-  .event-list li {
-    @apply flex flex-wrap items-baseline gap-2.5 border-b border-line-soft py-1.5 text-[13px];
-  }
-
-  .event-list li:last-child {
-    @apply border-b-0;
-  }
-
-  .log-pre {
-    @apply m-0 max-h-[28rem] overflow-auto rounded-lg border border-line-soft bg-canvas p-3 font-mono text-[11px] leading-relaxed whitespace-pre-wrap text-zinc-300;
-  }
-
-  .okmsg {
-    @apply mt-3 text-[13px] text-ok;
-  }
-
-  .wizard-steps {
-    @apply mb-[18px] flex flex-wrap gap-2;
-  }
-
-  .wizard-steps span {
-    @apply rounded-full border border-line px-2.5 py-1 font-mono text-[11px] text-dim;
-  }
-
-  .wizard-steps span.on {
-    @apply border-transparent bg-accent-dim text-accent-text;
-  }
-
-  .hidden {
-    @apply !hidden;
-  }
-
-  .split {
-    @apply grid grid-cols-[1.4fr_1fr] gap-3.5;
-  }
-
-  .empty {
-    @apply px-4 py-9 text-center text-dim;
-  }
-
-  .empty strong {
-    @apply mb-1.5 block text-muted;
-  }
-
-  .loading {
-    @apply py-6 text-muted;
-  }
-
-  .config-group {
-    @apply mb-[22px];
-  }
-
-  .config-group:last-child {
-    @apply mb-0;
-  }
-
-  .config-group-title {
-    @apply mb-2.5 font-mono text-[11px] tracking-wider text-accent uppercase;
-  }
-
-  .config-label {
-    @apply mb-0.5 font-semibold text-ink;
-  }
-
-  .config-desc {
-    @apply mb-1 max-w-[42ch] text-xs text-muted;
-  }
-
-  .config-key {
-    @apply font-mono text-[10px] text-dim;
-  }
-
-  .config-value {
-    @apply break-all text-ink;
-  }
-
-  .secret-set {
-    @apply text-ok;
-  }
-
-  .secret-missing {
-    @apply text-bad;
-  }
-
-  .config-field {
-    @apply grid grid-cols-[minmax(200px,1fr)_minmax(220px,1.2fr)] items-start gap-x-[18px] gap-y-3 border-b border-line-soft py-3;
-  }
-
-  .config-field:last-child {
-    @apply border-b-0;
-  }
-
-  .config-field-meta .config-label {
-    @apply flex flex-wrap items-center gap-2;
-  }
-
-  .config-field-input input,
-  .config-field-input select,
-  .config-field-input textarea {
-    @apply m-0 w-full;
-  }
-
-  .config-field-input .readonly {
-    @apply px-0 py-2.5 text-muted;
-  }
-
-  .gh-guide {
-    @apply mb-4 rounded-panel border border-line bg-elevated px-4 py-4 pb-3.5;
-  }
-
-  .gh-guide-compact {
-    @apply mb-0;
-  }
-
-  .gh-guide-title {
-    @apply mb-2 text-sm font-semibold tracking-tight;
-  }
-
-  .gh-guide-lead {
-    @apply mb-3 max-w-[70ch] text-[13px] text-muted;
-  }
-
-  .gh-guide-steps {
-    @apply mb-3 list-decimal pl-5 text-[13px] text-ink;
-  }
-
-  .gh-guide-steps li {
-    @apply mb-2.5;
-  }
-
-  .gh-guide-steps ul {
-    @apply mt-1.5 list-disc pl-[1.1rem] text-muted;
-  }
-
-  .gh-guide-link-row {
-    @apply my-1.5 flex flex-wrap items-center gap-x-3 gap-y-2;
-  }
-
-  .gh-guide-url {
-    @apply break-all font-mono text-[11px] text-zinc-200;
-  }
-
-  .gh-guide-note {
-    @apply mt-1.5 text-xs text-dim;
-  }
-
-  .gh-guide-warn {
-    @apply rounded-lg bg-accent-dim px-3 py-2.5 text-xs leading-snug text-accent-text;
-  }
-
-  .spinner {
-    @apply mr-1.5 inline-block size-3 animate-spin rounded-full border-2 border-current border-r-transparent align-[-2px];
-  }
-
-  .check {
-    @apply mr-2 inline-block h-1.5 w-2.5 -rotate-45 border-b-2 border-l-2 border-current align-[2px];
-  }
-
-  .restart-status {
-    @apply mt-4 rounded-[10px] border border-line bg-elevated px-3.5 py-3;
-  }
-
-  .restart-status-head {
-    @apply mb-2.5;
-  }
-
-  .restart-row {
-    @apply flex items-center justify-between gap-3 border-t border-line-soft py-2;
-  }
-
-  .restart-name {
-    @apply font-mono text-xs text-muted;
-  }
-
-  .restart-badge {
-    @apply inline-flex min-w-[11rem] items-center justify-start;
-  }
-
-  button .spinner {
-    @apply mr-2;
-  }
-}
-
-@media (max-width: 960px) {
-  .shell {
-    @apply flex-col;
-  }
-
-  .sidebar {
-    @apply relative h-auto w-full;
-  }
-
-  .side-footer {
-    @apply hidden;
-  }
-
-  .split {
-    @apply grid-cols-1;
-  }
-
-  .content {
-    @apply px-3.5 py-[18px] pb-10;
-  }
-}
-
-@media (max-width: 720px) {
-  .config-field {
-    @apply grid-cols-1;
+    @apply bg-background font-sans text-sm text-foreground antialiased;
   }
 }

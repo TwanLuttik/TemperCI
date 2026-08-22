@@ -13,12 +13,12 @@ Managed GitHub Actions runner products (e.g. Blacksmith) deliver:
 - Fast pickup
 - Less operational burden than hand-rolled self-hosted runners
 
-Teams that must keep CI on their own hardware (Proxmox, bare Ubuntu, regulated environments) still want that **product shape**, not a pile of scripts around `config.sh`.
+Teams that must keep CI on their own hardware (bare Ubuntu, regulated environments) still want that **product shape**, not a pile of scripts around `config.sh`.
 
 ## 2. Goals
 
 1. Run GitHub Actions jobs on operator-owned hosts using **official** `actions/runner` and **JIT** self-hosted registration.
-2. Support install on **bare Ubuntu** and **Proxmox VE** hosts.
+2. Support install on **bare Ubuntu** hosts with KVM (Firecracker microVMs).
 3. Keep a **warm microVM pool** so job pickup is not blocked on cold VM create.
 4. **Destroy** every job VM and clean host-side scratch so self-hosted disks do not accumulate leftovers.
 5. Be open source and operable by a single team without a SaaS dependency.
@@ -75,7 +75,7 @@ Labels are registered on the JIT runner so GitHub’s scheduler can assign the q
 1. **`temperci-control`** — GitHub App webhooks, JIT minting, scheduling, assignment to agents.
 2. **`temperci-agent`** — per-host warm pool, bind, runner start, teardown, orphan sweep.
 3. **MicroVM guests** — ephemeral Linux VMs running official runner + job steps.
-4. **Deploy assets** — systemd units, Ubuntu/Proxmox install docs and scripts.
+4. **Deploy assets** — systemd units, Ubuntu + Firecracker install docs and scripts.
 
 ### 5.2 Warm pool (product requirement)
 
@@ -102,8 +102,8 @@ Orphan sweeper on agent start + periodically handles crash/reboot leftovers.
 
 ### 5.4 Install targets
 
-- **Bare Ubuntu** with KVM: primary implementation target.
-- **Proxmox VE**: same agent model on host KVM; prefer same microVM stack rather than slow full Proxmox VM-per-job unless forced.
+- **Bare Ubuntu** with KVM: the install target. Jobs run in Firecracker microVMs.
+- Proxmox QEMU / LXC guests are **not** a job runtime.
 
 Details: [docs/architecture/install-targets.md](../../architecture/install-targets.md).
 
@@ -149,7 +149,7 @@ Detailed checkboxes live in the plan doc.
 | 3 | VMM interface + create/destroy + scratch cleanup |
 | 4 | Warm pool state machine |
 | 5 | End-to-end job on Ubuntu |
-| 6 | Proxmox install path + docs |
+| 6 | Host install docs (originally Proxmox; withdrawn — Firecracker on Ubuntu only) |
 | 7 | Hardening: recycle, metrics, multi-host assignment |
 
 ## 10. Open questions

@@ -8,7 +8,7 @@ TemperCI is a **self-hostable GitHub Actions runner platform**. It uses the same
 2. **Ephemeral by default** — one job per microVM; destroy after every job.
 3. **Warm pool for latency** — keep ready microVMs so webhook handling does not pay cold-boot cost.
 4. **Hard cleanup for self-host** — no leftover guest disks, overlays, sockets, or scratch dirs after teardown.
-5. **Single-operator install** — one control plane + one or more host agents on Proxmox or bare Ubuntu.
+5. **Single-operator install** — one control plane + one or more host agents on Ubuntu with KVM.
 
 ## How this differs from “classic” self-hosted runners
 
@@ -41,7 +41,7 @@ TemperCI **is** self-hosted runners under the hood. The product is the orchestra
 └────────────────────────────┬─────────────────────────────────┘
                              │ assign job + JIT payload
 ┌────────────────────────────▼─────────────────────────────────┐
-│ Host agent (per Proxmox/Ubuntu machine)                      │
+│ Host agent (per Ubuntu/KVM machine)                          │
 │  · Warm microVM pool manager                                 │
 │  · Bind JIT → start official runner in guest                 │
 │  · Teardown + orphan sweeper                                 │
@@ -110,6 +110,6 @@ Responsible for **compute isolation and lifecycle** on one machine.
 ## Related docs
 
 - [job-lifecycle.md](job-lifecycle.md) — warm pool and teardown details
-- [install-targets.md](install-targets.md) — Proxmox and bare Ubuntu
+- [install-targets.md](install-targets.md) — Ubuntu + Firecracker deploy model
 - [../decisions/language.md](../decisions/language.md)
 - [../decisions/repository-structure.md](../decisions/repository-structure.md)

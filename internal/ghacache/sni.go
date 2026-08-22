@@ -12,11 +12,14 @@ func ShouldIntercept(host string) bool {
 	if h == "" {
 		return false
 	}
-	if strings.HasSuffix(h, ".blob.core.windows.net") || h == "blob.core.windows.net" {
-		return true
-	}
+	// Cache Twirp lives on the Results API host.
 	if strings.HasSuffix(h, ".actions.githubusercontent.com") || h == "actions.githubusercontent.com" {
 		return strings.Contains(h, "result")
+	}
+	// Azure SDK uploads require a *.blob.core.windows.net URL. We mint
+	// tempercicache.blob.core.windows.net; real Actions Azure accounts stay spliced.
+	if h == cacheBlobHost {
+		return true
 	}
 	return false
 }

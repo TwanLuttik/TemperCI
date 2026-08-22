@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -62,11 +63,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	cachePort := 0
-	if cfg.CacheListenAddr != "" {
-		cachePort = ghacache.ListenPort(cfg.CacheListenAddr)
-	}
-	mgr, err := newVMM(cfg, layout, cachePort)
+	mgr, err := newVMM(cfg, layout, cfg.CacheListenAddr)
 	if err != nil {
 		log.Error("init vmm", "err", err, "backend", cfg.VMMBackend)
 		os.Exit(1)
@@ -168,9 +165,19 @@ func main() {
 				os.Exit(1)
 			}
 			cacheGW = ghacache.NewGateway(st)
+			ca, err := ghacache.LoadOrCreateCA(filepath.Join(layout.CacheDir(), "ca"))
+			if err != nil {
+				log.Error("cache CA", "err", err)
+				os.Exit(1)
+			}
+			ix := &ghacache.Intercept{Handler: cacheGW.Handler(), CA: ca}
 			go func() {
-				log.Info("actions cache gateway listening", "addr", cfg.CacheListenAddr, "dir", layout.CacheDir())
-				if err := cacheGW.ListenAndServe(cfg.CacheListenAddr); err != nil && err != http.ErrServerClosed {
+				log.Info("actions cache gateway listening",
+					"addr", cfg.CacheListenAddr,
+					"dir", layout.CacheDir(),
+					"mode", "sni-intercept",
+				)
+				if err := ix.ListenAndServe(cfg.CacheListenAddr); err != nil && err != http.ErrServerClosed {
 					log.Error("cache gateway failed", "err", err)
 				}
 			}()
@@ -239,14 +246,14 @@ func main() {
 	}
 }
 
-func newVMM(cfg *config.AgentConfig, layout vmm.Layout, cachePort int) (vmm.Manager, error) {
+func newVMM(cfg *config.AgentConfig, layout vmm.Layout, cacheListen string) (vmm.Manager, error) {
 	switch cfg.VMMBackend {
 	case "fake":
 		return fake.New(layout)
 	case "firecracker":
 		return firecracker.New(firecracker.Config{
-			Layout:            layout,
-			CacheRedirectPort: cachePort,
+			Layout:          layout,
+			CacheListenAddr: cacheListen,
 		})
 	default:
 		return nil, fmt.Errorf("unknown vmm_backend %q", cfg.VMMBackend)
