@@ -34,6 +34,13 @@ max_ready = 2
 # growth if destroy fails. Default: max_ready + 32.
 # max_total_vms = 34
 
+# Host headroom the agent will not give to microVMs.
+# Effective max_ready is min(max_ready, how many VMs fit in leftover RAM/disk).
+# A create is refused if MemAvailable < memory_mib or free disk < overlay+reserve.
+# CPU is not a hard gate.
+# host_reserve_memory_mib = 2048
+# host_reserve_disk_mib = 5120
+
 # Guest image and kernel. kernel_path is required when vmm_backend = "firecracker".
 # Same paths on Ubuntu and Proxmox host installs (prefer local NVMe; see deploy/proxmox/storage.md).
 image_path = "/var/lib/temperci/images/ubuntu-2404-runner.ext4"

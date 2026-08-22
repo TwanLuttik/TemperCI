@@ -52,10 +52,10 @@ Operators should be able to configure:
 
 | Setting | Purpose |
 |---------|---------|
-| `min_ready` / `max_ready` | Warm pool size |
-| vCPU / memory per VM | Job shape |
-| Disk path for images + scratch (`data_dir`) | Prefer fast **local** NVMe; avoid shared Ceph/NFS for `instances/` (see [storage.md](../../deploy/proxmox/storage.md)) |
-| Max concurrent busy VMs | Protect the host |
+| `min_ready` / `max_ready` | Desired warm pool / concurrent jobs. Agent clamps this to host RAM+disk. |
+| `vcpu` / `memory_mib` | Job shape. RAM is a hard create gate; vCPU is not. |
+| `host_reserve_memory_mib` / `host_reserve_disk_mib` | Headroom left for the host OS, cache, and overlays (defaults 2048 / 5120). |
+| Disk path for images + scratch (`data_dir`) | Prefer fast **local** NVMe; avoid shared Ceph/NFS for `instances/` |
 
 ## Security notes for self-host
 

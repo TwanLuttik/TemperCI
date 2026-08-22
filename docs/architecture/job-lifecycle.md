@@ -40,6 +40,16 @@ Cold microVM boot (image hydrate + boot + network) can take seconds. Self-hosted
 4. Warm VMs may be **recycled on a timer** or when the base image updates, so idle guests do not sit forever on stale images.
 5. Pools may later be split per size/label (e.g. 2 vCPU vs 4 vCPU). MVP may use a single default size per host.
 
+### Host resource admission
+
+`max_ready` is the operator’s desired cap, not a promise the hardware can keep.
+
+1. On agent start, sample host RAM (`MemTotal`) and free disk on `data_dir`. Compute how many VMs of this host’s `memory_mib` and overlay size fit after `host_reserve_memory_mib` (default 2 GiB) and `host_reserve_disk_mib` (default 5 GiB). Clamp `min_ready` / `max_ready` down to that fit.
+2. Before every create (warm replenish or cold bind), refuse if committed guest RAM, live `MemAvailable`, or leftover disk cannot cover the next VM plus reserve.
+3. Existing warm VMs may still bind (their RAM is already committed).
+4. The worker reports `FreeSlots = min(effective slots, warm + remaining creates)`. Control does not assign when that is 0; the job stays pending.
+5. vCPU count is reported on the host snapshot and is not a create gate.
+
 ### Bind path (fast path)
 
 When the control plane assigns a job:
