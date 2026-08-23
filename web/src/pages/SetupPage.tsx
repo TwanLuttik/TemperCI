@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 
 import { api, waitForHealth, type SetupStatus } from "../api";
 import { GitHubAppGuide } from "../components/GitHubAppGuide";
+import { WebhookStatus } from "../components/WebhookStatus";
 import { PageHeader } from "../components/page-header";
 import { StatCard } from "../components/stat-card";
 import { StatusBadge } from "../components/status-badge";
@@ -105,17 +106,18 @@ export function SetupPage({ onDone }: Props) {
   }, []);
 
   const imageReady = Boolean(status?.values?.guest_image && status?.values?.guest_kernel);
+  const webhookReceived = Boolean(status?.webhook?.received || status?.values?.webhook_received);
   useEffect(() => {
-    if (imageReady) {
+    if (imageReady && webhookReceived) {
       return;
     }
     const id = window.setInterval(() => {
       api<SetupStatus>("/api/v1/setup/status")
         .then(setStatus)
         .catch(() => {});
-    }, 5000);
+    }, 4000);
     return () => window.clearInterval(id);
-  }, [imageReady]);
+  }, [imageReady, webhookReceived]);
 
   const webhookSet = Boolean(status?.values?.webhook_set);
   const pemSet = Boolean(status?.values?.pem_set);
@@ -327,7 +329,11 @@ export function SetupPage({ onDone }: Props) {
         {step === 1 ? (
           <>
             <StepStatus check={check("github")} />
-            <GitHubAppGuide orgSlug={data.github_org} />
+            <GitHubAppGuide orgSlug={data.github_org} webhookURL={status?.webhook?.suggested_url} />
+            <div className="rounded-lg border border-border bg-muted/20 p-3">
+              <div className="mb-2 text-sm font-semibold tracking-tight">GitHub webhook</div>
+              <WebhookStatus webhook={status?.webhook} />
+            </div>
             <div className="space-y-2">
               <Label>GitHub organization login</Label>
               <Input
@@ -420,6 +426,15 @@ export function SetupPage({ onDone }: Props) {
               />
               <InstallCheck ok={Boolean(status?.values?.guest_image)} label="Guest image" detail="ubuntu runner rootfs" />
               <InstallCheck ok={Boolean(status?.values?.guest_kernel)} label="Guest kernel" detail="Firecracker vmlinux" />
+              <InstallCheck
+                ok={webhookReceived}
+                label="GitHub webhook"
+                detail={
+                  webhookReceived
+                    ? `received ${status?.webhook?.last_event === "workflow_job" ? "job" : status?.webhook?.last_event || "delivery"}`
+                    : "waiting for first TemperCI job"
+                }
+              />
             </div>
             <p className="text-sm text-muted-foreground">
               These are read-only checks. Missing pieces stay as they are — the wizard does not wipe them.
@@ -441,6 +456,15 @@ export function SetupPage({ onDone }: Props) {
                 value={<span className="font-mono text-base">{data.cache_listen_addr || "disabled"}</span>}
               />
               <StatCard label="Secrets" value={<span className="text-lg">{review ? "kept" : "new"}</span>} />
+              <StatCard
+                label="Webhook"
+                value={<span className="text-lg">{webhookReceived ? "received" : "waiting"}</span>}
+                hint={
+                  webhookReceived
+                    ? "job webhook reached this host"
+                    : status?.webhook?.suggested_url || "dispatch a temperci- job to verify"
+                }
+              />
             </div>
             <p className="text-sm text-muted-foreground">
               {review

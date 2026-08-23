@@ -247,12 +247,17 @@ func main() {
 	}()
 
 	<-ctx.Done()
-	log.Info("shutting down")
+	log.Info("shutting down; draining in-flight jobs before destroying VMs")
+	drainFor := time.Duration(cfg.JobDeadlineSeconds) * time.Second
+	if drainFor <= 0 {
+		drainFor = 6 * time.Hour
+	}
 	if workerDone != nil {
 		select {
 		case <-workerDone:
-		case <-time.After(25 * time.Second):
-			log.Error("worker shutdown wait timed out")
+			log.Info("in-flight jobs drained")
+		case <-time.After(drainFor):
+			log.Error("worker drain timed out; leftover busy VMs will be destroyed", "timeout", drainFor.String())
 		}
 	}
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -283,10 +288,14 @@ func newRunner(cfg *config.AgentConfig, layout vmm.Layout, log *slog.Logger) age
 	if cfg.VMMBackend == "firecracker" {
 		guest = &agent.FirecrackerGuestExec{Inner: fileGuest, Layout: layout}
 	}
-	return &agent.InjectRunner{
+	r := &agent.InjectRunner{
 		Guest: guest,
 		Log:   log,
 	}
+	if pem, err := os.ReadFile(filepath.Join(layout.CacheDir(), "ca", "ca.crt")); err == nil {
+		r.CacheCAPEM = pem
+	}
+	return r
 }
 
 func runDemoBind(ctx context.Context, pool *agent.Pool, log interface {

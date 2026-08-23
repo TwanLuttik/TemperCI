@@ -13,6 +13,9 @@ Group=root
 ExecStart=/usr/local/bin/temperci-agent -config /etc/temperci/agent.toml
 Restart=on-failure
 RestartSec=5
+# SIGTERM drains running GitHub jobs instead of yanking the VM. Match the
+# default job deadline so systemd does not SIGKILL mid-drain.
+TimeoutStopSec=6h
 # Agent must manage VMs and scratch under /var/lib/temperci.
 # ProtectSystem left off for MVP; revisit in hardening.
 

@@ -8,7 +8,11 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"testing"
+
+	"github.com/TwanLuttik/TemperCI/internal/config"
+	"github.com/TwanLuttik/TemperCI/internal/store"
 )
 
 func sign(secret string, body []byte) string {
@@ -87,6 +91,43 @@ func TestServer_TemperCIQueued_MintsJIT(t *testing.T) {
 	respBody, _ := io.ReadAll(rr.Body)
 	if !bytes.Contains(respBody, []byte(`"minted":true`)) {
 		t.Errorf("body = %s", respBody)
+	}
+}
+
+func TestServer_PingRecordsWebhookDelivery(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.Open(filepath.Join(dir, "control.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	srv := NewServer(ServerConfig{
+		WebhookSecret: "super-secret",
+		Dashboard: &DashboardConfig{
+			Config: &config.ControlConfig{
+				AuthMode:       "open",
+				SetupCompleted: false,
+				ListenAddr:     "127.0.0.1:8080",
+			},
+			Store: st,
+		},
+	})
+	body := []byte(`{"zen":"ok","hook_id":1}`)
+	req := httptest.NewRequest(http.MethodPost, "/webhooks/github", bytes.NewReader(body))
+	req.Header.Set("X-Hub-Signature-256", sign("super-secret", body))
+	req.Header.Set("X-GitHub-Event", "ping")
+	req.Header.Set("X-GitHub-Delivery", "deliv-1")
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d %s", rr.Code, rr.Body.String())
+	}
+	got, err := st.LastWebhookDelivery()
+	if err != nil || got == nil {
+		t.Fatalf("delivery=%v err=%v", got, err)
+	}
+	if got.Event != "ping" || got.Delivery != "deliv-1" {
+		t.Fatalf("delivery=%+v", got)
 	}
 }
 

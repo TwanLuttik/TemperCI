@@ -94,6 +94,9 @@ export function Layout({ setup, me, overview, onLogout, children }: Props) {
                 <StatusBadge tone={overview.fleet_ready ? "ok" : "warn"}>
                   {overview.fleet_ready ? "fleet ready" : "limited"}
                 </StatusBadge>
+                <StatusBadge tone={overview.webhook_received ? "ok" : "warn"}>
+                  {overview.webhook_received ? "webhook" : "waiting for a job"}
+                </StatusBadge>
                 {overview.org ? <StatusBadge tone="accent">{overview.org}</StatusBadge> : null}
               </>
             ) : null}

@@ -39,6 +39,8 @@ type VMUsage struct {
 	RSSMiB float64 `json:"rss_mib"`
 	// DiskMiB is host instance directory size when available.
 	DiskMiB float64 `json:"disk_mib,omitempty"`
+	// CreatedAt is when the microVM instance was created (boot/create time).
+	CreatedAt time.Time `json:"created_at,omitempty"`
 	// SampledAt is when this sample was taken (UTC).
 	SampledAt time.Time `json:"sampled_at,omitempty"`
 }

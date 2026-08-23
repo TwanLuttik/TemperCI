@@ -2,6 +2,7 @@ type Props = {
   /** Org login slug if known (e.g. coatcheckapp); used in deep links */
   orgSlug?: string;
   compact?: boolean;
+  webhookURL?: string;
 };
 
 /**
@@ -9,7 +10,7 @@ type Props = {
  * User-owned apps often only install on the personal account and never receive
  * workflow_job webhooks for organization repositories.
  */
-export function GitHubAppGuide({ orgSlug, compact }: Props) {
+export function GitHubAppGuide({ orgSlug, compact, webhookURL }: Props) {
   const slug = (orgSlug || "").trim().replace(/^@/, "");
   const newAppUrl = slug
     ? `https://github.com/organizations/${encodeURIComponent(slug)}/settings/apps/new`
@@ -62,7 +63,10 @@ export function GitHubAppGuide({ orgSlug, compact }: Props) {
           <strong>New GitHub App</strong> with:
           <ul className="mt-1.5 list-disc pl-4 text-muted-foreground">
             <li>
-              <strong>Webhook URL:</strong> <code>https://&lt;public-or-funnel-host&gt;/webhooks/github</code>
+              <strong>Webhook URL:</strong>{" "}
+              <code className="break-all font-mono text-[11px]">
+                {webhookURL || "https://<public-or-funnel-host>/webhooks/github"}
+              </code>
             </li>
             <li>
               <strong>Webhook secret:</strong> long random string (paste into TemperCI as webhook secret)
@@ -101,8 +105,8 @@ export function GitHubAppGuide({ orgSlug, compact }: Props) {
         </li>
         <li>
           In TemperCI, set <strong>github_org</strong> to the org login, paste App ID, webhook secret,
-          and PEM. After a workflow runs, App → <strong>Recent Deliveries</strong> should show{" "}
-          <code>workflow_job</code> (not only <code>ping</code>).
+          and PEM. After you dispatch a <code>runs-on: temperci-…</code> workflow, the wizard marks
+          the webhook received — you do not need to redeliver a ping.
         </li>
       </ol>
 

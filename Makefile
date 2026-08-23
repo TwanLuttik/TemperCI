@@ -44,8 +44,9 @@ build-linux:
 
 test: build-ui
 	go test ./...
-	bash -n deploy/ubuntu/install.sh deploy/ubuntu/prepare-guest-image.sh
+	bash -n deploy/ubuntu/install.sh deploy/ubuntu/prepare-guest-image.sh deploy/ubuntu/install-cache-ca.sh
 	bash deploy/ubuntu/install_test.sh
+	bash deploy/ubuntu/install_cache_ca_test.sh
 
 # Placeholder until golangci-lint (or equivalent) is configured.
 lint:

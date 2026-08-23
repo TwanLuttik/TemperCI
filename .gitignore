@@ -16,6 +16,8 @@
 .env.*
 *.pem
 /etc/
+.host-reinstall-backup*
+.host-reinstall-backup/
 
 # Local agent/session scratch
 .superpowers/

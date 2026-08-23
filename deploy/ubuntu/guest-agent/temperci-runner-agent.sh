@@ -126,6 +126,11 @@ fi
 
 cp -a "$JIT" "$WORKDIR/jitconfig"
 chmod 600 "$WORKDIR/jitconfig"
+INJECT_CA=""
+if [ -f "$MNT/cache-ca.crt" ]; then
+  cp -a "$MNT/cache-ca.crt" "$WORKDIR/temperci-cache.crt"
+  INJECT_CA="$WORKDIR/temperci-cache.crt"
+fi
 # Keep inject unmounted while runner runs so host can poll independently.
 umount "$MNT" 2>/dev/null || true
 
@@ -232,17 +237,58 @@ EOF
 export RUNNER_ALLOW_RUNASROOT=1
 # Avoid the "Must not run interactively with sudo" guard when no TTY is present.
 export RUNNER_MANUALLY_TRAP_SIG=1
-# Node (actions/cache, upload-artifact) does not use the system trust store.
-# Point it at the TemperCI intercept CA so results-receiver MITM succeeds.
-for ca in /usr/local/share/ca-certificates/temperci-cache.crt /etc/ssl/certs/temperci-cache.pem; do
-  if [ -f "$ca" ]; then
-    export NODE_EXTRA_CA_CERTS="$ca"
-    break
+
+# Official Node (actions/cache, setup-node, upload-artifact) ignores the system
+# store. Install the intercept CA for root + user runner and export it so every
+# job process trusts the host SNI MITM.
+apply_cache_ca() {
+  local src="$1"
+  local dest="/usr/local/share/ca-certificates/temperci-cache.crt"
+  local work="$WORKDIR/temperci-cache.crt"
+  if [ -n "$src" ] && [ -f "$src" ]; then
+    cp -f "$src" "$work" 2>/dev/null || true
+    mkdir -p /usr/local/share/ca-certificates 2>/dev/null || true
+    cp -f "$src" "$dest" 2>/dev/null || true
+    chmod 0644 "$dest" 2>/dev/null || true
+    if [ -x /usr/sbin/update-ca-certificates ]; then
+      /usr/sbin/update-ca-certificates >/dev/null 2>&1 || true
+    fi
   fi
-done
-if [ -f /etc/ssl/certs/ca-certificates.crt ]; then
-  export SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
-fi
+  local ca=""
+  for c in "$dest" /etc/ssl/certs/temperci-cache.pem "$work"; do
+    if [ -f "$c" ]; then
+      ca="$c"
+      break
+    fi
+  done
+  [ -n "$ca" ] || return 0
+  export NODE_EXTRA_CA_CERTS="$ca"
+  if [ -f /etc/ssl/certs/ca-certificates.crt ]; then
+    export SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
+    export REQUESTS_CA_BUNDLE="$SSL_CERT_FILE"
+    export CURL_CA_BUNDLE="$SSL_CERT_FILE"
+    export GIT_SSL_CAINFO="$SSL_CERT_FILE"
+  fi
+  if [ -d /opt/actions-runner ]; then
+    printf 'NODE_EXTRA_CA_CERTS=%s\nSSL_CERT_FILE=%s\nREQUESTS_CA_BUNDLE=%s\nCURL_CA_BUNDLE=%s\nGIT_SSL_CAINFO=%s\n' \
+      "$ca" "${SSL_CERT_FILE:-}" "${SSL_CERT_FILE:-}" "${SSL_CERT_FILE:-}" "${SSL_CERT_FILE:-}" \
+      >/opt/actions-runner/.env 2>/dev/null || true
+  fi
+  for home in /root /home/runner; do
+    [ -d "$home" ] || continue
+    if [ ! -f "$home/.profile" ] || ! grep -q NODE_EXTRA_CA_CERTS "$home/.profile" 2>/dev/null; then
+      printf '\nexport NODE_EXTRA_CA_CERTS=%s\nexport SSL_CERT_FILE=%s\n' "$ca" "${SSL_CERT_FILE:-}" >>"$home/.profile" 2>/dev/null || true
+    fi
+    printf 'cafile=%s\n' "$ca" >"$home/.npmrc" 2>/dev/null || true
+  done
+  mkdir -p /etc/sudoers.d 2>/dev/null || true
+  printf 'Defaults env_keep += "NODE_EXTRA_CA_CERTS SSL_CERT_FILE REQUESTS_CA_BUNDLE CURL_CA_BUNDLE GIT_SSL_CAINFO"\n' \
+    >/etc/sudoers.d/temperci-cache-ca 2>/dev/null || true
+  chmod 0440 /etc/sudoers.d/temperci-cache-ca 2>/dev/null || true
+  log "cache CA trusted for Node/npm (NODE_EXTRA_CA_CERTS=$ca)"
+}
+
+apply_cache_ca "$INJECT_CA"
 
 # --jitconfig takes the encoded base64 string itself, NOT a filesystem path.
 # Passing a path makes Runner.Listener try to Base64-decode the path text and exit.

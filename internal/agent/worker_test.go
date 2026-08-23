@@ -556,3 +556,91 @@ func TestWorker_LeftoverFullClaimsOnlyOneWarmJob(t *testing.T) {
 		t.Fatalf("claimed=%d pending=%d errored=%d want 1 claimed / 1 pending", claimed, pending, errored)
 	}
 }
+
+func TestWorker_ShutdownDrainsInFlightJob(t *testing.T) {
+	store := control.NewAssignmentStore()
+	srv := control.NewServer(control.ServerConfig{
+		Store:      store,
+		AgentToken: "tok",
+		Logger:     slog.Default(),
+	})
+	ts := httptest.NewServer(srv.Handler())
+	t.Cleanup(ts.Close)
+
+	root := t.TempDir()
+	layout := vmm.NewLayout(root)
+	if err := cleanup.EnsureLayout(layout); err != nil {
+		t.Fatal(err)
+	}
+	img := filepath.Join(layout.ImagesDir(), "base")
+	if err := os.WriteFile(img, []byte("b"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	mgr, err := fake.New(layout)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool, err := agent.NewPool(agent.PoolConfig{
+		MinReady:          1,
+		MaxReady:          1,
+		ImagePath:         img,
+		VCPUs:             1,
+		MemoryMiB:         256,
+		ReconcileInterval: 20 * time.Millisecond,
+		BindWait:          time.Second,
+	}, agent.PoolDeps{
+		VMM:     mgr,
+		Cleaner: &cleanup.Cleaner{VMM: mgr, Layout: layout},
+		Runner:  &agent.StubRunner{},
+		Log:     slog.Default(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = pool.Shutdown(context.Background()) })
+	waitFor(t, 2*time.Second, func() bool { return pool.Counts().Warm >= 1 })
+
+	store.Put(&control.Assignment{
+		JobID:            88,
+		EncodedJITConfig: "jit-drain",
+		Status:           control.AssignmentMinted,
+		Org:              "acme",
+	})
+
+	client := agent.NewControlClient(ts.URL, "drain-agent", "tok", ts.Client())
+	worker := &agent.Worker{
+		Client:       client,
+		Pool:         pool,
+		Log:          slog.Default(),
+		PollInterval: 15 * time.Millisecond,
+		JobSimulate:  250 * time.Millisecond,
+		Capacity:     1,
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- worker.Run(ctx) }()
+
+	waitFor(t, 2*time.Second, func() bool {
+		a := store.Get(88)
+		return a != nil && a.Status == control.AssignmentStarted
+	})
+	cancel() // SIGTERM: must not yank the running job
+	select {
+	case err := <-done:
+		if err != nil && err != context.Canceled {
+			t.Fatalf("worker.Run = %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("worker did not return after drain")
+	}
+	a := store.Get(88)
+	if a == nil {
+		t.Fatal("missing assignment")
+	}
+	if a.Status != control.AssignmentFinished || a.Outcome != "success" {
+		t.Fatalf("status=%s outcome=%q want finished/success (drain, not yank)", a.Status, a.Outcome)
+	}
+}

@@ -161,6 +161,7 @@ func (s *Server) handleGitHubWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 
 	event := r.Header.Get("X-GitHub-Event")
+	s.recordWebhookDelivery(event, r.Header.Get("X-GitHub-Delivery"))
 	if event != "" && event != "workflow_job" && event != "ping" {
 		// Accept other events with 200 so GitHub does not retry noisily.
 		w.WriteHeader(http.StatusOK)
@@ -197,6 +198,20 @@ func (s *Server) handleGitHubWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_, _ = w.Write([]byte(`{"ok":true,"minted":true}`))
+}
+
+func (s *Server) recordWebhookDelivery(event, delivery string) {
+	if s.dash == nil || s.dash.Store == nil {
+		return
+	}
+	event = strings.TrimSpace(event)
+	if event == "" {
+		event = "unknown"
+	}
+	_ = s.dash.Store.RecordWebhookDelivery(store.WebhookDelivery{
+		Event:    event,
+		Delivery: strings.TrimSpace(delivery),
+	})
 }
 
 type agentHandler func(w http.ResponseWriter, r *http.Request)

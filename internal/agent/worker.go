@@ -81,13 +81,13 @@ func (w *Worker) Run(ctx context.Context) error {
 
 	for {
 		if err := ctx.Err(); err != nil {
-			return err
+			return w.drainReturn(err)
 		}
 		cap := w.snapshot()
 		if cap.FreeSlots <= 0 {
 			select {
 			case <-ctx.Done():
-				return ctx.Err()
+				return w.drainReturn(ctx.Err())
 			case <-time.After(poll):
 			}
 			continue
@@ -97,7 +97,7 @@ func (w *Worker) Run(ctx context.Context) error {
 			log.Error("claim failed", "err", err)
 			select {
 			case <-ctx.Done():
-				return ctx.Err()
+				return w.drainReturn(ctx.Err())
 			case <-time.After(poll):
 			}
 			continue
@@ -105,7 +105,7 @@ func (w *Worker) Run(ctx context.Context) error {
 		if job == nil {
 			select {
 			case <-ctx.Done():
-				return ctx.Err()
+				return w.drainReturn(ctx.Err())
 			case <-time.After(poll):
 			}
 			continue
@@ -135,6 +135,13 @@ func (w *Worker) heartbeat(ctx context.Context, log *slog.Logger) {
 			}
 		}
 	}
+}
+
+func (w *Worker) drainReturn(err error) error {
+	if n := w.inFlight(); n > 0 && w.Log != nil {
+		w.Log.Info("worker stopping; draining in-flight jobs", "n", n)
+	}
+	return err
 }
 
 func (w *Worker) addInFlight(delta int) {
@@ -238,6 +245,9 @@ func (w *Worker) handleJob(ctx context.Context, job *api.JobAssignment) error {
 	if log == nil {
 		log = slog.Default()
 	}
+	// Agent SIGTERM must not yank a running GitHub job. Detach this job from the
+	// worker cancel so drain can wait for runner.exit / simulate to finish.
+	jobCtx := context.WithoutCancel(ctx)
 	jobIDStr := strconv.FormatInt(job.JobID, 10)
 	payload := JobPayload{
 		JobID:      jobIDStr,
@@ -249,13 +259,13 @@ func (w *Worker) handleJob(ctx context.Context, job *api.JobAssignment) error {
 	if w.BeforeBind != nil {
 		w.BeforeBind()
 	}
-	res, err := w.Pool.Bind(ctx, payload)
+	res, err := w.Pool.Bind(jobCtx, payload)
 	// Clear secret from payload as soon as bind returns.
 	payload.JITConfig = ""
 	job.EncodedJITConfig = ""
 
 	if err != nil {
-		_ = w.finish(ctx, job.JobID, job.RepoFullName, "error", "", false, err.Error(), JobLogs{})
+		_ = w.finish(jobCtx, job.JobID, job.RepoFullName, "error", "", false, err.Error(), JobLogs{})
 		return err
 	}
 	if job.RepoFullName != "" && (w.Cache != nil || w.OCI != nil) {
@@ -273,7 +283,7 @@ func (w *Worker) handleJob(ctx context.Context, job *api.JobAssignment) error {
 		}
 	}
 
-	if err := w.Client.ReportStarted(ctx, job.JobID, string(res.VMID), res.WarmStart); err != nil {
+	if err := w.Client.ReportStarted(jobCtx, job.JobID, string(res.VMID), res.WarmStart); err != nil {
 		log.Error("report started failed", "job_id", job.JobID, "err", err)
 	}
 
@@ -283,11 +293,11 @@ func (w *Worker) handleJob(ctx context.Context, job *api.JobAssignment) error {
 		"warm_bind", res.WarmStart,
 	)
 
-	outcome, waitErr := w.waitForJob(ctx, res.VMID, job.JobID)
+	outcome, waitErr := w.waitForJob(jobCtx, res.VMID, job.JobID)
 	logs := w.collectLogs(res.VMID)
 	if waitErr != nil && !errors.Is(waitErr, context.DeadlineExceeded) {
-		_ = w.Pool.JobFinished(context.Background(), res.VMID, "cancelled")
-		_ = w.finish(context.Background(), job.JobID, job.RepoFullName, "cancelled", string(res.VMID), res.WarmStart, waitErr.Error(), logs)
+		_ = w.Pool.JobFinished(jobCtx, res.VMID, "cancelled")
+		_ = w.finish(jobCtx, job.JobID, job.RepoFullName, "cancelled", string(res.VMID), res.WarmStart, waitErr.Error(), logs)
 		return waitErr
 	}
 	if outcome == "timeout" {
@@ -296,22 +306,22 @@ func (w *Worker) handleJob(ctx context.Context, job *api.JobAssignment) error {
 			"vm_id", string(res.VMID),
 			"deadline", w.JobDeadline.String(),
 		)
-		if err := w.Pool.JobFinished(ctx, res.VMID, "timeout"); err != nil {
-			_ = w.finish(ctx, job.JobID, job.RepoFullName, "timeout", string(res.VMID), res.WarmStart, err.Error(), logs)
+		if err := w.Pool.JobFinished(jobCtx, res.VMID, "timeout"); err != nil {
+			_ = w.finish(jobCtx, job.JobID, job.RepoFullName, "timeout", string(res.VMID), res.WarmStart, err.Error(), logs)
 			return err
 		}
-		if err := w.finish(ctx, job.JobID, job.RepoFullName, "timeout", string(res.VMID), res.WarmStart, "job deadline exceeded", logs); err != nil {
+		if err := w.finish(jobCtx, job.JobID, job.RepoFullName, "timeout", string(res.VMID), res.WarmStart, "job deadline exceeded", logs); err != nil {
 			return err
 		}
 		return nil
 	}
 
 	// outcome success | failure from runner exit code
-	if err := w.Pool.JobFinished(ctx, res.VMID, outcome); err != nil {
-		_ = w.finish(ctx, job.JobID, job.RepoFullName, "error", string(res.VMID), res.WarmStart, err.Error(), logs)
+	if err := w.Pool.JobFinished(jobCtx, res.VMID, outcome); err != nil {
+		_ = w.finish(jobCtx, job.JobID, job.RepoFullName, "error", string(res.VMID), res.WarmStart, err.Error(), logs)
 		return err
 	}
-	if err := w.finish(ctx, job.JobID, job.RepoFullName, outcome, string(res.VMID), res.WarmStart, "", logs); err != nil {
+	if err := w.finish(jobCtx, job.JobID, job.RepoFullName, outcome, string(res.VMID), res.WarmStart, "", logs); err != nil {
 		return err
 	}
 	log.Info("job complete",

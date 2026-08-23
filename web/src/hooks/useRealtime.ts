@@ -12,6 +12,7 @@ export type VMRow = {
   cpu_percent: number;
   rss_mib: number;
   disk_mib?: number;
+  created_at?: string;
 };
 
 export type RealtimeSnapshot = {

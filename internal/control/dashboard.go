@@ -190,7 +190,7 @@ func (s *Server) resolvePrincipal(r *http.Request) (*uiPrincipal, error) {
 }
 
 func (s *Server) handleSetupStatus(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, s.setupSnapshot())
+	writeJSON(w, http.StatusOK, s.setupSnapshot(r.Host))
 }
 
 type setupApplyRequest struct {
@@ -526,6 +526,13 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request, _ *uiPri
 			cacheMax += a.Cache.MaxBytes
 		}
 	}
+	listen := ""
+	if s.dash != nil && s.dash.Config != nil {
+		listen = s.dash.Config.ListenAddr
+	}
+	wh := s.webhookSnapshot("", listen)
+	received, _ := wh["received"].(bool)
+	lastEvent, _ := wh["last_event"].(string)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":                 true,
 		"fleet_ready":        s.dash != nil && s.dash.FleetReady,
@@ -541,6 +548,9 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request, _ *uiPri
 		"jobs_finished":      counts.Finished,
 		"jobs_failed":        counts.Failed,
 		"hostctl_configured": s.hostctlAvailable(),
+		"webhook_received":   received,
+		"webhook_last_event": lastEvent,
+		"webhook":            wh,
 		"run_p50_ms":         p50,
 		"run_p95_ms":         p95,
 		"cache_hits":         cacheHits,
@@ -745,6 +755,7 @@ func (s *Server) handleSettingsConfig(w http.ResponseWriter, r *http.Request, _ 
 		"setup_required": cfg.NeedsSetup(),
 		"missing_count":  missing,
 		"fields":         fields,
+		"webhook":        s.webhookSnapshot("", cfg.ListenAddr),
 	})
 }
 

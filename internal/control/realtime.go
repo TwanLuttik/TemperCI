@@ -1,6 +1,7 @@
 package control
 
 import (
+	"sort"
 	"time"
 
 	"github.com/TwanLuttik/TemperCI/internal/api"
@@ -39,16 +40,17 @@ type jobRowWS struct {
 }
 
 type vmRowWS struct {
-	AgentID    string  `json:"agent_id"`
-	ID         string  `json:"id"`
-	State      string  `json:"state"`
-	JobID      string  `json:"job_id,omitempty"`
-	VCPUs      int     `json:"vcpus"`
-	MemoryMiB  int     `json:"memory_mib"`
-	PID        int     `json:"pid,omitempty"`
-	CPUPercent float64 `json:"cpu_percent"`
-	RSSMiB     float64 `json:"rss_mib"`
-	DiskMiB    float64 `json:"disk_mib,omitempty"`
+	AgentID    string    `json:"agent_id"`
+	ID         string    `json:"id"`
+	State      string    `json:"state"`
+	JobID      string    `json:"job_id,omitempty"`
+	VCPUs      int       `json:"vcpus"`
+	MemoryMiB  int       `json:"memory_mib"`
+	PID        int       `json:"pid,omitempty"`
+	CPUPercent float64   `json:"cpu_percent"`
+	RSSMiB     float64   `json:"rss_mib"`
+	DiskMiB    float64   `json:"disk_mib,omitempty"`
+	CreatedAt  time.Time `json:"created_at,omitempty"`
 }
 
 // BuildSnapshot assembles the current fleet view for WebSocket clients.
@@ -72,9 +74,24 @@ func (s *Server) BuildSnapshot() RealtimeSnapshot {
 				CPUPercent: v.CPUPercent,
 				RSSMiB:     v.RSSMiB,
 				DiskMiB:    v.DiskMiB,
+				CreatedAt:  v.CreatedAt,
 			})
 		}
 	}
+	sort.SliceStable(vms, func(i, j int) bool {
+		ai, aj := vms[i].CreatedAt, vms[j].CreatedAt
+		zi, zj := ai.IsZero(), aj.IsZero()
+		if zi != zj {
+			return !zi
+		}
+		if !zi && !ai.Equal(aj) {
+			return ai.Before(aj)
+		}
+		if vms[i].AgentID != vms[j].AgentID {
+			return vms[i].AgentID < vms[j].AgentID
+		}
+		return vms[i].ID < vms[j].ID
+	})
 	list := s.store.ListRecent(100)
 	now := time.Now().UTC()
 	jobs := make([]jobRowWS, 0, len(list))
@@ -113,32 +130,39 @@ func (s *Server) BuildSnapshot() RealtimeSnapshot {
 	}
 	org := ""
 	fleetReady := false
+	listen := ""
 	if s.dash != nil && s.dash.Config != nil {
 		org = s.dash.Config.GitHubOrg
 		fleetReady = s.dash.FleetReady
+		listen = s.dash.Config.ListenAddr
 	}
+	wh := s.webhookSnapshot("", listen)
+	received, _ := wh["received"].(bool)
+	lastEvent, _ := wh["last_event"].(string)
 	return RealtimeSnapshot{
 		Type: "snapshot",
 		Time: time.Now().UTC(),
 		Overview: map[string]any{
-			"fleet_ready":       fleetReady,
-			"org":               org,
-			"agents_registered": len(agents),
-			"warm":              warm,
-			"busy":              busy,
-			"jobs_pending":      s.store.PendingLen(),
-			"jobs_minted":       counts.Minted,
-			"jobs_assigned":     counts.Assigned,
-			"jobs_started":      counts.Started,
-			"jobs_finished":     counts.Finished,
-			"jobs_failed":       counts.Failed,
-			"run_p50_ms":        p50,
-			"run_p95_ms":        p95,
-			"cache_hits":        cacheHits,
-			"cache_misses":      cacheMisses,
-			"cache_bytes":       cacheBytes,
-			"cache_max_bytes":   cacheMax,
-			"ws_clients":        0,
+			"fleet_ready":        fleetReady,
+			"org":                org,
+			"webhook_received":   received,
+			"webhook_last_event": lastEvent,
+			"agents_registered":  len(agents),
+			"warm":               warm,
+			"busy":               busy,
+			"jobs_pending":       s.store.PendingLen(),
+			"jobs_minted":        counts.Minted,
+			"jobs_assigned":      counts.Assigned,
+			"jobs_started":       counts.Started,
+			"jobs_finished":      counts.Finished,
+			"jobs_failed":        counts.Failed,
+			"run_p50_ms":         p50,
+			"run_p95_ms":         p95,
+			"cache_hits":         cacheHits,
+			"cache_misses":       cacheMisses,
+			"cache_bytes":        cacheBytes,
+			"cache_max_bytes":    cacheMax,
+			"ws_clients":         0,
 		},
 		Hosts: agents,
 		Jobs:  jobs,

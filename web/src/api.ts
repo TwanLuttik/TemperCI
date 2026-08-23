@@ -49,6 +49,9 @@ export type SetupValues = {
   listen_addr?: string;
   cache_listen_addr?: string;
   webhook_set?: boolean;
+  webhook_received?: boolean;
+  webhook_last_event?: string;
+  webhook_url?: string;
   pem_set?: boolean;
   agent_token_set?: boolean;
   admin_users?: number;
@@ -68,6 +71,27 @@ export type SetupStatus = {
   listen_addr: string;
   steps?: SetupCheck[];
   values?: SetupValues;
+  webhook?: WebhookStatus;
+};
+
+export type WebhookEndpoint = {
+  kind: string;
+  label?: string;
+  url: string;
+  public: boolean;
+  detail?: string;
+};
+
+export type WebhookStatus = {
+  received: boolean;
+  last_at?: string;
+  last_event?: string;
+  last_delivery?: string;
+  suggested_url?: string;
+  suggested_kind?: string;
+  suggested_public?: boolean;
+  suggested_detail?: string;
+  endpoints?: WebhookEndpoint[];
 };
 
 export type Me = {
@@ -94,6 +118,9 @@ export type Overview = {
   jobs_finished: number;
   jobs_failed: number;
   hostctl_configured: boolean;
+  webhook_received?: boolean;
+  webhook_last_event?: string;
+  webhook?: WebhookStatus;
   run_p50_ms?: number;
   run_p95_ms?: number;
   cache_hits?: number;
@@ -292,6 +319,7 @@ export type SettingsConfig = {
   setup_required: boolean;
   missing_count: number;
   fields: ConfigField[];
+  webhook?: WebhookStatus;
 };
 
 export type RunnerShape = {

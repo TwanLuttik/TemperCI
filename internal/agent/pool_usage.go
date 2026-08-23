@@ -27,6 +27,7 @@ func (p *Pool) ListUsage() []api.VMUsage {
 			JobID:     pv.jobID,
 			VCPUs:     pv.vcpus,
 			MemoryMiB: pv.memoryMiB,
+			CreatedAt: pv.createdAt,
 			SampledAt: now.UTC(),
 		}
 		if u.VCPUs <= 0 {
@@ -46,6 +47,9 @@ func (p *Pool) ListUsage() []api.VMUsage {
 					u.MemoryMiB = m.MemoryMiB
 				}
 				u.PID = m.PID
+				if !m.CreatedAt.IsZero() {
+					u.CreatedAt = m.CreatedAt
+				}
 				if m.PID > 0 {
 					cpu, rss := p.sampler.sample(m.PID)
 					u.CPUPercent = cpu
@@ -56,5 +60,6 @@ func (p *Pool) ListUsage() []api.VMUsage {
 		}
 		out = append(out, u)
 	}
+	api.SortVMUsage(out)
 	return out
 }

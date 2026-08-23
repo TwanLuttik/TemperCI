@@ -8,8 +8,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/TwanLuttik/TemperCI/internal/config"
+	"github.com/TwanLuttik/TemperCI/internal/store"
 )
 
 func TestSetupStatus_ReportsInstalledSteps(t *testing.T) {
@@ -78,6 +80,126 @@ func TestSetupStatus_ReportsInstalledSteps(t *testing.T) {
 	}
 	if byID["access"] != "ok" || byID["github"] != "ok" || byID["agent"] != "ok" {
 		t.Fatalf("steps = %+v", body.Steps)
+	}
+}
+
+func TestSetupStatus_ReportsWebhookDelivery(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.Open(filepath.Join(dir, "control.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	srv := NewServer(ServerConfig{
+		WebhookSecret: "whsec",
+		Dashboard: &DashboardConfig{
+			Config: &config.ControlConfig{
+				AuthMode:       "open",
+				SetupCompleted: false,
+				ListenAddr:     "0.0.0.0:8080",
+			},
+			Store: st,
+		},
+	})
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/setup/status", nil)
+	req.Host = "127.0.0.1:8080"
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d %s", rr.Code, rr.Body.String())
+	}
+	var before struct {
+		Webhook struct {
+			Received bool `json:"received"`
+		} `json:"webhook"`
+		Values struct {
+			WebhookReceived bool `json:"webhook_received"`
+		} `json:"values"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &before); err != nil {
+		t.Fatal(err)
+	}
+	if before.Webhook.Received || before.Values.WebhookReceived {
+		t.Fatalf("expected no delivery: %+v", before)
+	}
+
+	ping := []byte(`{"zen":"ok"}`)
+	preq := httptest.NewRequest(http.MethodPost, "/webhooks/github", strings.NewReader(string(ping)))
+	preq.Header.Set("Content-Type", "application/json")
+	preq.Header.Set("X-Hub-Signature-256", sign("whsec", ping))
+	preq.Header.Set("X-GitHub-Event", "ping")
+	prr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(prr, preq)
+	if prr.Code != http.StatusOK {
+		t.Fatalf("ping=%d %s", prr.Code, prr.Body.String())
+	}
+
+	rr2 := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr2, httptest.NewRequest(http.MethodGet, "/api/v1/setup/status", nil))
+	var after struct {
+		Webhook struct {
+			Received  bool   `json:"received"`
+			LastEvent string `json:"last_event"`
+		} `json:"webhook"`
+		Values struct {
+			WebhookReceived bool `json:"webhook_received"`
+		} `json:"values"`
+	}
+	if err := json.Unmarshal(rr2.Body.Bytes(), &after); err != nil {
+		t.Fatal(err)
+	}
+	if !after.Webhook.Received || !after.Values.WebhookReceived || after.Webhook.LastEvent != "ping" {
+		t.Fatalf("after ping = %+v", after)
+	}
+}
+
+func TestSetupStatus_JobAssignmentMarksWebhookReceived(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.Open(filepath.Join(dir, "control.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	as := NewAssignmentStore()
+	as.Put(&Assignment{
+		JobID:     42,
+		Status:    AssignmentMinted,
+		CreatedAt: time.Now().UTC(),
+	})
+	srv := NewServer(ServerConfig{
+		Store:         as,
+		WebhookSecret: "whsec",
+		Dashboard: &DashboardConfig{
+			Config: &config.ControlConfig{
+				AuthMode:       "open",
+				SetupCompleted: false,
+				ListenAddr:     "0.0.0.0:8080",
+			},
+			Store: st,
+		},
+	})
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/api/v1/setup/status", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d %s", rr.Code, rr.Body.String())
+	}
+	var body struct {
+		Webhook struct {
+			Received  bool   `json:"received"`
+			LastEvent string `json:"last_event"`
+		} `json:"webhook"`
+		Values struct {
+			WebhookReceived bool `json:"webhook_received"`
+		} `json:"values"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if !body.Webhook.Received || !body.Values.WebhookReceived {
+		t.Fatalf("job should prove webhook is set up: %+v", body)
+	}
+	if body.Webhook.LastEvent != "workflow_job" {
+		t.Fatalf("last_event=%q want workflow_job", body.Webhook.LastEvent)
 	}
 }
 

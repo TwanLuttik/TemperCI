@@ -8,6 +8,9 @@ DefaultDependencies=yes
 [Service]
 Type=simple
 Restart=no
+Environment=NODE_EXTRA_CA_CERTS=/usr/local/share/ca-certificates/temperci-cache.crt
+Environment=SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
+Environment=REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
 ExecStart=/usr/local/sbin/temperci-runner-agent.sh
 StandardOutput=journal+console
 StandardError=journal+console

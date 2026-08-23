@@ -69,6 +69,9 @@ type InjectRunner struct {
 	// JITRelPath is the guest-relative path for the encoded JIT file.
 	// Default: jitconfig
 	JITRelPath string
+	// CacheCAPEM is the host intercept CA. When set, it is copied onto the
+	// inject disk as cache-ca.crt so the guest can trust Node/npm TLS.
+	CacheCAPEM []byte
 }
 
 // StartRunner injects EncodedJITConfig and invokes the runner entrypoint.
@@ -96,6 +99,12 @@ func (r *InjectRunner) StartRunner(ctx context.Context, id vmm.ID, job JobPayloa
 	// Also write a non-secret job meta file for operators/debug.
 	meta := fmt.Sprintf("job_id=%s\nrunner_name=%s\n", job.JobID, job.RunnerName)
 	_ = r.Guest.WriteFile(ctx, id, "job.meta", []byte(meta), 0o600)
+
+	if len(r.CacheCAPEM) > 0 {
+		if err := r.Guest.WriteFile(ctx, id, "cache-ca.crt", r.CacheCAPEM, 0o644); err != nil {
+			return fmt.Errorf("agent: write cache CA: %w", err)
+		}
+	}
 
 	// Guest agent mounts inject disk, reads jitconfig, and execs:
 	//   run.sh --jitconfig "$JIT_B64"

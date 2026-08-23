@@ -1,11 +1,15 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 
-import { api } from "../api";
+import { api, formatDuration, type Job } from "../api";
 import { EmptyState } from "../components/empty-state";
 import { PageHeader } from "../components/page-header";
 import { LiveDot, StatusBadge } from "../components/status-badge";
 import { useRealtime, type VMRow } from "../hooks/useRealtime";
+import { findJobForVM } from "../lib/vm-job";
+import { orderVMs } from "../lib/vm-list";
 import { Card } from "@/components/ui/card";
+import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
 import { Progress } from "@/components/ui/progress";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
@@ -43,18 +47,72 @@ function UsageBar({
   );
 }
 
+function VMJobCell({ jobId, job }: { jobId?: string; job?: Job }) {
+  if (!jobId) {
+    return <span className="font-mono text-xs text-muted-foreground">—</span>;
+  }
+  const title = job?.name || `Job ${jobId}`;
+  return (
+    <HoverCard openDelay={180} closeDelay={80}>
+      <HoverCardTrigger asChild>
+        <Link
+          to={`/jobs/${jobId}`}
+          className="font-mono text-xs text-primary underline-offset-4 hover:underline"
+        >
+          {jobId}
+        </Link>
+      </HoverCardTrigger>
+      <HoverCardContent side="top">
+        <div className="space-y-2">
+          <div>
+            <div className="font-medium leading-snug">{title}</div>
+            <div className="mt-0.5 font-mono text-[11px] text-muted-foreground">{jobId}</div>
+          </div>
+          <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-[12px]">
+            <dt className="text-muted-foreground">Repo</dt>
+            <dd className="truncate">{job?.repo_full_name || "—"}</dd>
+            <dt className="text-muted-foreground">Workflow</dt>
+            <dd className="truncate">{job?.workflow_name || "—"}</dd>
+            <dt className="text-muted-foreground">Status</dt>
+            <dd className="flex flex-wrap items-center gap-1">
+              <StatusBadge status={job?.status || "unknown"} />
+              {job?.outcome ? <StatusBadge status={job.outcome} /> : null}
+            </dd>
+            <dt className="text-muted-foreground">Run</dt>
+            <dd className="font-mono text-[11px]">{formatDuration(job?.run_ms || job?.total_ms)}</dd>
+            <dt className="text-muted-foreground">Bind</dt>
+            <dd>{job?.warm_bind ? "warm pool" : job ? "cold" : "—"}</dd>
+            {job?.labels && job.labels.length > 0 ? (
+              <>
+                <dt className="text-muted-foreground">Labels</dt>
+                <dd className="truncate text-muted-foreground">{job.labels.join(", ")}</dd>
+              </>
+            ) : null}
+          </dl>
+          <div className="text-[11px] text-muted-foreground">Open job details</div>
+        </div>
+      </HoverCardContent>
+    </HoverCard>
+  );
+}
+
 export function VMsPage() {
   const rt = useRealtime(true);
   const [vms, setVms] = useState<VMRow[]>([]);
+  const [jobs, setJobs] = useState<Job[]>([]);
   const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => {
     if (rt.last?.vms) {
-      setVms(rt.last.vms);
+      setVms((prev) => orderVMs(prev, rt.last?.vms || []));
+      if (rt.last.jobs) setJobs(rt.last.jobs);
       return;
     }
-    api<{ vms: VMRow[] }>("/api/v1/vms")
-      .then((d) => setVms(d.vms || []))
+    Promise.all([api<{ vms: VMRow[] }>("/api/v1/vms"), api<{ jobs: Job[] }>("/api/v1/jobs")])
+      .then(([v, j]) => {
+        setVms((prev) => orderVMs(prev, v.vms || []));
+        setJobs(j.jobs || []);
+      })
       .catch((e: Error) => setErr(e.message));
   }, [rt.last]);
 
@@ -105,7 +163,9 @@ export function VMsPage() {
                   <TableCell>
                     <StatusBadge status={v.state} />
                   </TableCell>
-                  <TableCell className="font-mono text-xs">{v.job_id || "—"}</TableCell>
+                  <TableCell>
+                    <VMJobCell jobId={v.job_id} job={findJobForVM(jobs, v.job_id)} />
+                  </TableCell>
                   <TableCell>
                     <UsageBar label="CPU" value={v.cpu_percent || 0} max={100} unit="%" />
                   </TableCell>

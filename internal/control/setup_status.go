@@ -16,7 +16,7 @@ type setupCheck struct {
 	Detail string `json:"detail"`
 }
 
-func (s *Server) setupSnapshot() map[string]any {
+func (s *Server) setupSnapshot(requestHost string) map[string]any {
 	cfg := &config.ControlConfig{}
 	if s.dash != nil && s.dash.Config != nil {
 		cfg = s.dash.Config
@@ -121,6 +121,10 @@ func (s *Server) setupSnapshot() map[string]any {
 	}
 
 	needs := cfg.NeedsSetup() && !dbDone
+	wh := s.webhookSnapshot(requestHost, cfg.ListenAddr)
+	received, _ := wh["received"].(bool)
+	lastEvent, _ := wh["last_event"].(string)
+	suggested, _ := wh["suggested_url"].(string)
 	return map[string]any{
 		"ok":              true,
 		"needs_setup":     needs,
@@ -129,6 +133,7 @@ func (s *Server) setupSnapshot() map[string]any {
 		"fleet_ready":     s.dash != nil && s.dash.FleetReady && !cfg.NeedsSetup(),
 		"org":             cfg.GitHubOrg,
 		"listen_addr":     cfg.ListenAddr,
+		"webhook":         wh,
 		"values": map[string]any{
 			"auth_mode":              cfg.AuthMode,
 			"github_org":             cfg.GitHubOrg,
@@ -136,6 +141,9 @@ func (s *Server) setupSnapshot() map[string]any {
 			"listen_addr":            cfg.ListenAddr,
 			"cache_listen_addr":      cacheAddr,
 			"webhook_set":            webhookSet,
+			"webhook_received":       received,
+			"webhook_last_event":     lastEvent,
+			"webhook_url":            suggested,
 			"pem_set":                pemSet,
 			"agent_token_set":        tokenSet,
 			"admin_users":            adminUsers,

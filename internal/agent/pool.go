@@ -33,6 +33,7 @@ type poolVM struct {
 	jobID        string
 	vcpus        int
 	memoryMiB    int
+	createdAt    time.Time
 	warmSince    time.Time
 	busySince    time.Time
 	destroyAfter time.Time // next destroy retry not before this
@@ -327,6 +328,7 @@ func (p *Pool) Bind(ctx context.Context, job JobPayload) (*BindResult, error) {
 				jobID:     job.JobID,
 				vcpus:     shape.VCPUs,
 				memoryMiB: shape.MemoryMiB,
+				createdAt: p.now(),
 				busySince: p.now(),
 			}
 			selected = id
@@ -613,7 +615,7 @@ func (p *Pool) bootIntoWarm(ctx context.Context, shape VMShape) (vmm.ID, error) 
 		p.mu.Unlock()
 		return "", ErrNoCapacity
 	}
-	p.vms[id] = &poolVM{id: id, state: StatePoolBoot, vcpus: shape.VCPUs, memoryMiB: shape.MemoryMiB}
+	p.vms[id] = &poolVM{id: id, state: StatePoolBoot, vcpus: shape.VCPUs, memoryMiB: shape.MemoryMiB, createdAt: p.now()}
 	p.mu.Unlock()
 
 	if err := p.provision(ctx, id, shape); err != nil {

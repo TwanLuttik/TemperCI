@@ -68,6 +68,33 @@ func TestInjectRunner_WritesJITAndStarts(t *testing.T) {
 	}
 }
 
+func TestInjectRunner_WritesCacheCA(t *testing.T) {
+	root := t.TempDir()
+	layout := vmm.NewLayout(root)
+	id := vmm.ID("vm-ca")
+	if err := os.MkdirAll(layout.InstanceDir(id), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	pem := []byte("-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n")
+	r := &agent.InjectRunner{
+		Guest:      &agent.FileGuestExec{Layout: layout},
+		CacheCAPEM: pem,
+	}
+	if err := r.StartRunner(context.Background(), id, agent.JobPayload{
+		JobID:     "1",
+		JITConfig: "jit",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(filepath.Join(layout.GuestDir(id), "cache-ca.crt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(pem) {
+		t.Fatalf("cache-ca.crt = %q", got)
+	}
+}
+
 func TestInjectRunner_RequiresJIT(t *testing.T) {
 	root := t.TempDir()
 	layout := vmm.NewLayout(root)

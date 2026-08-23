@@ -90,6 +90,13 @@ export function OverviewPage({ onOverview }: Props) {
               <StatusBadge tone={o.hostctl_configured ? "ok" : "neutral"}>
                 hostctl {o.hostctl_configured ? "on" : "off"}
               </StatusBadge>
+              <StatusBadge tone={o.webhook_received ? "ok" : "warn"}>
+                {o.webhook_received
+                  ? o.webhook_last_event === "workflow_job"
+                    ? "webhook job"
+                    : `webhook ${o.webhook_last_event || "received"}`
+                  : "waiting for a job"}
+              </StatusBadge>
               <StatusBadge>{o.jobs_failed || 0} failed</StatusBadge>
             </div>
           </CardContent>

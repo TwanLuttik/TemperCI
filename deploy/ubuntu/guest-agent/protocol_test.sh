@@ -28,11 +28,14 @@ mkdir -p "${INJECT}" "${MNT}" "${RUNNER_DIR}" "${STUBS}" "${STATE}"
 
 # Fake inject disk already has JIT (host sync-before-guest-poll).
 printf 'dGVzdC1qaXQtY29uZmln\n' >"${INJECT}/jitconfig"
+printf '%s\n' '-----BEGIN CERTIFICATE-----' 'TESTCA' '-----END CERTIFICATE-----' >"${INJECT}/cache-ca.crt"
 
 # Stub runner: official run.sh prints connect markers and exits 0.
+# Also record NODE_EXTRA_CA_CERTS so we know the guest agent exported the CA.
 cat >"${RUNNER_DIR}/run.sh" <<'EOF'
 #!/usr/bin/env bash
 set -eu
+echo "NODE_EXTRA_CA_CERTS=${NODE_EXTRA_CA_CERTS:-}" >"${TEMPERCI_WORKDIR}/node-ca.env"
 echo "Connected to GitHub"
 echo "Listening for Jobs"
 echo "Running job: protocol-smoke"
@@ -151,6 +154,19 @@ fi
 if [[ ! -f "${INJECT}/jitconfig" ]]; then
   echo "FAIL: jitconfig missing on inject after run" >&2
   exit 1
+fi
+
+if [[ ! -f "${TEMPERCI_WORKDIR}/node-ca.env" ]] || ! grep -q 'TESTCA\|temperci-cache' "${TEMPERCI_WORKDIR}/node-ca.env"; then
+  # The stub records the env path; the file itself is the PEM copy under WORKDIR.
+  if [[ ! -f "${TEMPERCI_WORKDIR}/temperci-cache.crt" ]]; then
+    echo "FAIL: guest agent did not stage cache CA from inject" >&2
+    cat "${TEMPERCI_WORKDIR}/node-ca.env" 2>/dev/null || true
+    exit 1
+  fi
+  if [[ ! -f "${TEMPERCI_WORKDIR}/node-ca.env" ]] || ! grep -q NODE_EXTRA_CA_CERTS "${TEMPERCI_WORKDIR}/node-ca.env"; then
+    echo "FAIL: NODE_EXTRA_CA_CERTS not exported to runner" >&2
+    exit 1
+  fi
 fi
 
 echo "protocol_test: OK (jitconfig in → runner.exit=${got})"
