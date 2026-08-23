@@ -351,10 +351,10 @@ main() {
   temperci_write_agent_toml "$(temperci_root /etc/temperci/agent.toml)" "$token" "/var/lib/temperci"
   copy_support_files
   if [[ -z "${DESTDIR:-}" ]]; then
-    chgrp temperci "$(temperci_root /etc/temperci)" "$(temperci_root /etc/temperci)"/*.toml 2>/dev/null || true
+    # control runs as user temperci and must create github-app.pem + rewrite TOML.
+    chown -R temperci:temperci "$(temperci_root /etc/temperci)" "$(temperci_root /var/lib/temperci)" 2>/dev/null || true
     chmod 0750 "$(temperci_root /etc/temperci)" || true
     chmod 0640 "$(temperci_root /etc/temperci)"/*.toml || true
-    chown -R temperci:temperci "$(temperci_root /var/lib/temperci)" 2>/dev/null || true
     maybe_systemctl systemctl daemon-reload
   fi
   temperci_step 5 "$TOTAL" "Writing config + systemd" ok

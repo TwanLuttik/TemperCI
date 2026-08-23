@@ -48,6 +48,11 @@ pkgs="$(TEMPERCI_SKIP_QEMU_KVM=1 temperci_apt_packages | tr '\n' ' ')"
 echo "$pkgs" | grep -q qemu-kvm && fail "qemu-kvm must not be installed when skipped"
 echo "$pkgs" | grep -q debootstrap || fail "debootstrap required"
 
+# control runs as User=temperci with ProtectSystem=strict; wizard writes
+# github-app.pem and control.toml under /etc/temperci.
+unit="$root/../systemd/temperci-control.service"
+grep -E '^ReadWritePaths=.*\/etc\/temperci' "$unit" >/dev/null || fail "control unit must ReadWritePaths=/etc/temperci (wizard PEM write)"
+
 # --- write-once TOML ---
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT

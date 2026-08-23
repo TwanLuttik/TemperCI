@@ -15,7 +15,9 @@ RestartSec=5
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/var/lib/temperci /var/log/temperci
+# Wizard/settings write control.toml + github-app.pem here. Without this path,
+# ProtectSystem=strict makes /etc read-only and Apply fails with EACCES.
+ReadWritePaths=/etc/temperci /var/lib/temperci /var/log/temperci
 ConfigurationDirectory=temperci
 StateDirectory=temperci
 LogsDirectory=temperci
