@@ -39,6 +39,11 @@ type DashboardConfig struct {
 	FleetReady bool
 	// Hub optional; if nil, server creates one.
 	Hub *Hub
+	// Version is the running control binary (ldflags). Empty is treated as "dev".
+	Version string
+	// Updates checks GitHub releases. Nil skips the outbound probe and still
+	// reports Version from GET /api/v1/version.
+	Updates *UpdateChecker
 }
 
 func (d *DashboardConfig) agentConfigPath() string {
@@ -98,6 +103,7 @@ func (s *Server) mountDashboard(d DashboardConfig) {
 	s.mux.HandleFunc("POST /api/v1/vms/{id}/kill", s.withUIAuth(s.handleVMKill, true))
 	s.mux.HandleFunc("GET /api/v1/users", s.withUIAuth(s.handleListUsers, true))
 	s.mux.HandleFunc("POST /api/v1/users", s.withUIAuth(s.handleCreateUser, true))
+	s.mux.HandleFunc("GET /api/v1/version", s.handleVersion)
 	s.mux.HandleFunc("GET /api/v1/system/status", s.withUIAuth(s.handleSystemStatus, false))
 	s.mux.HandleFunc("POST /api/v1/system/restart", s.withUIAuth(s.handleSystemRestart, true))
 	s.mux.HandleFunc("POST /api/v1/system/install", s.withUIAuth(s.handleSystemInstall, true))
@@ -107,6 +113,18 @@ func (s *Server) mountDashboard(d DashboardConfig) {
 	s.mux.HandleFunc("POST /api/v1/cache/clear", s.withUIAuth(s.handleCacheClear, true))
 	// Vite SPA (embedded dist/). More specific /api and /v1 routes take precedence.
 	s.mux.Handle("/", webui.SPAHandler())
+}
+
+func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
+	if s.dash != nil && s.dash.Updates != nil {
+		writeJSON(w, http.StatusOK, s.dash.Updates.Status(r.Context()))
+		return
+	}
+	ver := "dev"
+	if s.dash != nil && strings.TrimSpace(s.dash.Version) != "" {
+		ver = strings.TrimSpace(s.dash.Version)
+	}
+	writeJSON(w, http.StatusOK, VersionStatus{OK: true, Version: ver})
 }
 
 func (s *Server) handleDashboardWS(w http.ResponseWriter, r *http.Request) {
@@ -1024,7 +1042,7 @@ func (s *Server) cacheSnapshot() map[string]any {
 		if a.Cache != nil {
 			h.CacheUsage = *a.Cache
 			if h.Repos != nil {
-				h.Repos = append([]api.CacheRepoUsage(nil), h.Repos...)
+				h.Repos = cloneCacheRepos(h.Repos)
 			}
 		}
 		hosts = append(hosts, h)

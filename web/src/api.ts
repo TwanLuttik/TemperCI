@@ -116,6 +116,16 @@ export type Me = {
   role?: string;
 };
 
+export type VersionStatus = {
+  ok: boolean;
+  version: string;
+  latest?: string;
+  update_available?: boolean;
+  release_url?: string;
+  checked_at?: string;
+  check_error?: string;
+};
+
 export type Overview = {
   ok: boolean;
   fleet_ready: boolean;
@@ -142,11 +152,20 @@ export type Overview = {
   cache_max_bytes?: number;
 };
 
+export type CacheEntry = {
+  key: string;
+  version?: string;
+  bytes: number;
+  created?: string;
+  last_access?: string;
+};
+
 export type CacheRepo = {
   repo: string;
   bytes: number;
   entries: number;
   last_access?: string;
+  keys?: CacheEntry[];
 };
 
 export type CacheHost = {

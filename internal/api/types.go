@@ -109,12 +109,22 @@ const (
 	CacheOpPurgeRepo = "purge_repo"
 )
 
+// CacheEntryUsage is one finalized cache key inside a repo namespace.
+type CacheEntryUsage struct {
+	Key        string    `json:"key"`
+	Version    string    `json:"version,omitempty"`
+	Bytes      int64     `json:"bytes"`
+	Created    time.Time `json:"created,omitempty"`
+	LastAccess time.Time `json:"last_access,omitempty"`
+}
+
 // CacheRepoUsage is one org/repo on an agent.
 type CacheRepoUsage struct {
-	Repo       string    `json:"repo"`
-	Bytes      int64     `json:"bytes"`
-	Entries    int       `json:"entries"`
-	LastAccess time.Time `json:"last_access,omitempty"`
+	Repo       string            `json:"repo"`
+	Bytes      int64             `json:"bytes"`
+	Entries    int               `json:"entries"`
+	LastAccess time.Time         `json:"last_access,omitempty"`
+	Keys       []CacheEntryUsage `json:"keys,omitempty"`
 }
 
 // CacheUsage is host-local Actions cache inventory.

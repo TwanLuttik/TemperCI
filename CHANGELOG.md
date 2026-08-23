@@ -5,6 +5,13 @@ All notable changes to TemperCI are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Dashboard sidebar shows the running control version and a link when a newer GitHub release exists. Control checks `releases/latest` at most once every 6 hours (15 minutes after a failed check).
+- Actions cache page expands each `org/repo` to show how disk is split across cache keys (size, share, version).
+
 ## [0.1.5] - 2026-08-23
 
 ### Added
@@ -58,6 +65,7 @@ Initial tagged release.
 - Control plane + host agent, Firecracker warm pool, official `actions/runner` via JIT.
 - Operator dashboard, host-local Actions cache, OCI pull-through, and host resource admission.
 
+[Unreleased]: https://github.com/TwanLuttik/TemperCI/compare/v0.1.5...HEAD
 [0.1.5]: https://github.com/TwanLuttik/TemperCI/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/TwanLuttik/TemperCI/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/TwanLuttik/TemperCI/compare/v0.1.2...v0.1.3

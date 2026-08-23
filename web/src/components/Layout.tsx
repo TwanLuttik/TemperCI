@@ -13,7 +13,7 @@ import {
   Workflow,
 } from "lucide-react";
 
-import { api, type Me, type Overview, type SetupStatus, type SystemStatus } from "../api";
+import { api, type Me, type Overview, type SetupStatus, type SystemStatus, type VersionStatus } from "../api";
 import { serviceBadgeClass } from "./ServicesPanel";
 import { StatusBadge } from "./status-badge";
 import { Button } from "@/components/ui/button";
@@ -41,6 +41,7 @@ export function Layout({ setup, me, overview, onLogout, children }: Props) {
   const showUsers = Boolean(me?.admin && setup.auth_mode === "password" && !setup.needs_setup);
   const showLogout = Boolean(setup.auth_mode === "password" && me && !me.open);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const version = useVersion();
 
   const nav = (
     <NavLinks setup={setup} showUsers={showUsers} onNavigate={() => setMobileOpen(false)} />
@@ -49,18 +50,12 @@ export function Layout({ setup, me, overview, onLogout, children }: Props) {
   return (
     <div className="flex min-h-full bg-[radial-gradient(900px_400px_at_10%_-10%,oklch(0.72_0.19_45_/_0.08),transparent_55%)]">
       <aside className="sticky top-0 hidden h-svh w-60 shrink-0 flex-col border-r border-sidebar-border bg-sidebar md:flex">
-        <Brand />
+        <Brand version={version?.version} />
         <div className="px-4 pt-4 pb-2 font-mono text-[10px] tracking-widest text-muted-foreground uppercase">
           Operate
         </div>
         {nav}
-        <div className="mt-auto space-y-2 border-t border-sidebar-border px-4 py-4 text-xs text-muted-foreground">
-          <div className="inline-flex items-center gap-1.5 rounded-full border border-border bg-card px-2 py-1 font-mono text-[11px]">
-            <span className="size-1.5 rounded-full bg-ok" />
-            self-hosted
-          </div>
-          <p className="leading-snug">Fleet control for your runners — not a SaaS tenant.</p>
-        </div>
+        <SidebarMeta version={version} />
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">
@@ -73,11 +68,12 @@ export function Layout({ setup, me, overview, onLogout, children }: Props) {
                 </Button>
               </SheetTrigger>
               <SheetContent side="left" className="w-64 bg-sidebar p-0">
-                <Brand />
+                <Brand version={version?.version} />
                 <div className="px-4 pt-4 pb-2 font-mono text-[10px] tracking-widest text-muted-foreground uppercase">
                   Operate
                 </div>
                 {nav}
+                <SidebarMeta version={version} />
               </SheetContent>
             </Sheet>
             <p className="font-mono text-xs text-muted-foreground">
@@ -113,7 +109,54 @@ export function Layout({ setup, me, overview, onLogout, children }: Props) {
   );
 }
 
-function Brand() {
+function useVersion(): VersionStatus | null {
+  const [st, setSt] = useState<VersionStatus | null>(null);
+
+  useEffect(() => {
+    let stop = false;
+    const tick = () => {
+      api<VersionStatus>("/api/v1/version")
+        .then((s) => {
+          if (!stop) setSt(s);
+        })
+        .catch(() => {
+          /* keep last snapshot */
+        });
+    };
+    tick();
+    const id = window.setInterval(tick, 60 * 60 * 1000);
+    return () => {
+      stop = true;
+      window.clearInterval(id);
+    };
+  }, []);
+
+  return st;
+}
+
+function SidebarMeta({ version }: { version: VersionStatus | null }) {
+  return (
+    <div className="mt-auto space-y-2 border-t border-sidebar-border px-4 py-4 text-xs text-muted-foreground">
+      <div className="inline-flex items-center gap-1.5 rounded-full border border-border bg-card px-2 py-1 font-mono text-[11px]">
+        <span className="size-1.5 rounded-full bg-ok" />
+        self-hosted
+      </div>
+      {version?.update_available && version.latest ? (
+        <a
+          href={version.release_url || "https://github.com/TwanLuttik/TemperCI/releases"}
+          target="_blank"
+          rel="noreferrer"
+          className="inline-flex text-[12px] font-medium text-primary no-underline hover:underline"
+        >
+          {version.latest} available
+        </a>
+      ) : null}
+      <p className="leading-snug">Fleet control for your runners — not a SaaS tenant.</p>
+    </div>
+  );
+}
+
+function Brand({ version }: { version?: string }) {
   return (
     <div className="flex items-center gap-2.5 border-b border-sidebar-border px-[18px] py-5">
       <div className="grid size-7 place-items-center rounded-lg bg-linear-to-br from-orange-400 to-orange-600 text-[13px] font-bold text-zinc-900">
@@ -121,7 +164,9 @@ function Brand() {
       </div>
       <div>
         <div className="text-[15px] font-semibold tracking-tight">TemperCI</div>
-        <div className="font-mono text-[10px] tracking-wider text-muted-foreground uppercase">/ Console</div>
+        <div className="font-mono text-[10px] tracking-wider text-muted-foreground">
+          {version || "/ Console"}
+        </div>
       </div>
     </div>
   );

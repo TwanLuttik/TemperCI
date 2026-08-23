@@ -28,9 +28,15 @@ func TestCacheInventoryAndClearQueue(t *testing.T) {
 		Cache: &api.CacheUsage{
 			Bytes:    100,
 			MaxBytes: 1000,
-			Entries:  2,
+			Entries:  3,
 			Repos: []api.CacheRepoUsage{
-				{Repo: "acme/app", Bytes: 80, Entries: 1, LastAccess: time.Now().UTC()},
+				{
+					Repo: "acme/app", Bytes: 80, Entries: 2, LastAccess: time.Now().UTC(),
+					Keys: []api.CacheEntryUsage{
+						{Key: "go-mod", Version: "v2", Bytes: 50},
+						{Key: "node-modules", Version: "v1", Bytes: 30},
+					},
+				},
 				{Repo: "acme/other", Bytes: 20, Entries: 1},
 			},
 		},
@@ -58,8 +64,15 @@ func TestCacheInventoryAndClearQueue(t *testing.T) {
 	if !listed.OK || listed.Bytes != 100 || len(listed.Hosts) != 1 {
 		t.Fatalf("list=%+v", listed)
 	}
-	if listed.Hosts[0].AgentID != "host-1" || listed.Hosts[0].Entries != 2 {
+	if listed.Hosts[0].AgentID != "host-1" || listed.Hosts[0].Entries != 3 {
 		t.Fatalf("host=%+v", listed.Hosts[0])
+	}
+	repos := listed.Hosts[0].Repos
+	if len(repos) != 2 || repos[0].Repo != "acme/app" || len(repos[0].Keys) != 2 {
+		t.Fatalf("repos=%+v", repos)
+	}
+	if repos[0].Keys[0].Key != "go-mod" || repos[0].Keys[0].Bytes != 50 {
+		t.Fatalf("keys=%+v", repos[0].Keys)
 	}
 
 	req = httptest.NewRequest(http.MethodPost, "/api/v1/cache/clear", bytes.NewBufferString(`{"repo":"acme/app"}`))

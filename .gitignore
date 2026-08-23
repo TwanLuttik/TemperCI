@@ -4,6 +4,10 @@
 *.test
 *.out
 
+# Vite dashboard output (make build-ui). Hashed assets + index.html are
+# generated; go:embed reads this dir at compile time, not from git.
+/internal/webui/dist/
+
 # Editor / OS
 .DS_Store
 .idea/

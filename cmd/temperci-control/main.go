@@ -74,6 +74,8 @@ func main() {
 		ConfigPath: *configPath,
 		Store:      db,
 		FleetReady: false,
+		Version:    version,
+		Updates:    control.NewUpdateChecker(control.UpdateCheckerConfig{Current: version}),
 	}
 
 	var handler *control.Handler

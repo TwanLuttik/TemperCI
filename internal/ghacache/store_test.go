@@ -77,6 +77,30 @@ func TestStore_RepoIsolation(t *testing.T) {
 	}
 }
 
+func TestStore_UsageListsKeysBySize(t *testing.T) {
+	s := openTestStore(t, 1<<20)
+	writeEntry(t, s, "acme/app", "node-modules", "v1", []byte("12345"))
+	writeEntry(t, s, "acme/app", "go-mod", "v2", []byte("zzzzzzzzzz"))
+
+	u := s.Usage()
+	if len(u.Repos) != 1 {
+		t.Fatalf("repos=%+v", u.Repos)
+	}
+	app := u.Repos[0]
+	if app.Repo != "acme/app" || app.Entries != 2 || app.Bytes != 15 {
+		t.Fatalf("repo=%+v", app)
+	}
+	if len(app.Keys) != 2 {
+		t.Fatalf("keys=%+v", app.Keys)
+	}
+	if app.Keys[0].Key != "go-mod" || app.Keys[0].Bytes != 10 || app.Keys[0].Version != "v2" {
+		t.Fatalf("largest key should be first: %+v", app.Keys)
+	}
+	if app.Keys[1].Key != "node-modules" || app.Keys[1].Bytes != 5 || app.Keys[1].Version != "v1" {
+		t.Fatalf("second key=%+v", app.Keys[1])
+	}
+}
+
 func TestStore_UsageAndDeleteRepo(t *testing.T) {
 	s := openTestStore(t, 1<<20)
 	writeEntry(t, s, "acme/app", "node-modules", "v1", []byte("12345"))

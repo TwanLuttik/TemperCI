@@ -50,7 +50,7 @@ func (r *AgentRegistry) Register(req api.RegisterRequest) api.AgentInfo {
 	if req.Cache != nil {
 		cp := *req.Cache
 		if req.Cache.Repos != nil {
-			cp.Repos = append([]api.CacheRepoUsage(nil), req.Cache.Repos...)
+			cp.Repos = cloneCacheRepos(req.Cache.Repos)
 		}
 		info.Cache = &cp
 	}

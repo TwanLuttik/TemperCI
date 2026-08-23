@@ -1,7 +1,9 @@
-import { useCallback, useEffect, useState } from "react";
+import { Fragment, useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 
-import { api, formatBytes, type CacheClearResponse, type CacheInventory, type Me } from "../api";
+import { ChevronRight } from "lucide-react";
+
+import { api, formatBytes, type CacheClearResponse, type CacheEntry, type CacheInventory, type Me } from "../api";
 import { EmptyState } from "../components/empty-state";
 import { PageHeader } from "../components/page-header";
 import { StatCard } from "../components/stat-card";
@@ -21,6 +23,7 @@ export function CachePage() {
   const [me, setMe] = useState<Me | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [open, setOpen] = useState<Record<string, boolean>>({});
 
   const load = useCallback(async () => {
     const [c, who] = await Promise.all([
@@ -87,8 +90,11 @@ export function CachePage() {
       bytes: r.bytes,
       entries: r.entries,
       last: r.last_access,
+      keys: r.keys || [],
     })),
   );
+
+  const toggle = (id: string) => setOpen((cur) => ({ ...cur, [id]: !cur[id] }));
 
   return (
     <>
@@ -97,8 +103,9 @@ export function CachePage() {
         title="Actions cache"
         description={
           <>
-            Host-local <code className="font-mono text-xs">actions/cache</code> storage. Blobs stay on
-            the agent disk. Clear queues a purge the agent applies on its next heartbeat.
+            Host-local <code className="font-mono text-xs">actions/cache</code> storage. Expand a repo
+            to see how size is split across keys. Clear queues a purge the agent applies on its next
+            heartbeat.
           </>
         }
         actions={
@@ -192,28 +199,94 @@ export function CachePage() {
                 </TableCell>
               </TableRow>
             ) : (
-              rows.map((r) => (
-                <TableRow key={`${r.agent}:${r.repo}`}>
-                  <TableCell className="font-mono text-xs">{r.repo}</TableCell>
-                  <TableCell className="font-mono text-xs">{r.agent}</TableCell>
-                  <TableCell className="font-mono text-xs">{r.entries}</TableCell>
-                  <TableCell className="font-mono text-xs">{formatBytes(r.bytes)}</TableCell>
-                  <TableCell className="text-muted-foreground">
-                    {r.last ? new Date(r.last).toLocaleString() : "—"}
-                  </TableCell>
-                  {admin ? (
-                    <TableCell>
-                      <Button variant="ghost" size="sm" disabled={busy} onClick={() => void clear(r.agent, r.repo)}>
-                        Clear
-                      </Button>
-                    </TableCell>
-                  ) : null}
-                </TableRow>
-              ))
+              rows.map((r) => {
+                const id = `${r.agent}:${r.repo}`;
+                const expanded = Boolean(open[id]);
+                const canExpand = r.keys.length > 0;
+                return (
+                  <Fragment key={id}>
+                    <TableRow>
+                      <TableCell className="font-mono text-xs">
+                        {canExpand ? (
+                          <button
+                            type="button"
+                            className="inline-flex max-w-full items-center gap-1 text-left"
+                            onClick={() => toggle(id)}
+                            aria-expanded={expanded}
+                          >
+                            <ChevronRight
+                              className={cn("size-3.5 shrink-0 text-muted-foreground transition-transform", expanded && "rotate-90")}
+                            />
+                            <span className="truncate">{r.repo}</span>
+                          </button>
+                        ) : (
+                          r.repo
+                        )}
+                      </TableCell>
+                      <TableCell className="font-mono text-xs">{r.agent}</TableCell>
+                      <TableCell className="font-mono text-xs">{r.entries}</TableCell>
+                      <TableCell className="font-mono text-xs">{formatBytes(r.bytes)}</TableCell>
+                      <TableCell className="text-muted-foreground">
+                        {r.last ? new Date(r.last).toLocaleString() : "—"}
+                      </TableCell>
+                      {admin ? (
+                        <TableCell>
+                          <Button variant="ghost" size="sm" disabled={busy} onClick={() => void clear(r.agent, r.repo)}>
+                            Clear
+                          </Button>
+                        </TableCell>
+                      ) : null}
+                    </TableRow>
+                    {expanded && canExpand ? (
+                      <TableRow className="hover:bg-transparent">
+                        <TableCell colSpan={admin ? 6 : 5} className="bg-muted/30 py-3">
+                          <KeyBreakdown keys={r.keys} total={r.bytes} />
+                        </TableCell>
+                      </TableRow>
+                    ) : null}
+                  </Fragment>
+                );
+              })
             )}
           </TableBody>
         </Table>
       </Card>
     </>
+  );
+}
+
+function shortVersion(v?: string): string {
+  if (!v) return "";
+  if (v.length <= 14) return v;
+  return `${v.slice(0, 10)}…`;
+}
+
+function KeyBreakdown({ keys, total }: { keys: CacheEntry[]; total: number }) {
+  return (
+    <div className="space-y-2">
+      <div className="font-mono text-[10px] tracking-wider text-muted-foreground uppercase">
+        Size by cache key
+      </div>
+      {keys.map((k, i) => {
+        const pct = usagePct(k.bytes, total);
+        return (
+          <div key={`${k.key}:${k.version || ""}:${i}`} className="grid items-center gap-2 sm:grid-cols-[minmax(0,1fr)_88px_64px]">
+            <div className="min-w-0">
+              <div className="truncate font-mono text-xs text-foreground" title={k.key}>
+                {k.key}
+              </div>
+              <div className="mt-0.5 flex items-center gap-2">
+                <Progress value={pct} className="h-1" />
+                <span className="shrink-0 font-mono text-[10px] text-muted-foreground">{Math.round(pct)}%</span>
+              </div>
+            </div>
+            <div className="font-mono text-[11px] text-muted-foreground" title={k.version || undefined}>
+              {k.version ? shortVersion(k.version) : "—"}
+            </div>
+            <div className="text-right font-mono text-xs">{formatBytes(k.bytes)}</div>
+          </div>
+        );
+      })}
+    </div>
   );
 }

@@ -70,6 +70,7 @@ func CacheUsageFromStores(st *ghacache.Store, oci *ocicache.Store) *api.CacheUsa
 				Bytes:      r.Bytes,
 				Entries:    r.Entries,
 				LastAccess: r.LastAccess,
+				Keys:       cacheEntryUsage(r.Keys),
 			})
 		}
 	}
@@ -85,6 +86,23 @@ func CacheUsageFromStores(st *ghacache.Store, oci *ocicache.Store) *api.CacheUsa
 				Entries:    r.Entries,
 				LastAccess: r.LastAccess,
 			})
+		}
+	}
+	return out
+}
+
+func cacheEntryUsage(in []ghacache.EntryUsage) []api.CacheEntryUsage {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]api.CacheEntryUsage, len(in))
+	for i, e := range in {
+		out[i] = api.CacheEntryUsage{
+			Key:        e.Key,
+			Version:    e.Version,
+			Bytes:      e.Bytes,
+			Created:    e.Created,
+			LastAccess: e.LastAccess,
 		}
 	}
 	return out

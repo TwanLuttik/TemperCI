@@ -86,6 +86,14 @@ func TestCacheUsageFromStores_PrefixesOCI(t *testing.T) {
 	if !sawActions || !sawOCI {
 		t.Fatalf("repos=%+v", u.Repos)
 	}
+	for _, r := range u.Repos {
+		if r.Repo != "acme/app" {
+			continue
+		}
+		if len(r.Keys) != 1 || r.Keys[0].Key != "k" || r.Keys[0].Bytes != 3 {
+			t.Fatalf("actions keys=%+v", r.Keys)
+		}
+	}
 }
 
 func writeOCI(t *testing.T, st *ocicache.Store, repo string, payload []byte) {

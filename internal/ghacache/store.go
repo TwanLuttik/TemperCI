@@ -46,12 +46,22 @@ type Entry struct {
 	LastAccess time.Time
 }
 
+// EntryUsage is one finalized cache key inside a repo namespace.
+type EntryUsage struct {
+	Key        string    `json:"key"`
+	Version    string    `json:"version,omitempty"`
+	Bytes      int64     `json:"bytes"`
+	Created    time.Time `json:"created,omitempty"`
+	LastAccess time.Time `json:"last_access,omitempty"`
+}
+
 // RepoUsage is disk usage for one org/repo namespace.
 type RepoUsage struct {
-	Repo       string    `json:"repo"`
-	Bytes      int64     `json:"bytes"`
-	Entries    int       `json:"entries"`
-	LastAccess time.Time `json:"last_access,omitempty"`
+	Repo       string       `json:"repo"`
+	Bytes      int64        `json:"bytes"`
+	Entries    int          `json:"entries"`
+	LastAccess time.Time    `json:"last_access,omitempty"`
+	Keys       []EntryUsage `json:"keys,omitempty"`
 }
 
 // Usage is a point-in-time inventory of the host cache.
@@ -148,10 +158,23 @@ func (s *Store) usageLocked() Usage {
 		if m.LastAccess.After(ru.LastAccess) {
 			ru.LastAccess = m.LastAccess
 		}
+		ru.Keys = append(ru.Keys, EntryUsage{
+			Key:        m.Key,
+			Version:    m.Version,
+			Bytes:      m.Size,
+			Created:    m.Created,
+			LastAccess: m.LastAccess,
+		})
 		return nil
 	})
 	out := Usage{Bytes: total, MaxBytes: s.maxBytes, Entries: entries}
 	for _, ru := range byRepo {
+		sort.Slice(ru.Keys, func(i, j int) bool {
+			if ru.Keys[i].Bytes != ru.Keys[j].Bytes {
+				return ru.Keys[i].Bytes > ru.Keys[j].Bytes
+			}
+			return ru.Keys[i].Key < ru.Keys[j].Key
+		})
 		out.Repos = append(out.Repos, *ru)
 	}
 	sort.Slice(out.Repos, func(i, j int) bool { return out.Repos[i].Repo < out.Repos[j].Repo })

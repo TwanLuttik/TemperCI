@@ -65,6 +65,20 @@ func cacheAction(repo string) string {
 	return api.CacheOpPurgeRepo
 }
 
+func cloneCacheRepos(in []api.CacheRepoUsage) []api.CacheRepoUsage {
+	if in == nil {
+		return nil
+	}
+	out := make([]api.CacheRepoUsage, len(in))
+	for i, r := range in {
+		out[i] = r
+		if r.Keys != nil {
+			out[i].Keys = append([]api.CacheEntryUsage(nil), r.Keys...)
+		}
+	}
+	return out
+}
+
 func validateCacheRepo(repo string) error {
 	repo = strings.TrimSpace(repo)
 	if repo == "" {
