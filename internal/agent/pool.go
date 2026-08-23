@@ -871,6 +871,9 @@ func (p *Pool) destroyNow(ctx context.Context, id vmm.ID) error {
 	if p.mailbox != nil {
 		p.mailbox.Close(id)
 	}
+	if p.cleaner != nil {
+		SignalRunnerStopped(p.cleaner.Layout, id)
+	}
 	err := p.cleaner.Destroy(ctx, id)
 	p.mu.Lock()
 	defer p.mu.Unlock()

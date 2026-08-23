@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -12,6 +13,56 @@ import (
 	"github.com/TwanLuttik/TemperCI/internal/vmm"
 	"github.com/TwanLuttik/TemperCI/internal/vmm/firecracker"
 )
+
+// ErrRunnerStopped is returned by WaitRunner when the host tore the VM down
+// (dashboard cancel / kill) instead of the guest writing a numeric exit code.
+var ErrRunnerStopped = errors.New("agent: runner stopped")
+
+// SignalRunnerStopped writes a host-side runner.exit so WaitRunner unblocks
+// before (or as) destroy deletes the instance directory.
+func SignalRunnerStopped(layout vmm.Layout, id vmm.ID) {
+	if layout.Root == "" || id == "" {
+		return
+	}
+	dir := layout.GuestDir(id)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return
+	}
+	_ = os.WriteFile(filepath.Join(dir, "runner.exit"), []byte("cancelled\n"), 0o600)
+}
+
+func runnerWaitStatus(layout vmm.Layout, id vmm.ID) (code int, done bool, err error) {
+	if layout.Root == "" || id == "" {
+		return 0, false, nil
+	}
+	exitPath := filepath.Join(layout.GuestDir(id), "runner.exit")
+	if b, readErr := os.ReadFile(exitPath); readErr == nil {
+		text := strings.TrimSpace(string(b))
+		if text == "" {
+			return 0, false, nil
+		}
+		if isHostStoppedExit(text) {
+			return -1, true, ErrRunnerStopped
+		}
+		n := 0
+		if _, scanErr := fmt.Sscanf(text, "%d", &n); scanErr != nil {
+			return 1, true, nil
+		}
+		return n, true, nil
+	}
+	if _, statErr := os.Stat(layout.InstanceDir(id)); os.IsNotExist(statErr) {
+		return -1, true, ErrRunnerStopped
+	}
+	return 0, false, nil
+}
+
+func isHostStoppedExit(text string) bool {
+	switch strings.ToLower(text) {
+	case "cancelled", "canceled", "killed":
+		return true
+	}
+	return false
+}
 
 // GuestExec injects files and runs commands inside (or as if inside) a guest VM.
 //
@@ -113,16 +164,13 @@ func (g *FileGuestExec) Exec(ctx context.Context, id vmm.ID, name string, args .
 // If no exit file appears and ctx is not cancelled, returns success after a short poll
 // when runner.started exists (unit tests / fake VMM).
 func (g *FileGuestExec) WaitRunner(ctx context.Context, id vmm.ID) (int, error) {
-	exitPath := filepath.Join(g.Layout.GuestDir(id), "runner.exit")
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
 	// For pure unit tests without exit file: if started marker exists, treat as done quickly.
 	deadline := time.Now().Add(2 * time.Second)
 	for {
-		if b, err := os.ReadFile(exitPath); err == nil {
-			code := 0
-			fmt.Sscanf(strings.TrimSpace(string(b)), "%d", &code)
-			return code, nil
+		if code, done, err := runnerWaitStatus(g.Layout, id); done {
+			return code, err
 		}
 		select {
 		case <-ctx.Done():
@@ -186,39 +234,31 @@ func (f *FirecrackerGuestExec) Exec(ctx context.Context, id vmm.ID, name string,
 // guest agent is also mounting /dev/vdb (causes missed JIT / stuck jobs).
 func (f *FirecrackerGuestExec) WaitRunner(ctx context.Context, id vmm.ID) (int, error) {
 	layout := f.layout()
-	exitPath := filepath.Join(layout.GuestDir(id), "runner.exit")
 	// Prefer the host-visible mailbox file. Fall back to a slow inject
 	// mount only if the guest never signaled over UDP.
 	fast := time.NewTicker(50 * time.Millisecond)
 	defer fast.Stop()
 	slowAt := time.Now().Add(2 * time.Second)
 	for {
-		if b, err := os.ReadFile(exitPath); err == nil {
-			text := strings.TrimSpace(string(b))
-			if text != "" {
-				code := 0
-				if _, err := fmt.Sscanf(text, "%d", &code); err != nil {
-					code = 1
-				}
+		if code, done, err := runnerWaitStatus(layout, id); done {
+			if err == nil && code != 0 {
 				files, _ := firecracker.CopyInjectFiles(layout, id, layout.GuestDir(id),
 					[]string{"runner.log", "agent.log", "workflow.log"})
-				if code != 0 {
-					slog.Default().Warn("guest runner failed",
-						"vm_id", string(id),
-						"exit_code", code,
-						"runner_log", truncateForLog(string(files["runner.log"]), 1500),
-						"agent_log", truncateForLog(string(files["agent.log"]), 800),
-					)
-				}
-				return code, nil
+				slog.Default().Warn("guest runner failed",
+					"vm_id", string(id),
+					"exit_code", code,
+					"runner_log", truncateForLog(string(files["runner.log"]), 1500),
+					"agent_log", truncateForLog(string(files["agent.log"]), 800),
+				)
 			}
+			return code, err
 		}
 		if time.Now().After(slowAt) {
 			slowAt = time.Now().Add(5 * time.Second)
 			if files, _ := firecracker.CopyInjectFiles(layout, id, layout.GuestDir(id),
 				[]string{"runner.exit", "runner.log", "agent.log", "workflow.log"}); files != nil {
 				if b, ok := files["runner.exit"]; ok && len(bytesTrim(b)) > 0 {
-					_ = os.WriteFile(exitPath, b, 0o600)
+					_ = os.WriteFile(filepath.Join(layout.GuestDir(id), "runner.exit"), b, 0o600)
 					continue
 				}
 			}

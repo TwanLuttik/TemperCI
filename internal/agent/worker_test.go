@@ -557,6 +557,95 @@ func TestWorker_LeftoverFullClaimsOnlyOneWarmJob(t *testing.T) {
 	}
 }
 
+func TestWorker_KillBusyVMReleasesSlotForPendingJob(t *testing.T) {
+	store := control.NewAssignmentStore()
+	srv := control.NewServer(control.ServerConfig{
+		Store:      store,
+		AgentToken: "tok",
+		Logger:     slog.Default(),
+	})
+	ts := httptest.NewServer(srv.Handler())
+	t.Cleanup(ts.Close)
+
+	root := t.TempDir()
+	layout := vmm.NewLayout(root)
+	if err := cleanup.EnsureLayout(layout); err != nil {
+		t.Fatal(err)
+	}
+	img := filepath.Join(layout.ImagesDir(), "base")
+	if err := os.WriteFile(img, []byte("b"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	mgr, err := fake.New(layout)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool, err := agent.NewPool(agent.PoolConfig{
+		MinReady:          1,
+		MaxReady:          1,
+		ImagePath:         img,
+		VCPUs:             1,
+		MemoryMiB:         256,
+		ReconcileInterval: 20 * time.Millisecond,
+		BindWait:          time.Second,
+	}, agent.PoolDeps{
+		VMM:     mgr,
+		Cleaner: &cleanup.Cleaner{VMM: mgr, Layout: layout},
+		Runner:  &agent.InjectRunner{Guest: &agent.FileGuestExec{Layout: layout}},
+		Log:     slog.Default(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	if err := pool.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = pool.Shutdown(context.Background()) })
+	waitFor(t, 2*time.Second, func() bool { return pool.Counts().Warm >= 1 })
+
+	store.Put(&control.Assignment{
+		JobID:            501,
+		EncodedJITConfig: "jit-running",
+		Status:           control.AssignmentMinted,
+		Org:              "acme",
+	})
+	worker := &agent.Worker{
+		Client:         agent.NewControlClient(ts.URL, "kill-slot", "tok", ts.Client()),
+		Pool:           pool,
+		Log:            slog.Default(),
+		PollInterval:   15 * time.Millisecond,
+		Capacity:       1,
+		WaitRealRunner: true,
+	}
+	go func() { _ = worker.Run(ctx) }()
+
+	waitFor(t, 3*time.Second, func() bool {
+		a := store.Get(501)
+		return a != nil && a.Status == control.AssignmentStarted && a.VMID != ""
+	})
+	store.Put(&control.Assignment{
+		JobID:            502,
+		EncodedJITConfig: "jit-pending",
+		Status:           control.AssignmentMinted,
+		Org:              "acme",
+	})
+	time.Sleep(80 * time.Millisecond)
+	if got := store.Get(502); got == nil || got.Status != control.AssignmentMinted {
+		t.Fatalf("job 502 should stay minted while slot is full, got %+v", got)
+	}
+
+	running := store.Get(501)
+	if err := pool.KillVM(ctx, vmm.ID(running.VMID), "dashboard"); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, 3*time.Second, func() bool {
+		a := store.Get(502)
+		return a != nil && a.Status != control.AssignmentMinted
+	})
+}
+
 func TestWorker_ShutdownDrainsInFlightJob(t *testing.T) {
 	store := control.NewAssignmentStore()
 	srv := control.NewServer(control.ServerConfig{

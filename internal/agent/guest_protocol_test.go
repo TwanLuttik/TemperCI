@@ -2,11 +2,13 @@ package agent_test
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"testing"
+	"time"
 
 	"github.com/TwanLuttik/TemperCI/internal/agent"
 	"github.com/TwanLuttik/TemperCI/internal/vmm"
@@ -45,6 +47,70 @@ func TestFileGuestExec_JITInRunnerExitOut(t *testing.T) {
 	}
 	if code != 0 {
 		t.Fatalf("WaitRunner exit=%d want 0", code)
+	}
+}
+
+func TestFileGuestExec_WaitRunnerCancelledUnblocks(t *testing.T) {
+	layout := vmm.NewLayout(t.TempDir())
+	id := vmm.ID("stop-me")
+	g := &agent.FileGuestExec{Layout: layout}
+	if err := os.MkdirAll(layout.GuestDir(id), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(layout.GuestDir(id), "runner.exit"), []byte("cancelled\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	code, err := g.WaitRunner(ctx, id)
+	if !errors.Is(err, agent.ErrRunnerStopped) {
+		t.Fatalf("WaitRunner = %d, %v want ErrRunnerStopped", code, err)
+	}
+}
+
+func TestFileGuestExec_WaitRunnerInstanceGoneUnblocks(t *testing.T) {
+	layout := vmm.NewLayout(t.TempDir())
+	id := vmm.ID("gone-vm")
+	g := &agent.FileGuestExec{Layout: layout}
+	if err := os.MkdirAll(layout.GuestDir(id), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		_, err := g.WaitRunner(ctx, id)
+		done <- err
+	}()
+	time.Sleep(50 * time.Millisecond)
+	if err := os.RemoveAll(layout.InstanceDir(id)); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-done:
+		if !errors.Is(err, agent.ErrRunnerStopped) {
+			t.Fatalf("got %v want ErrRunnerStopped", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("WaitRunner still blocked after instance dir removed")
+	}
+}
+
+func TestFirecrackerGuestExec_WaitRunnerCancelledUnblocks(t *testing.T) {
+	layout := vmm.NewLayout(t.TempDir())
+	id := vmm.ID("fc-stop")
+	g := &agent.FirecrackerGuestExec{Inner: &agent.FileGuestExec{Layout: layout}, Layout: layout}
+	if err := os.MkdirAll(layout.GuestDir(id), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(layout.GuestDir(id), "runner.exit"), []byte("cancelled\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	code, err := g.WaitRunner(ctx, id)
+	if !errors.Is(err, agent.ErrRunnerStopped) {
+		t.Fatalf("WaitRunner = %d, %v want ErrRunnerStopped", code, err)
 	}
 }
 
