@@ -91,7 +91,7 @@ func (ix *Intercept) handle(c net.Conn) {
 	prefixed := &prefixConn{Conn: c, r: io.MultiReader(bytes.NewReader(hello), c)}
 	tlsConn := tls.Server(prefixed, &tls.Config{
 		MinVersion: tls.VersionTLS12,
-		NextProtos: []string{"http/1.1"},
+		NextProtos: []string{"h2", "http/1.1"},
 		GetCertificate: func(info *tls.ClientHelloInfo) (*tls.Certificate, error) {
 			host := info.ServerName
 			if host == "" {

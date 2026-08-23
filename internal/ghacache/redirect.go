@@ -77,6 +77,41 @@ func legacyRedirectSpec(tap, listenAddr string) []string {
 // firewalls (PVEFW-HOST-IN, Tailscale). After PREROUTING DNAT/REDIRECT, guest
 // SYNs arrive on the tap with dport=listenPort. PVE accepts only lo + a few
 // management ports and otherwise DROP — without this, jobs stay queued.
+const bypassIPSet = "temperci-bypass"
+
+// GuestHTTPSBypassSpec is a PREROUTING RETURN for destinations in the
+// temperci-bypass ipset (github, npm, goproxy, …) so they skip intercept.
+func GuestHTTPSBypassSpec(tap string) []string {
+	if tap == "" {
+		return nil
+	}
+	return []string{"PREROUTING", "-t", "nat", "-i", tap, "-p", "tcp", "--dport", "443", "-m", "set", "--match-set", bypassIPSet, "dst", "-j", "RETURN"}
+}
+
+func ensureBypassIPSet() error {
+	if runtime.GOOS != "linux" {
+		return nil
+	}
+	if exec.Command("ipset", "list", bypassIPSet).Run() != nil {
+		if out, err := exec.Command("ipset", "create", bypassIPSet, "hash:ip", "-exist").CombinedOutput(); err != nil {
+			return fmt.Errorf("ipset create: %w (%s)", err, strings.TrimSpace(string(out)))
+		}
+	}
+	for _, host := range BypassHosts() {
+		ips, err := net.LookupIP(host)
+		if err != nil {
+			continue
+		}
+		for _, ip := range ips {
+			if ip.To4() == nil {
+				continue
+			}
+			_ = exec.Command("ipset", "add", bypassIPSet, ip.String(), "-exist").Run()
+		}
+	}
+	return nil
+}
+
 func GuestHTTPSInputSpec(tap, listenAddr string) []string {
 	_, port := SplitListenAddr(listenAddr)
 	if tap == "" || port <= 0 {
@@ -97,6 +132,12 @@ func RedirectGuestHTTPS(tap, listenAddr string) error {
 	}
 	if loopback {
 		enableLocalnetRedirect(tap)
+	}
+	if bypass := GuestHTTPSBypassSpec(tap); bypass != nil {
+		_ = ensureBypassIPSet()
+		if exec.Command("iptables", append([]string{"-C"}, bypass...)...).Run() != nil {
+			_ = exec.Command("iptables", append([]string{"-I"}, bypass...)...).Run()
+		}
 	}
 	if exec.Command("iptables", append([]string{"-C"}, spec...)...).Run() != nil {
 		if out, err := exec.Command("iptables", append([]string{"-A"}, spec...)...).CombinedOutput(); err != nil {
@@ -128,6 +169,9 @@ func ClearGuestHTTPSRedirect(tap, listenAddr string) error {
 	}
 	if input := GuestHTTPSInputSpec(tap, listenAddr); input != nil {
 		_ = exec.Command("iptables", append([]string{"-D"}, input...)...).Run()
+	}
+	if bypass := GuestHTTPSBypassSpec(tap); bypass != nil {
+		_ = exec.Command("iptables", append([]string{"-D"}, bypass...)...).Run()
 	}
 	return nil
 }

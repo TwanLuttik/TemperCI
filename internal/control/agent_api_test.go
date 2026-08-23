@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/TwanLuttik/TemperCI/internal/api"
 )
@@ -173,6 +174,10 @@ func TestAgentAPI_WebhookThenClaim(t *testing.T) {
 	srv.Handler().ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("webhook status = %d", rr.Code)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) && store.PendingLen() != 1 {
+		time.Sleep(5 * time.Millisecond)
 	}
 	if store.PendingLen() != 1 {
 		t.Fatalf("pending = %d", store.PendingLen())

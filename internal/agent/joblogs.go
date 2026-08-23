@@ -1,12 +1,15 @@
 package agent
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"unicode/utf8"
 
 	"github.com/TwanLuttik/TemperCI/internal/vmm"
 )
+
+const maxVMConsoleTail = 64 * 1024
 
 const maxUploadedLogBytes = 128 * 1024
 
@@ -74,6 +77,32 @@ func readLogFile(paths ...string) string {
 		return clipLog(string(b), maxUploadedLogBytes)
 	}
 	return ""
+}
+
+// TailFile returns the last max bytes of path (empty if missing).
+func TailFile(path string, max int) string {
+	if path == "" || max <= 0 {
+		return ""
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+	st, err := f.Stat()
+	if err != nil || st.Size() <= 0 {
+		return ""
+	}
+	if st.Size() > int64(max) {
+		if _, err := f.Seek(-int64(max), io.SeekEnd); err != nil {
+			return ""
+		}
+	}
+	b, err := io.ReadAll(io.LimitReader(f, int64(max)))
+	if err != nil || len(b) == 0 {
+		return ""
+	}
+	return clipLog(string(b), max)
 }
 
 func clipLog(s string, max int) string {

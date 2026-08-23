@@ -5,7 +5,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"flag"
 	"fmt"
@@ -14,6 +13,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sync"
 	"syscall"
 	"time"
 
@@ -77,11 +77,31 @@ func main() {
 	poolCfg := agent.PoolConfigFromAgent(cfg)
 	var readyCheck func(id vmm.ID) bool
 	if cfg.VMMBackend == "firecracker" {
+		var injectMu sync.Mutex
+		lastInject := map[vmm.ID]time.Time{}
 		readyCheck = func(id vmm.ID) bool {
+			p := filepath.Join(layout.GuestDir(id), "agent.ready")
+			if b, err := os.ReadFile(p); err == nil && len(b) > 0 {
+				return true
+			}
+			injectMu.Lock()
+			if time.Since(lastInject[id]) < 500*time.Millisecond {
+				injectMu.Unlock()
+				return false
+			}
+			lastInject[id] = time.Now()
+			injectMu.Unlock()
+			// Fallback if PVE/firewall drops the UDP mailbox: copy from inject.
 			b, err := firecracker.ReadInjectFile(layout, id, "agent.ready")
-			return err == nil && len(bytes.TrimSpace(b)) > 0
+			if err != nil || len(b) == 0 {
+				return false
+			}
+			_ = os.MkdirAll(layout.GuestDir(id), 0o700)
+			_ = os.WriteFile(p, b, 0o600)
+			return true
 		}
 	}
+	mailbox := &agent.MailboxHub{Layout: layout}
 	pool, err := agent.NewPool(poolCfg, agent.PoolDeps{
 		VMM:        mgr,
 		Cleaner:    cleaner,
@@ -89,6 +109,7 @@ func main() {
 		Log:        log,
 		Inventory:  agent.ProcInventory{DataDir: cfg.DataDir},
 		ReadyCheck: readyCheck,
+		Mailbox:    mailbox,
 	})
 	if err != nil {
 		log.Error("init pool", "err", err)

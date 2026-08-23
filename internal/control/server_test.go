@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/TwanLuttik/TemperCI/internal/config"
 	"github.com/TwanLuttik/TemperCI/internal/store"
@@ -82,15 +83,22 @@ func TestServer_TemperCIQueued_MintsJIT(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%s", rr.Code, rr.Body.String())
 	}
+	respBody, _ := io.ReadAll(rr.Body)
+	if !bytes.Contains(respBody, []byte(`"accepted":true`)) {
+		t.Errorf("body = %s", respBody)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) && store.Get(991001) == nil {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if store.Get(991001) == nil {
+		t.Fatal("assignment never minted")
+	}
 	if len(m.calls) != 1 {
 		t.Fatalf("JIT calls = %d, want 1", len(m.calls))
 	}
 	if got := m.calls[0].Labels; len(got) != 1 || got[0] != "temperci-4vcpu-ubuntu-2404" {
 		t.Errorf("labels = %v", got)
-	}
-	respBody, _ := io.ReadAll(rr.Body)
-	if !bytes.Contains(respBody, []byte(`"minted":true`)) {
-		t.Errorf("body = %s", respBody)
 	}
 }
 

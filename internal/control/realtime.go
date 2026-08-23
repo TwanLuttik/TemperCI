@@ -106,6 +106,10 @@ type vmRowWS struct {
 	RSSMiB     float64   `json:"rss_mib"`
 	DiskMiB    float64   `json:"disk_mib,omitempty"`
 	CreatedAt  time.Time `json:"created_at,omitempty"`
+	GuestIP    string    `json:"guest_ip,omitempty"`
+	HostIP     string    `json:"host_ip,omitempty"`
+	Tap        string    `json:"tap,omitempty"`
+	Shape      string    `json:"shape,omitempty"`
 }
 
 // BuildSnapshot assembles the current fleet view for WebSocket clients.
@@ -130,6 +134,10 @@ func (s *Server) BuildSnapshot() RealtimeSnapshot {
 				RSSMiB:     v.RSSMiB,
 				DiskMiB:    v.DiskMiB,
 				CreatedAt:  v.CreatedAt,
+				GuestIP:    v.GuestIP,
+				HostIP:     v.HostIP,
+				Tap:        v.TapDevice,
+				Shape:      v.Shape,
 			})
 		}
 	}
@@ -207,6 +215,9 @@ func (s *Server) BuildSnapshot() RealtimeSnapshot {
 // PublishSnapshot pushes current state to all dashboard WebSocket clients.
 func (s *Server) PublishSnapshot() {
 	if s.hub == nil {
+		return
+	}
+	if s.hub.ClientCount() == 0 {
 		return
 	}
 	snap := s.BuildSnapshot()

@@ -142,6 +142,7 @@ export function VMsPage() {
 
   useEffect(() => {
     if (!live) return;
+    if (rt.status === "live") return;
     let stop = false;
     const load = () => {
       api<{ jobs: Job[] }>("/api/v1/jobs")
@@ -153,12 +154,12 @@ export function VMsPage() {
         });
     };
     load();
-    const t = setInterval(load, 1000);
+    const t = setInterval(load, 8000);
     return () => {
       stop = true;
       clearInterval(t);
     };
-  }, [live]);
+  }, [live, rt.status]);
 
   if (err && vms.length === 0) return <p className="text-sm text-destructive">{err}</p>;
 
@@ -203,7 +204,15 @@ export function VMsPage() {
                 <TableRow key={`${v.agent_id}-${v.id}`}>
                   <TableCell className="font-mono text-xs">{v.agent_id}</TableCell>
                   <TableCell>
-                    <code className="font-mono text-xs">{v.id.slice(0, 12)}</code>
+                    <Link
+                      to={`/vms/${encodeURIComponent(v.id)}`}
+                      className="font-mono text-xs text-primary underline-offset-4 hover:underline"
+                    >
+                      {v.id.slice(0, 12)}
+                    </Link>
+                    {v.guest_ip ? (
+                      <div className="font-mono text-[10px] text-muted-foreground">{v.guest_ip}</div>
+                    ) : null}
                   </TableCell>
                   <TableCell>
                     <StatusBadge status={v.state} />

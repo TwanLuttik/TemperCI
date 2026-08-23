@@ -42,12 +42,14 @@ export function JobsPage() {
         });
     };
     load();
-    const t = setInterval(load, live ? 1000 : 8000);
+    // WebSocket already streams job rows. REST is a fallback only.
+    const ms = rt.status === "live" ? 30_000 : live ? 8_000 : 30_000;
+    const t = setInterval(load, ms);
     return () => {
       stop = true;
       clearInterval(t);
     };
-  }, [live]);
+  }, [live, rt.status]);
 
   if (err && jobs.length === 0) return <p className="text-sm text-destructive">{err}</p>;
 

@@ -109,7 +109,6 @@ func (s *AssignmentStore) SetPersister(p AssignmentPersister) error {
 // When status is minted, the job is enqueued for agent claim (if not already pending).
 func (s *AssignmentStore) Put(a *Assignment) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	cp := *a
 	if cp.CreatedAt.IsZero() {
 		cp.CreatedAt = time.Now().UTC()
@@ -122,7 +121,9 @@ func (s *AssignmentStore) Put(a *Assignment) {
 		}
 		s.signalMinted()
 	}
-	_ = s.persistLocked(&cp)
+	p := s.persister
+	s.mu.Unlock()
+	flushPersist(p, &cp)
 }
 
 func (s *AssignmentStore) signalMinted() {
@@ -191,26 +192,35 @@ func (s *AssignmentStore) PendingLen() int {
 // that list is preferred; otherwise FIFO. Returns nil when the queue is empty.
 func (s *AssignmentStore) ClaimNext(agentID string, cachedRepos []string) *Assignment {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if agentID == "" {
+		s.mu.Unlock()
 		return nil
 	}
 	idx := s.pickPendingLocked(cachedRepos)
 	if idx < 0 {
+		s.mu.Unlock()
 		return nil
 	}
 	jobID := s.pending[idx]
 	s.pending = append(s.pending[:idx], s.pending[idx+1:]...)
 	a, ok := s.byID[jobID]
 	if !ok || a.Status != AssignmentMinted {
-		return s.claimNextUnlocked(agentID, cachedRepos)
+		a = s.claimNextUnlocked(agentID, cachedRepos)
+		p := s.persister
+		s.mu.Unlock()
+		if a != nil {
+			flushPersist(p, a)
+		}
+		return a
 	}
 	now := time.Now().UTC()
 	a.Status = AssignmentAssigned
 	a.AssignedAgentID = agentID
 	a.AssignedAt = now
 	cp := *a
-	_ = s.persistLocked(a)
+	p := s.persister
+	s.mu.Unlock()
+	flushPersist(p, &cp)
 	return &cp
 }
 
@@ -231,7 +241,6 @@ func (s *AssignmentStore) claimNextUnlocked(agentID string, cachedRepos []string
 	a.AssignedAgentID = agentID
 	a.AssignedAt = now
 	cp := *a
-	_ = s.persistLocked(a)
 	return &cp
 }
 
@@ -269,9 +278,9 @@ func (s *AssignmentStore) SetIdentity(jobID int64, name, workflowName string) {
 		return
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	a, ok := s.byID[jobID]
 	if !ok {
+		s.mu.Unlock()
 		return
 	}
 	changed := false
@@ -283,42 +292,53 @@ func (s *AssignmentStore) SetIdentity(jobID int64, name, workflowName string) {
 		a.WorkflowName = workflowName
 		changed = true
 	}
-	if changed {
-		_ = s.persistLocked(a)
+	if !changed {
+		s.mu.Unlock()
+		return
 	}
+	cp := *a
+	p := s.persister
+	s.mu.Unlock()
+	flushPersist(p, &cp)
 }
 
 // SetCacheStats records host-local actions/cache counters on a job.
 func (s *AssignmentStore) SetCacheStats(jobID int64, hits, misses int, bytesIn, bytesOut int64) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	a, ok := s.byID[jobID]
 	if !ok {
+		s.mu.Unlock()
 		return fmt.Errorf("control: unknown job %d", jobID)
 	}
 	a.CacheHits = hits
 	a.CacheMisses = misses
 	a.CacheBytesIn = bytesIn
 	a.CacheBytesOut = bytesOut
-	return s.persistLocked(a)
+	cp := *a
+	p := s.persister
+	s.mu.Unlock()
+	return flushPersist(p, &cp)
 }
 
 // MarkStarted transitions assigned → started for the agent that owns the job.
 func (s *AssignmentStore) MarkStarted(jobID int64, agentID, vmID string, warmBind bool) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	a, ok := s.byID[jobID]
 	if !ok {
+		s.mu.Unlock()
 		return fmt.Errorf("control: unknown job %d", jobID)
 	}
 	if a.AssignedAgentID != "" && a.AssignedAgentID != agentID {
+		s.mu.Unlock()
 		return fmt.Errorf("control: job %d assigned to other agent", jobID)
 	}
 	switch a.Status {
 	case AssignmentAssigned, AssignmentStarted:
 		// Idempotent re-start allowed while assigned/started.
 	default:
-		return fmt.Errorf("control: job %d not in assigned state (%s)", jobID, a.Status)
+		st := a.Status
+		s.mu.Unlock()
+		return fmt.Errorf("control: job %d not in assigned state (%s)", jobID, st)
 	}
 	a.Status = AssignmentStarted
 	a.AssignedAgentID = agentID
@@ -327,25 +347,31 @@ func (s *AssignmentStore) MarkStarted(jobID int64, agentID, vmID string, warmBin
 	if a.StartedAt.IsZero() {
 		a.StartedAt = time.Now().UTC()
 	}
-	return s.persistLocked(a)
+	cp := *a
+	p := s.persister
+	s.mu.Unlock()
+	return flushPersist(p, &cp)
 }
 
 // MarkFinished transitions started/assigned → finished.
 func (s *AssignmentStore) MarkFinished(jobID int64, agentID, outcome, vmID string, warmBind bool, errMsg string) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	a, ok := s.byID[jobID]
 	if !ok {
+		s.mu.Unlock()
 		return fmt.Errorf("control: unknown job %d", jobID)
 	}
 	if a.AssignedAgentID != "" && a.AssignedAgentID != agentID {
+		s.mu.Unlock()
 		return fmt.Errorf("control: job %d assigned to other agent", jobID)
 	}
 	switch a.Status {
 	case AssignmentAssigned, AssignmentStarted, AssignmentFinished:
 		// Allow finish from assigned (failed before start) or idempotent finish.
 	default:
-		return fmt.Errorf("control: job %d cannot finish from status %s", jobID, a.Status)
+		st := a.Status
+		s.mu.Unlock()
+		return fmt.Errorf("control: job %d cannot finish from status %s", jobID, st)
 	}
 	a.Status = AssignmentFinished
 	a.AssignedAgentID = agentID
@@ -362,23 +388,29 @@ func (s *AssignmentStore) MarkFinished(jobID int64, agentID, outcome, vmID strin
 	}
 	// Drop secret after finish so long-lived process memory holds less JIT material.
 	a.EncodedJITConfig = ""
-	return s.persistLocked(a)
+	cp := *a
+	p := s.persister
+	s.mu.Unlock()
+	return flushPersist(p, &cp)
 }
 
 // Cancel marks a minted/assigned/started job finished with outcome cancelled.
 // Already-cancelled jobs are a no-op. Other terminal outcomes are rejected.
 func (s *AssignmentStore) Cancel(jobID int64, reason string) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	a, ok := s.byID[jobID]
 	if !ok {
+		s.mu.Unlock()
 		return fmt.Errorf("control: unknown job %d", jobID)
 	}
 	if a.Status == AssignmentFinished && a.Outcome == "cancelled" {
+		s.mu.Unlock()
 		return nil
 	}
 	if a.Status == AssignmentFinished || a.Status == AssignmentFailed {
-		return fmt.Errorf("control: job %d already %s", jobID, a.Status)
+		st := a.Status
+		s.mu.Unlock()
+		return fmt.Errorf("control: job %d already %s", jobID, st)
 	}
 	a.Status = AssignmentFinished
 	a.Outcome = "cancelled"
@@ -390,22 +422,28 @@ func (s *AssignmentStore) Cancel(jobID int64, reason string) error {
 	}
 	a.EncodedJITConfig = ""
 	s.removePendingLocked(a.JobID)
-	return s.persistLocked(a)
+	cp := *a
+	p := s.persister
+	s.mu.Unlock()
+	return flushPersist(p, &cp)
 }
 
 // MarkFailed records a mint/assign failure (webhook path).
 func (s *AssignmentStore) MarkFailed(jobID int64, errMsg string) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	a, ok := s.byID[jobID]
 	if !ok {
+		s.mu.Unlock()
 		return
 	}
 	a.Status = AssignmentFailed
 	a.Error = errMsg
 	a.EncodedJITConfig = ""
 	s.removePendingLocked(jobID)
-	_ = s.persistLocked(a)
+	cp := *a
+	p := s.persister
+	s.mu.Unlock()
+	flushPersist(p, &cp)
 }
 
 // ListRecent returns up to limit assignments (most recently created first).
@@ -422,14 +460,9 @@ func (s *AssignmentStore) ListRecent(limit int) []*Assignment {
 		cp.EncodedJITConfig = ""
 		all = append(all, &cp)
 	}
-	// Simple insertion order by CreatedAt desc.
-	for i := 0; i < len(all); i++ {
-		for j := i + 1; j < len(all); j++ {
-			if all[j].CreatedAt.After(all[i].CreatedAt) {
-				all[i], all[j] = all[j], all[i]
-			}
-		}
-	}
+	sort.Slice(all, func(i, j int) bool {
+		return all[i].CreatedAt.After(all[j].CreatedAt)
+	})
 	if len(all) > limit {
 		all = all[:limit]
 	}
@@ -516,20 +549,25 @@ func (s *AssignmentStore) ListStaleMinted(now time.Time, age time.Duration) []*A
 // Used when an agent dies before start. Clears AssignedAgentID and re-enqueues FIFO.
 func (s *AssignmentStore) RequeueAssigned(jobID int64) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	a, ok := s.byID[jobID]
 	if !ok {
+		s.mu.Unlock()
 		return fmt.Errorf("control: unknown job %d", jobID)
 	}
 	if a.Status != AssignmentAssigned {
-		return fmt.Errorf("control: job %d not assigned (%s)", jobID, a.Status)
+		st := a.Status
+		s.mu.Unlock()
+		return fmt.Errorf("control: job %d not assigned (%s)", jobID, st)
 	}
 	a.Status = AssignmentMinted
 	a.AssignedAgentID = ""
 	a.AssignedAt = time.Time{}
 	a.VMID = ""
 	s.enqueuePendingLocked(jobID)
-	return s.persistLocked(a)
+	cp := *a
+	p := s.persister
+	s.mu.Unlock()
+	return flushPersist(p, &cp)
 }
 
 func (s *AssignmentStore) enqueuePendingLocked(jobID int64) {
@@ -581,13 +619,12 @@ func (s *AssignmentStore) loadLocked() error {
 	return nil
 }
 
-// persistLocked writes a copy. Never log EncodedJITConfig.
-func (s *AssignmentStore) persistLocked(a *Assignment) error {
-	if s.persister == nil || a == nil {
+func flushPersist(p AssignmentPersister, a *Assignment) error {
+	if p == nil || a == nil {
 		return nil
 	}
 	cp := *a
-	if err := s.persister.Persist(&cp); err != nil {
+	if err := p.Persist(&cp); err != nil {
 		slog.Warn("persist assignment failed", "job_id", a.JobID, "status", string(a.Status), "err", err)
 		return err
 	}

@@ -60,6 +60,17 @@ func TestGuestHTTPSRedirectSpec_Empty(t *testing.T) {
 	}
 }
 
+func TestGuestHTTPSBypassSpec(t *testing.T) {
+	spec := GuestHTTPSBypassSpec("tc00aabbcc")
+	got := strings.Join(spec, " ")
+	if !strings.Contains(got, "temperci-bypass") || !strings.Contains(got, "-j RETURN") {
+		t.Fatalf("spec=%q", got)
+	}
+	if GuestHTTPSBypassSpec("") != nil {
+		t.Fatal("empty tap")
+	}
+}
+
 func TestGuestHTTPSInputSpec_AcceptsTapToListenPort(t *testing.T) {
 	spec := GuestHTTPSInputSpec("tcb2579bda", "127.0.0.1:8743")
 	got := strings.Join(spec, " ")

@@ -8,12 +8,25 @@ INJECT_DEV="${TEMPERCI_INJECT_DEV:-/dev/vdb}"
 MNT="${TEMPERCI_INJECT_MNT:-/mnt/temperci}"
 RUNNER_DIR="${TEMPERCI_RUNNER_DIR:-/opt/actions-runner}"
 RUNNER="${TEMPERCI_RUNNER:-$RUNNER_DIR/run.sh}"
-POLL_SEC="${TEMPERCI_POLL_SEC:-0.5}"
+POLL_SEC="${TEMPERCI_POLL_SEC:-0.05}"
 WORKDIR="${TEMPERCI_WORKDIR:-/run/temperci}"
+MAILBOX_PORT="${TEMPERCI_MAILBOX_PORT:-9876}"
 
 mkdir -p "$MNT" "$WORKDIR"
 
 log() { echo "temperci-agent: $*" | tee -a "$WORKDIR/agent.log" >&2; }
+
+host_ip() {
+  ip route 2>/dev/null | awk '/default/{print $3; exit}'
+}
+
+# Host UDP mailbox (no inject loop-mount). Bash /dev/udp is enough.
+signal_host() {
+  local ip
+  ip="$(host_ip)"
+  [ -n "$ip" ] || return 0
+  echo "$1" >"/dev/udp/${ip}/${MAILBOX_PORT}" 2>/dev/null || true
+}
 
 # Ensure root filesystem is writable (runner copies run-helper.sh into place).
 mount -o remount,rw / 2>/dev/null || true
@@ -32,6 +45,7 @@ write_exit() {
   fi
   # Always mirror on local workdir too.
   echo "$code" >"$WORKDIR/runner.exit"
+  signal_host "exit $code"
   exit "$code"
 }
 
@@ -78,6 +92,7 @@ publish_ready() {
     umount "$MNT" 2>/dev/null || true
     log "guest ready signaled"
   fi
+  signal_host "ready"
 }
 
 # Kick dockerd during JIT wait so bind does not pay a full docker start.
@@ -87,6 +102,18 @@ if [ -x /usr/sbin/iptables-legacy ]; then
 fi
 if [ -x /usr/bin/dockerd ] && [ ! -S /var/run/docker.sock ]; then
   systemctl start docker.service >/dev/null 2>&1 &
+fi
+
+# Warm means dockerd is already listening so bind does not wait on Docker.
+if [ -x /usr/bin/dockerd ]; then
+  i=0
+  while [ "$i" -lt 20 ]; do
+    if [ -S /var/run/docker.sock ] && /usr/bin/docker info >/dev/null 2>&1; then
+      break
+    fi
+    i=$((i + 1))
+    sleep 1
+  done
 fi
 
 # Wait until inject disk has jitconfig (host syncs after bind).

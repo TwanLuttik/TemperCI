@@ -20,11 +20,24 @@ import (
 // ErrExists is returned when Create is called for a finalized key+version.
 var ErrExists = errors.New("ghacache: entry exists")
 
+type cacheIndexEnt struct {
+	ID         string
+	Repo       string
+	Key        string
+	Version    string
+	Dir        string
+	Size       int64
+	Created    time.Time
+	LastAccess time.Time
+}
+
 // Store is a repo-scoped blob cache on local disk.
 type Store struct {
 	root     string
 	maxBytes int64
 	mu       sync.Mutex
+	idx      map[string]cacheIndexEnt // id → entry
+	total    int64
 }
 
 // Upload is an in-flight CreateCacheEntry.
@@ -94,7 +107,51 @@ func Open(dir string, maxBytes int64) (*Store, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, fmt.Errorf("ghacache: mkdir: %w", err)
 	}
-	return &Store{root: dir, maxBytes: maxBytes}, nil
+	s := &Store{root: dir, maxBytes: maxBytes, idx: make(map[string]cacheIndexEnt)}
+	s.rebuildIndex()
+	return s, nil
+}
+
+func (s *Store) rebuildIndex() {
+	s.idx = make(map[string]cacheIndexEnt)
+	s.total = 0
+	_ = filepath.WalkDir(s.root, func(path string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() || d.Name() != "meta.json" {
+			return nil
+		}
+		m, err := readMeta(path)
+		if err != nil || m.State != "ready" || m.ID == "" {
+			return nil
+		}
+		ent := cacheIndexEnt{
+			ID: m.ID, Repo: m.Repo, Key: m.Key, Version: m.Version,
+			Dir: filepath.Dir(path), Size: m.Size, Created: m.Created, LastAccess: m.LastAccess,
+		}
+		s.idx[m.ID] = ent
+		s.total += m.Size
+		return nil
+	})
+}
+
+func (s *Store) rememberLocked(m meta, dir string) {
+	if s.idx == nil {
+		s.idx = make(map[string]cacheIndexEnt)
+	}
+	if old, ok := s.idx[m.ID]; ok {
+		s.total -= old.Size
+	}
+	s.idx[m.ID] = cacheIndexEnt{
+		ID: m.ID, Repo: m.Repo, Key: m.Key, Version: m.Version,
+		Dir: dir, Size: m.Size, Created: m.Created, LastAccess: m.LastAccess,
+	}
+	s.total += m.Size
+}
+
+func (s *Store) forgetLocked(id string) {
+	if e, ok := s.idx[id]; ok {
+		s.total -= e.Size
+		delete(s.idx, id)
+	}
 }
 
 // Close is a no-op for the filesystem store (satisfies callers that defer Close).
@@ -104,21 +161,15 @@ func (s *Store) Close() error { return nil }
 func (s *Store) Repos() []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.idx == nil {
+		s.rebuildIndex()
+	}
 	seen := map[string]struct{}{}
-	_ = filepath.WalkDir(s.root, func(path string, d os.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
-			return nil
+	for _, e := range s.idx {
+		if e.Repo != "" {
+			seen[e.Repo] = struct{}{}
 		}
-		if d.Name() != "meta.json" {
-			return nil
-		}
-		m, err := readMeta(path)
-		if err != nil || m.State != "ready" || m.Repo == "" {
-			return nil
-		}
-		seen[m.Repo] = struct{}{}
-		return nil
-	})
+	}
 	out := make([]string, 0, len(seen))
 	for r := range seen {
 		out = append(out, r)
@@ -135,38 +186,36 @@ func (s *Store) Usage() Usage {
 }
 
 func (s *Store) usageLocked() Usage {
+	if s.idx == nil {
+		s.rebuildIndex()
+	}
 	byRepo := map[string]*RepoUsage{}
 	var total int64
 	var entries int
-	_ = filepath.WalkDir(s.root, func(path string, d os.DirEntry, err error) error {
-		if err != nil || d.IsDir() || d.Name() != "meta.json" {
-			return nil
-		}
-		m, err := readMeta(path)
-		if err != nil || m.State != "ready" || m.Repo == "" {
-			return nil
+	for _, e := range s.idx {
+		if e.Repo == "" {
+			continue
 		}
 		entries++
-		total += m.Size
-		ru := byRepo[m.Repo]
+		total += e.Size
+		ru := byRepo[e.Repo]
 		if ru == nil {
-			ru = &RepoUsage{Repo: m.Repo}
-			byRepo[m.Repo] = ru
+			ru = &RepoUsage{Repo: e.Repo}
+			byRepo[e.Repo] = ru
 		}
-		ru.Bytes += m.Size
+		ru.Bytes += e.Size
 		ru.Entries++
-		if m.LastAccess.After(ru.LastAccess) {
-			ru.LastAccess = m.LastAccess
+		if e.LastAccess.After(ru.LastAccess) {
+			ru.LastAccess = e.LastAccess
 		}
 		ru.Keys = append(ru.Keys, EntryUsage{
-			Key:        m.Key,
-			Version:    m.Version,
-			Bytes:      m.Size,
-			Created:    m.Created,
-			LastAccess: m.LastAccess,
+			Key:        e.Key,
+			Version:    e.Version,
+			Bytes:      e.Size,
+			Created:    e.Created,
+			LastAccess: e.LastAccess,
 		})
-		return nil
-	})
+	}
 	out := Usage{Bytes: total, MaxBytes: s.maxBytes, Entries: entries}
 	for _, ru := range byRepo {
 		sort.Slice(ru.Keys, func(i, j int) bool {
@@ -209,6 +258,9 @@ func (s *Store) DeleteRepo(repo string) (entries int, bytes int64, err error) {
 		if err := os.RemoveAll(filepath.Join(dir, e.Name())); err != nil {
 			return entries, bytes, err
 		}
+		if rerr == nil {
+			s.forgetLocked(m.ID)
+		}
 	}
 	return entries, bytes, nil
 }
@@ -232,6 +284,8 @@ func (s *Store) DeleteAll() (entries int, bytes int64, err error) {
 			return entries, bytes, err
 		}
 	}
+	s.idx = make(map[string]cacheIndexEnt)
+	s.total = 0
 	return entries, bytes, nil
 }
 
@@ -364,6 +418,7 @@ func (s *Store) Finalize(repo, key, version string, size int64) (*Entry, error) 
 	if err := writeMeta(filepath.Join(dir, "meta.json"), m); err != nil {
 		return nil, err
 	}
+	s.rememberLocked(m, dir)
 	_ = os.RemoveAll(s.uploadDir(up.ID))
 	if err := s.evictLocked(eid); err != nil {
 		return nil, err
@@ -404,8 +459,8 @@ func (s *Store) ReadBlob(entryID string) ([]byte, error) {
 // OpenBlob opens the finalized payload for ranged reads. Caller must Close.
 func (s *Store) OpenBlob(entryID string) (*os.File, error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	p, err := s.blobPathLocked(entryID)
+	s.mu.Unlock()
 	if err != nil {
 		return nil, err
 	}
@@ -418,22 +473,13 @@ func (s *Store) ReadUpload(uploadID string) ([]byte, error) {
 }
 
 func (s *Store) blobPathLocked(entryID string) (string, error) {
-	var found string
-	_ = filepath.WalkDir(s.root, func(path string, d os.DirEntry, err error) error {
-		if err != nil || d.IsDir() || d.Name() != "meta.json" {
-			return nil
-		}
-		m, err := readMeta(path)
-		if err != nil || m.ID != entryID || m.State != "ready" {
-			return nil
-		}
-		found = filepath.Join(filepath.Dir(path), "data")
-		return io.EOF
-	})
-	if found == "" {
-		return "", fmt.Errorf("ghacache: blob %s not found", entryID)
+	if s.idx == nil {
+		s.rebuildIndex()
 	}
-	return found, nil
+	if e, ok := s.idx[entryID]; ok {
+		return filepath.Join(e.Dir, "data"), nil
+	}
+	return "", fmt.Errorf("ghacache: blob %s not found", entryID)
 }
 
 func (s *Store) lookupLocked(repo, key string, restoreKeys []string, version string) (*Entry, error) {
@@ -519,6 +565,9 @@ func (s *Store) findUploadLocked(repo, key, version string) (*Upload, error) {
 }
 
 func (s *Store) evictLocked(keepID string) error {
+	if s.idx == nil {
+		s.rebuildIndex()
+	}
 	type item struct {
 		path       string
 		size       int64
@@ -526,24 +575,12 @@ func (s *Store) evictLocked(keepID string) error {
 		id         string
 	}
 	var items []item
-	var total int64
-	_ = filepath.WalkDir(s.root, func(path string, d os.DirEntry, err error) error {
-		if err != nil || d.IsDir() || d.Name() != "meta.json" {
-			return nil
-		}
-		m, err := readMeta(path)
-		if err != nil || m.State != "ready" {
-			return nil
-		}
-		total += m.Size
+	total := s.total
+	for _, e := range s.idx {
 		items = append(items, item{
-			path:       filepath.Dir(path),
-			size:       m.Size,
-			lastAccess: m.LastAccess,
-			id:         m.ID,
+			path: e.Dir, size: e.Size, lastAccess: e.LastAccess, id: e.ID,
 		})
-		return nil
-	})
+	}
 	if total <= s.maxBytes {
 		return nil
 	}
@@ -563,6 +600,7 @@ func (s *Store) evictLocked(keepID string) error {
 		if err := os.RemoveAll(it.path); err != nil {
 			return err
 		}
+		s.forgetLocked(it.id)
 		total -= it.size
 	}
 	return nil

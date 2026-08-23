@@ -59,7 +59,7 @@ func NewClient(cfg Config) (*Client, error) {
 	base = strings.TrimRight(base, "/")
 	hc := cfg.HTTPClient
 	if hc == nil {
-		hc = http.DefaultClient
+		hc = &http.Client{Timeout: 15 * time.Second}
 	}
 	return &Client{
 		appID:          cfg.AppID,

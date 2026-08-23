@@ -43,6 +43,18 @@ type VMUsage struct {
 	CreatedAt time.Time `json:"created_at,omitempty"`
 	// SampledAt is when this sample was taken (UTC).
 	SampledAt time.Time `json:"sampled_at,omitempty"`
+	// GuestIP is the TAP address inside the microVM.
+	GuestIP string `json:"guest_ip,omitempty"`
+	// HostIP is the TAP address on the agent host.
+	HostIP string `json:"host_ip,omitempty"`
+	// TapDevice is the host tap name.
+	TapDevice string `json:"tap,omitempty"`
+	// Shape is the pool shape label when known.
+	Shape string `json:"shape,omitempty"`
+	// ConsoleTail is the last bytes of the Firecracker serial console.
+	ConsoleTail string `json:"console_tail,omitempty"`
+	// AgentTail is the last bytes of the guest-agent log.
+	AgentTail string `json:"agent_tail,omitempty"`
 }
 
 // HostResources is the agent's view of leftover host compute and the clamped slot cap.

@@ -72,11 +72,19 @@ type manifestMeta struct {
 	LastAccess time.Time `json:"last_access"`
 }
 
+type ociIndexEnt struct {
+	Path       string
+	Size       int64
+	LastAccess time.Time
+}
+
 // Store is a host-local OCI blob + manifest cache.
 type Store struct {
 	root     string
 	maxBytes int64
 	mu       sync.Mutex
+	idx      map[string]ociIndexEnt
+	total    int64
 }
 
 // Open creates or loads a cache rooted at dir.
@@ -90,7 +98,35 @@ func Open(dir string, maxBytes int64) (*Store, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, fmt.Errorf("ocicache: mkdir: %w", err)
 	}
-	return &Store{root: dir, maxBytes: maxBytes}, nil
+	s := &Store{root: dir, maxBytes: maxBytes, idx: make(map[string]ociIndexEnt)}
+	s.rebuildIndex()
+	return s, nil
+}
+
+func (s *Store) rebuildIndex() {
+	s.idx = make(map[string]ociIndexEnt)
+	s.total = 0
+	_ = filepath.WalkDir(s.root, func(path string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() || d.Name() != "meta.json" {
+			return nil
+		}
+		dir := filepath.Dir(path)
+		var last time.Time
+		var size int64
+		var bm blobMeta
+		if err := readJSON(path, &bm); err == nil && bm.Digest != "" {
+			last, size = bm.LastAccess, bm.Size
+		} else {
+			var mm manifestMeta
+			if err := readJSON(path, &mm); err != nil {
+				return nil
+			}
+			last, size = mm.LastAccess, mm.Size
+		}
+		s.idx[dir] = ociIndexEnt{Path: dir, Size: size, LastAccess: last}
+		s.total += size
+		return nil
+	})
 }
 
 // PutBlob writes a content-addressed blob into scope.
@@ -127,6 +163,11 @@ func (s *Store) PutBlob(scope Scope, repo, digest string, data []byte) error {
 	if err := writeJSON(filepath.Join(dir, "meta.json"), m); err != nil {
 		return err
 	}
+	if s.idx == nil {
+		s.idx = make(map[string]ociIndexEnt)
+	}
+	s.idx[dir] = ociIndexEnt{Path: dir, Size: m.Size, LastAccess: now}
+	s.total += m.Size
 	return s.evictLocked(int64(len(data)))
 }
 
@@ -193,6 +234,11 @@ func (s *Store) PutBlobFromReader(scope Scope, repo, digest string, r io.Reader)
 	if err := writeJSON(filepath.Join(dir, "meta.json"), m); err != nil {
 		return err
 	}
+	if s.idx == nil {
+		s.idx = make(map[string]ociIndexEnt)
+	}
+	s.idx[dir] = ociIndexEnt{Path: dir, Size: n, LastAccess: now}
+	s.total += n
 	return s.evictLocked(n)
 }
 
@@ -237,12 +283,14 @@ func (s *Store) FindBlob(repo, digest string) (Scope, bool) {
 // OpenBlob opens the blob file for serving (caller closes).
 func (s *Store) OpenBlob(scope Scope, repo, digest string) (*os.File, int64, error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	hexPart, err := digestHex(digest)
 	if err != nil {
+		s.mu.Unlock()
 		return nil, 0, err
 	}
 	dir := s.blobDir(scope, repo, hexPart)
+	s.touchBlobLocked(dir)
+	s.mu.Unlock()
 	f, err := os.Open(filepath.Join(dir, "data"))
 	if err != nil {
 		return nil, 0, err
@@ -252,7 +300,6 @@ func (s *Store) OpenBlob(scope Scope, repo, digest string) (*os.File, int64, err
 		_ = f.Close()
 		return nil, 0, err
 	}
-	s.touchBlobLocked(dir)
 	return f, st.Size(), nil
 }
 
@@ -482,54 +529,39 @@ func (s *Store) DeleteAll() (entries int, bytes int64, err error) {
 }
 
 func (s *Store) evictLocked(incoming int64) error {
-	for {
-		u := s.usageLocked()
-		if u.Bytes <= s.maxBytes {
+	if s.idx == nil {
+		s.rebuildIndex()
+	}
+	_ = incoming
+	if s.total <= s.maxBytes {
+		return nil
+	}
+	type item struct {
+		path string
+		size int64
+		last time.Time
+	}
+	items := make([]item, 0, len(s.idx))
+	for _, e := range s.idx {
+		items = append(items, item{path: e.Path, size: e.Size, last: e.LastAccess})
+	}
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].last.Equal(items[j].last) {
+			return items[i].size > items[j].size
+		}
+		return items[i].last.Before(items[j].last)
+	})
+	for _, victim := range items {
+		if s.total <= s.maxBytes {
 			return nil
 		}
-		type item struct {
-			path string
-			size int64
-			last time.Time
-		}
-		var items []item
-		_ = filepath.WalkDir(s.root, func(path string, d os.DirEntry, err error) error {
-			if err != nil || d.IsDir() || d.Name() != "meta.json" {
-				return nil
-			}
-			dir := filepath.Dir(path)
-			var last time.Time
-			var size int64
-			var bm blobMeta
-			if err := readJSON(path, &bm); err == nil && bm.Digest != "" {
-				last, size = bm.LastAccess, bm.Size
-			} else {
-				var mm manifestMeta
-				if err := readJSON(path, &mm); err != nil {
-					return nil
-				}
-				last, size = mm.LastAccess, mm.Size
-			}
-			items = append(items, item{path: dir, size: size, last: last})
-			return nil
-		})
-		if len(items) == 0 {
-			return fmt.Errorf("ocicache: cannot evict")
-		}
-		sort.Slice(items, func(i, j int) bool {
-			if items[i].last.Equal(items[j].last) {
-				return items[i].size > items[j].size
-			}
-			return items[i].last.Before(items[j].last)
-		})
-		// Do not delete the object we just wrote if it is the only one that
-		// would bring us under cap — evict the oldest *other* item when possible.
-		victim := items[0]
 		if err := os.RemoveAll(victim.path); err != nil {
 			return err
 		}
-		_ = incoming
+		s.total -= victim.size
+		delete(s.idx, victim.path)
 	}
+	return nil
 }
 
 func (s *Store) touchBlobLocked(dir string) {

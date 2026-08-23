@@ -50,3 +50,22 @@ func TestClipLogKeepsTail(t *testing.T) {
 		t.Fatalf("tail = %q", got)
 	}
 }
+
+func TestTailFileLastBytes(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "console.log")
+	body := strings.Repeat("head\n", 200) + "LIVE LINE\n"
+	if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got := TailFile(p, 32)
+	if !strings.Contains(got, "LIVE LINE") {
+		t.Fatalf("got %q", got)
+	}
+	if strings.HasPrefix(got, "head") && len(got) < len(body) {
+		// truncated from the start — expected
+	}
+	if TailFile(filepath.Join(dir, "missing"), 32) != "" {
+		t.Fatal("missing file should be empty")
+	}
+}

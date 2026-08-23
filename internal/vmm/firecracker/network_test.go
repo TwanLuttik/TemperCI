@@ -35,3 +35,16 @@ func TestBootArgsIncludesIPWhenNetFilesPresent(t *testing.T) {
 		t.Fatalf("missing ip= cmdline: %q", args)
 	}
 }
+
+func TestMailboxInputSpec(t *testing.T) {
+	got := strings.Join(mailboxInputSpec("tc00aabbcc"), " ")
+	if !strings.Contains(got, "INPUT") || !strings.Contains(got, "-i tc00aabbcc") {
+		t.Fatalf("spec=%q", got)
+	}
+	if !strings.Contains(got, "--dport 9876") || !strings.Contains(got, "-j ACCEPT") {
+		t.Fatalf("spec=%q", got)
+	}
+	if mailboxInputSpec("") != nil {
+		t.Fatal("empty tap")
+	}
+}

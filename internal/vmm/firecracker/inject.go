@@ -12,6 +12,33 @@ import (
 
 const injectDriveSizeBytes = 64 * 1024 * 1024 // 64 MiB
 
+func injectTemplatePath(layout vmm.Layout) string {
+	return filepath.Join(layout.ImagesDir(), "inject-template.ext4")
+}
+
+func ensureInjectTemplate(path string) error {
+	if path == "" {
+		return fmt.Errorf("inject template path empty")
+	}
+	if st, err := os.Stat(path); err == nil && st.Size() > 0 {
+		return nil
+	}
+	return createInjectDrive(path)
+}
+
+func cloneInjectDrive(template, dest string) error {
+	if err := ensureInjectTemplate(template); err != nil {
+		return createInjectDrive(dest)
+	}
+	if err := cloneFile(template, dest); err == nil {
+		return nil
+	}
+	if _, err := copySparse(template, dest); err != nil {
+		return createInjectDrive(dest)
+	}
+	return nil
+}
+
 // createInjectDrive creates an empty ext4 image for host→guest inject.
 func createInjectDrive(path string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {

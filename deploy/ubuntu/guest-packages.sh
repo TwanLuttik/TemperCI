@@ -144,7 +144,7 @@ temperci_install_guest_packages() {
 
     # Ubuntu noble apt: nodejs 18.x + npm 9.x. actions/setup-node downloads its
     # own runtime; system node is only a baseline. See guest-toolchain.md.
-    apt_group docker.io docker-compose-v2 iptables iproute2 || true
+    apt_group docker.io docker-compose-v2 docker-buildx iptables iproute2 || true
     apt_group nodejs npm || true
     apt_group python3 python3-pip python3-venv python3.12-venv || true
     apt_group build-essential gcc g++ make pkg-config \

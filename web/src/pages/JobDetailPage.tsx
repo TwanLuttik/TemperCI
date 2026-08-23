@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 
 import { api, cancelJob, formatDuration, jobIsActive, type Job, type JobDetail, type JobStep } from "../api";
+import { useRealtime } from "../hooks/useRealtime";
 import { Button } from "@/components/ui/button";
 import { useNow } from "../hooks/useNow";
 import { liveJobTimings } from "../lib/job-duration";
@@ -33,7 +34,10 @@ export function JobDetailPage() {
   const [cancelling, setCancelling] = useState(false);
   const tabRaw = params.get("tab") || "events";
   const tab = jobTabs.has(tabRaw) ? tabRaw : "events";
+  const rt = useRealtime(true);
   const [follow, setFollow] = useState(() => !params.get("tab"));
+  const jobStatus = String(data?.job.status || "").toLowerCase();
+  const jobDone = jobStatus === "finished" || jobStatus === "failed";
   const setTab = (next: string, pin = true) => {
     if (pin) setFollow(false);
     const p = new URLSearchParams(params);
@@ -60,21 +64,20 @@ export function JobDetailPage() {
         });
     };
     load();
-    const t = setInterval(load, 1000);
+    // Live job rows arrive over WS. Poll REST for logs; slow down when finished or WS is live.
+    const ms = jobDone ? 30_000 : rt.status === "live" ? 5_000 : 2_000;
+    const t = setInterval(load, ms);
     return () => {
       stop = true;
       clearInterval(t);
     };
-  }, [id]);
+  }, [id, jobDone, rt.status]);
 
   useEffect(() => {
     if (!follow || !data) return;
     const next = suggestJobTab(data.job, data.logs || {});
     if (next !== tab) setTab(next, false);
   }, [follow, data, tab]);
-
-  const jobStatus = String(data?.job.status || "").toLowerCase();
-  const jobDone = jobStatus === "finished" || jobStatus === "failed";
   const now = useNow(!jobDone && Boolean(data));
 
   if (err) return <p className="text-sm text-destructive">{err}</p>;
@@ -154,7 +157,13 @@ export function JobDetailPage() {
         <StatCard
           label="Agent / VM"
           value={<span className="font-mono text-sm">{j.assigned_agent_id || "—"}</span>}
-          hint={j.vm_id}
+          hint={
+            j.vm_id ? (
+              <Link to={`/vms/${encodeURIComponent(j.vm_id)}`} className="text-primary">
+                {j.vm_id}
+              </Link>
+            ) : undefined
+          }
         />
         <StatCard label="Queue" value={formatDuration(timings.queue)} hint="created → assigned" />
         <StatCard label="Bind" value={formatDuration(timings.bind)} hint="assigned → started" />

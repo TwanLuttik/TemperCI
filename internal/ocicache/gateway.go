@@ -33,7 +33,7 @@ type Gateway struct {
 type uploadSession struct {
 	Name string
 	Repo string
-	Buf  []byte
+	Path string
 }
 
 // NewGateway wraps store. Store must be non-nil.
@@ -308,8 +308,15 @@ func (g *Gateway) serveUpload(w http.ResponseWriter, r *http.Request, name, uuid
 			http.Error(w, "id", http.StatusInternalServerError)
 			return
 		}
+		tmp, err := os.CreateTemp("", "temperci-oci-up-*.tmp")
+		if err != nil {
+			http.Error(w, "tmp", http.StatusInternalServerError)
+			return
+		}
+		path := tmp.Name()
+		_ = tmp.Close()
 		g.mu.Lock()
-		g.uploads[id] = &uploadSession{Name: name, Repo: repo}
+		g.uploads[id] = &uploadSession{Name: name, Repo: repo, Path: path}
 		g.mu.Unlock()
 		loc := "/v2/" + name + "/blobs/uploads/" + id
 		w.Header().Set("Location", loc)
@@ -317,48 +324,66 @@ func (g *Gateway) serveUpload(w http.ResponseWriter, r *http.Request, name, uuid
 		w.Header().Set("Range", "0-0")
 		w.WriteHeader(http.StatusAccepted)
 	case http.MethodPatch:
-		body, err := io.ReadAll(io.LimitReader(r.Body, 2<<30))
-		if err != nil {
-			http.Error(w, "read", http.StatusBadRequest)
-			return
-		}
 		g.mu.Lock()
 		up, ok := g.uploads[uuid]
-		if ok {
-			up.Buf = append(up.Buf, body...)
-		}
 		g.mu.Unlock()
-		if !ok {
+		if !ok || up.Path == "" {
 			http.NotFound(w, r)
 			return
 		}
-		w.Header().Set("Location", "/v2/"+name+"/blobs/uploads/"+uuid)
-		w.Header().Set("Docker-Upload-Uuid", uuid)
-		w.Header().Set("Range", fmt.Sprintf("0-%d", len(up.Buf)-1))
-		w.WriteHeader(http.StatusAccepted)
-	case http.MethodPut:
-		body, err := io.ReadAll(io.LimitReader(r.Body, 2<<30))
+		f, err := os.OpenFile(up.Path, os.O_APPEND|os.O_WRONLY, 0o600)
+		if err != nil {
+			http.Error(w, "open", http.StatusInternalServerError)
+			return
+		}
+		n, err := io.Copy(f, io.LimitReader(r.Body, 2<<30))
+		_ = f.Close()
 		if err != nil {
 			http.Error(w, "read", http.StatusBadRequest)
 			return
 		}
+		st, _ := os.Stat(up.Path)
+		end := int64(0)
+		if st != nil {
+			end = st.Size() - 1
+		}
+		_ = n
+		w.Header().Set("Location", "/v2/"+name+"/blobs/uploads/"+uuid)
+		w.Header().Set("Docker-Upload-Uuid", uuid)
+		w.Header().Set("Range", fmt.Sprintf("0-%d", end))
+		w.WriteHeader(http.StatusAccepted)
+	case http.MethodPut:
 		g.mu.Lock()
 		up, ok := g.uploads[uuid]
 		if ok {
-			up.Buf = append(up.Buf, body...)
 			delete(g.uploads, uuid)
 		}
 		g.mu.Unlock()
-		if !ok {
+		if !ok || up.Path == "" {
 			http.NotFound(w, r)
 			return
 		}
+		defer os.Remove(up.Path)
+		f, err := os.OpenFile(up.Path, os.O_APPEND|os.O_WRONLY, 0o600)
+		if err != nil {
+			http.Error(w, "open", http.StatusInternalServerError)
+			return
+		}
+		_, _ = io.Copy(f, io.LimitReader(r.Body, 2<<30))
+		_ = f.Close()
 		digest := r.URL.Query().Get("digest")
 		if digest == "" {
 			http.Error(w, "digest required", http.StatusBadRequest)
 			return
 		}
-		if err := g.Store.PutBlob(ScopeRepo, repo, digest, up.Buf); err != nil {
+		in, err := os.Open(up.Path)
+		if err != nil {
+			http.Error(w, "open", http.StatusInternalServerError)
+			return
+		}
+		err = g.Store.PutBlobFromReader(ScopeRepo, repo, digest, in)
+		_ = in.Close()
+		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
