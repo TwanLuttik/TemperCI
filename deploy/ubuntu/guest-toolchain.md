@@ -46,7 +46,7 @@ there).
 | `nodejs`, `npm` | System Node **18.x** + npm **9.x** from noble apt |
 | `python3`, `python3-pip`, `python3-venv` | System Python **3.12** |
 | `build-essential`, `gcc`, `g++`, `make`, `pkg-config` | Native builds / node-gyp |
-| `jq`, `unzip`, `zip`, `rsync`, `tar`, `gzip`, `ca-certificates` | Archive / JSON / TLS |
+| `jq`, `unzip`, `zip`, `rsync`, `tar`, `gzip`, `zstd`, `ca-certificates` | Archive / JSON / TLS. `zstd` is what `actions/cache` uses instead of gzip |
 | `git`, `git-lfs` | `actions/checkout` |
 | `libicu74` | .NET / runner ICU (`libicu-dev` if `libicu74` is absent) |
 | `sudo`, `gnupg`, `lsb-release` | Workflow `sudo`, apt keys, distro detection |

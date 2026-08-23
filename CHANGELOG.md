@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Tabbed settings, clickable MicroVM jobs with hover details, and a stable VM list (oldest boot first; new guests append).
 - Webhook setup detects Tailscale Funnel and Cloudflare, and marks the webhook received when a job arrives (no buried GitHub ping required).
 - Guest trust for the cache intercept CA (Node, npm/pnpm, runner user).
+- `zstd` in the guest toolchain so `actions/cache` restores with zstd instead of gzip.
 - Public product README. Architecture notes, ADRs, and specs stay under [docs/](docs/README.md).
 
 ### Fixed

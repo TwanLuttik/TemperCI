@@ -148,7 +148,7 @@ temperci_install_guest_packages() {
     apt_group nodejs npm || true
     apt_group python3 python3-pip python3-venv python3.12-venv || true
     apt_group build-essential gcc g++ make pkg-config \
-      jq unzip zip rsync tar gzip ca-certificates \
+      jq unzip zip rsync tar gzip zstd ca-certificates \
       git git-lfs "$icu_pkg" sudo gnupg lsb-release
 
     mkdir -p "$rootfs/etc/docker"
