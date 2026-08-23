@@ -154,6 +154,26 @@ func TestBindWarmThenJobFinishedReplenish(t *testing.T) {
 	}
 }
 
+func TestPool_KillBusyVM(t *testing.T) {
+	p := testPool(t, agent.PoolConfig{MinReady: 1, MaxReady: 1})
+	waitFor(t, 2*time.Second, func() bool { return p.Counts().Warm >= 1 })
+	ctx := context.Background()
+	res, err := p.Bind(ctx, agent.JobPayload{JobID: "kill-1", JITConfig: "jit"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := p.KillVM(ctx, res.VMID, "dashboard"); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, 2*time.Second, func() bool {
+		c := p.Counts()
+		return c.Busy == 0 && c.Destroying == 0
+	})
+	if _, ok := p.DesiredIDs()[res.VMID]; ok {
+		t.Fatalf("killed vm %s still tracked", res.VMID)
+	}
+}
+
 func TestBindFailsAfterSelect_DestroysNoRewarm(t *testing.T) {
 	failRunner := &agent.StubRunner{
 		StartFunc: func(ctx context.Context, id vmm.ID, job agent.JobPayload) error {

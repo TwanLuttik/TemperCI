@@ -326,6 +326,34 @@ func (s *AssignmentStore) MarkFinished(jobID int64, agentID, outcome, vmID strin
 	return s.persistLocked(a)
 }
 
+// Cancel marks a minted/assigned/started job finished with outcome cancelled.
+// Already-cancelled jobs are a no-op. Other terminal outcomes are rejected.
+func (s *AssignmentStore) Cancel(jobID int64, reason string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	a, ok := s.byID[jobID]
+	if !ok {
+		return fmt.Errorf("control: unknown job %d", jobID)
+	}
+	if a.Status == AssignmentFinished && a.Outcome == "cancelled" {
+		return nil
+	}
+	if a.Status == AssignmentFinished || a.Status == AssignmentFailed {
+		return fmt.Errorf("control: job %d already %s", jobID, a.Status)
+	}
+	a.Status = AssignmentFinished
+	a.Outcome = "cancelled"
+	if reason != "" {
+		a.Error = reason
+	}
+	if a.FinishedAt.IsZero() {
+		a.FinishedAt = time.Now().UTC()
+	}
+	a.EncodedJITConfig = ""
+	s.removePendingLocked(a.JobID)
+	return s.persistLocked(a)
+}
+
 // MarkFailed records a mint/assign failure (webhook path).
 func (s *AssignmentStore) MarkFailed(jobID int64, errMsg string) {
 	s.mu.Lock()

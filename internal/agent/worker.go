@@ -212,9 +212,12 @@ func (w *Worker) snapshot() CapacitySnapshot {
 }
 
 func (w *Worker) register(ctx context.Context) error {
-	ops, err := w.Client.Register(ctx, w.snapshot())
+	ops, cmds, err := w.Client.Register(ctx, w.snapshot())
 	if err != nil {
 		return err
+	}
+	if n := ApplyAgentCmds(ctx, w.Pool, cmds); n > 0 && w.Log != nil {
+		w.Log.Info("applied agent commands", "n", n)
 	}
 	var ghaStore *ghacache.Store
 	var ociStore *ocicache.Store
@@ -317,7 +320,7 @@ func (w *Worker) handleJob(ctx context.Context, job *api.JobAssignment) error {
 	}
 
 	// outcome success | failure from runner exit code
-	if err := w.Pool.JobFinished(jobCtx, res.VMID, outcome); err != nil {
+	if err := w.Pool.JobFinished(jobCtx, res.VMID, outcome); err != nil && !errors.Is(err, ErrNotBusy) {
 		_ = w.finish(jobCtx, job.JobID, job.RepoFullName, "error", string(res.VMID), res.WarmStart, err.Error(), logs)
 		return err
 	}

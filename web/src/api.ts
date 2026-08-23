@@ -5,6 +5,19 @@ export class ApiError extends Error {
   }
 }
 
+export function jobIsActive(status?: string): boolean {
+  const s = String(status || "").toLowerCase();
+  return s === "minted" || s === "assigned" || s === "started" || s === "pending" || s === "queued";
+}
+
+export async function cancelJob(jobId: number | string): Promise<void> {
+  await api(`/api/v1/jobs/${jobId}/cancel`, { method: "POST" });
+}
+
+export async function killVM(vmId: string): Promise<void> {
+  await api(`/api/v1/vms/${encodeURIComponent(vmId)}/kill`, { method: "POST" });
+}
+
 export async function api<T = unknown>(
   path: string,
   opts: RequestInit = {},

@@ -119,6 +119,7 @@ func main() {
 		Dashboard:     dash,
 		Hub:           hub,
 		JobLogs:       jobLogs,
+		RunnerDelete:  ghClient,
 	})
 
 	tlsFiles := control.TLSFiles{

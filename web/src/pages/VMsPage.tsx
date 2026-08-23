@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
-import { api, formatDuration, type Job } from "../api";
+import { api, formatDuration, killVM, type Job } from "../api";
+import { Button } from "@/components/ui/button";
 import { EmptyState } from "../components/empty-state";
 import { PageHeader } from "../components/page-header";
 import { LiveDot, StatusBadge } from "../components/status-badge";
@@ -101,6 +102,7 @@ export function VMsPage() {
   const [vms, setVms] = useState<VMRow[]>([]);
   const [jobs, setJobs] = useState<Job[]>([]);
   const [err, setErr] = useState<string | null>(null);
+  const [killing, setKilling] = useState<string | null>(null);
 
   useEffect(() => {
     if (rt.last?.vms) {
@@ -142,12 +144,13 @@ export function VMsPage() {
               <TableHead>Memory (RSS)</TableHead>
               <TableHead>Disk</TableHead>
               <TableHead>PID</TableHead>
+              <TableHead />
             </TableRow>
           </TableHeader>
           <TableBody>
             {vms.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={8}>
+                <TableCell colSpan={9}>
                   <EmptyState title="No microVMs reported">
                     Warm pool VMs appear after the agent heartbeats. Ensure Firecracker is running.
                   </EmptyState>
@@ -176,6 +179,26 @@ export function VMsPage() {
                     {v.disk_mib != null ? `${v.disk_mib.toFixed(1)} MiB` : "—"}
                   </TableCell>
                   <TableCell className="font-mono text-xs">{v.pid || "—"}</TableCell>
+                  <TableCell className="text-right">
+                    {v.state === "destroying" ? null : (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        disabled={killing === v.id}
+                        onClick={() => {
+                          const label = v.job_id ? `VM ${v.id.slice(0, 12)} (job ${v.job_id})` : `VM ${v.id.slice(0, 12)}`;
+                          if (!window.confirm(`Kill ${label}?`)) return;
+                          setKilling(v.id);
+                          killVM(v.id)
+                            .catch((e: Error) => setErr(e.message))
+                            .finally(() => setKilling(null));
+                        }}
+                      >
+                        Kill
+                      </Button>
+                    )}
+                  </TableCell>
                 </TableRow>
               ))
             )}

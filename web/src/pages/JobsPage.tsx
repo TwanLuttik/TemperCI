@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
-import { api, formatDuration, type Job } from "../api";
+import { api, cancelJob, formatDuration, jobIsActive, type Job } from "../api";
+import { Button } from "@/components/ui/button";
 import { EmptyState } from "../components/empty-state";
 import { PageHeader } from "../components/page-header";
 import { StatusBadge } from "../components/status-badge";
@@ -12,6 +13,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 export function JobsPage() {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [err, setErr] = useState<string | null>(null);
+  const [busyId, setBusyId] = useState<number | null>(null);
   const rt = useRealtime(true);
 
   useEffect(() => {
@@ -45,12 +47,13 @@ export function JobsPage() {
               <TableHead>Duration</TableHead>
               <TableHead>Labels</TableHead>
               <TableHead>Outcome</TableHead>
+              <TableHead />
             </TableRow>
           </TableHeader>
           <TableBody>
             {jobs.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={8}>
+                <TableCell colSpan={9}>
                   <EmptyState title="No jobs in memory">
                     Dispatch a workflow with <code>runs-on: temperci-…</code>
                   </EmptyState>
@@ -86,6 +89,25 @@ export function JobsPage() {
                     {(j.labels || []).join(", ")}
                   </TableCell>
                   <TableCell>{j.outcome ? <StatusBadge status={j.outcome} /> : "—"}</TableCell>
+                  <TableCell className="text-right">
+                    {jobIsActive(j.status) ? (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        disabled={busyId === j.job_id}
+                        onClick={() => {
+                          if (!window.confirm(`Cancel job ${j.job_id}? This kills the microVM if one is bound.`)) return;
+                          setBusyId(j.job_id);
+                          cancelJob(j.job_id)
+                            .catch((e: Error) => setErr(e.message))
+                            .finally(() => setBusyId(null));
+                        }}
+                      >
+                        Cancel
+                      </Button>
+                    ) : null}
+                  </TableCell>
                 </TableRow>
               ))
             )}

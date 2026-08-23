@@ -1,6 +1,7 @@
 package control
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -93,6 +94,8 @@ func (s *Server) mountDashboard(d DashboardConfig) {
 	s.mux.HandleFunc("GET /api/v1/hosts", s.withUIAuth(s.handleHosts, false))
 	s.mux.HandleFunc("GET /api/v1/jobs", s.withUIAuth(s.handleJobs, false))
 	s.mux.HandleFunc("GET /api/v1/jobs/{id}", s.withUIAuth(s.handleJobDetail, false))
+	s.mux.HandleFunc("POST /api/v1/jobs/{id}/cancel", s.withUIAuth(s.handleJobCancel, true))
+	s.mux.HandleFunc("POST /api/v1/vms/{id}/kill", s.withUIAuth(s.handleVMKill, true))
 	s.mux.HandleFunc("GET /api/v1/users", s.withUIAuth(s.handleListUsers, true))
 	s.mux.HandleFunc("POST /api/v1/users", s.withUIAuth(s.handleCreateUser, true))
 	s.mux.HandleFunc("GET /api/v1/system/status", s.withUIAuth(s.handleSystemStatus, false))
@@ -133,6 +136,82 @@ func (s *Server) handleVMs(w http.ResponseWriter, r *http.Request, _ *uiPrincipa
 		"ok":  true,
 		"vms": snap.VMs,
 	})
+}
+
+func (s *Server) handleJobCancel(w http.ResponseWriter, r *http.Request, _ *uiPrincipal) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil || id == 0 {
+		writeAPIError(w, http.StatusBadRequest, "invalid job id")
+		return
+	}
+	a := s.store.Get(id)
+	if a == nil {
+		writeAPIError(w, http.StatusNotFound, "job not found")
+		return
+	}
+	if err := s.store.Cancel(id, "cancelled from dashboard"); err != nil {
+		writeAPIError(w, http.StatusConflict, err.Error())
+		return
+	}
+	if a.AssignedAgentID != "" && a.VMID != "" {
+		s.cmdq.enqueueKill(a.AssignedAgentID, a.VMID, id)
+	}
+	s.deleteJobRunner(r.Context(), a)
+	s.recordJobEvent(id, "control", "warn", "cancelled from dashboard")
+	s.PublishSnapshot()
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "job_id": id, "outcome": "cancelled"})
+}
+
+func (s *Server) handleVMKill(w http.ResponseWriter, r *http.Request, _ *uiPrincipal) {
+	vmID := strings.TrimSpace(r.PathValue("id"))
+	if vmID == "" {
+		writeAPIError(w, http.StatusBadRequest, "vm id required")
+		return
+	}
+	agentID, jobID := s.findVM(vmID)
+	if agentID == "" {
+		writeAPIError(w, http.StatusNotFound, "vm not reported by any agent")
+		return
+	}
+	if jobID != 0 {
+		if err := s.store.Cancel(jobID, "vm killed from dashboard"); err == nil {
+			s.recordJobEvent(jobID, "control", "warn", "vm killed from dashboard")
+			if a := s.store.Get(jobID); a != nil {
+				s.deleteJobRunner(r.Context(), a)
+			}
+		}
+	}
+	s.cmdq.enqueueKill(agentID, vmID, jobID)
+	s.PublishSnapshot()
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "vm_id": vmID, "agent_id": agentID, "job_id": jobID})
+}
+
+func (s *Server) findVM(vmID string) (agentID string, jobID int64) {
+	for _, a := range s.agents.List() {
+		for _, v := range a.VMs {
+			if v.ID == vmID {
+				jid, _ := strconv.ParseInt(strings.TrimSpace(v.JobID), 10, 64)
+				return a.AgentID, jid
+			}
+		}
+	}
+	if as := s.store.ListRecent(200); as != nil {
+		for _, job := range as {
+			if job.VMID == vmID && (job.Status == AssignmentStarted || job.Status == AssignmentAssigned) {
+				return job.AssignedAgentID, job.JobID
+			}
+		}
+	}
+	return "", 0
+}
+
+func (s *Server) deleteJobRunner(ctx context.Context, a *Assignment) {
+	if s.runnerDelete == nil || a == nil || a.RunnerID == 0 || a.Org == "" {
+		return
+	}
+	if err := s.runnerDelete.DeleteOrgRunner(ctx, a.Org, a.RunnerID, a.InstallationID); err != nil {
+		s.log.Warn("delete runner after cancel", "job_id", a.JobID, "runner_id", a.RunnerID, "err", err)
+	}
 }
 
 type uiPrincipal struct {

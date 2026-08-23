@@ -195,6 +195,9 @@ func (f *FirecrackerGuestExec) WaitRunner(ctx context.Context, id vmm.ID) (int, 
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 	for {
+		if _, err := os.Stat(layout.InjectDrivePath(id)); err != nil {
+			return 1, nil
+		}
 		files, _ := firecracker.CopyInjectFiles(layout, id, layout.GuestDir(id),
 			[]string{"runner.exit", "runner.log", "agent.log", "workflow.log"})
 		if layout.Root != "" && len(files) > 0 {

@@ -71,6 +71,40 @@ func TestAssignmentStore_WrongAgentRejected(t *testing.T) {
 	}
 }
 
+func TestAssignmentStore_CancelStartedAndMinted(t *testing.T) {
+	s := NewAssignmentStore()
+	s.Put(&Assignment{JobID: 1, Status: AssignmentMinted, EncodedJITConfig: "jit"})
+	if err := s.Cancel(1, "operator cancel"); err != nil {
+		t.Fatal(err)
+	}
+	got := s.Get(1)
+	if got.Status != AssignmentFinished || got.Outcome != "cancelled" {
+		t.Fatalf("minted cancel = %+v", got)
+	}
+	if got.EncodedJITConfig != "" || s.PendingLen() != 0 {
+		t.Fatalf("jit/pending after cancel: jit=%q pending=%d", got.EncodedJITConfig, s.PendingLen())
+	}
+	if err := s.Cancel(1, "again"); err != nil {
+		t.Fatal(err)
+	}
+
+	s.Put(&Assignment{JobID: 2, Status: AssignmentMinted})
+	_ = s.ClaimNext("host-1", nil)
+	_ = s.MarkStarted(2, "host-1", "vm-1", true)
+	if err := s.Cancel(2, "kill vm"); err != nil {
+		t.Fatal(err)
+	}
+	got = s.Get(2)
+	if got.Status != AssignmentFinished || got.Outcome != "cancelled" || got.VMID != "vm-1" {
+		t.Fatalf("started cancel = %+v", got)
+	}
+
+	s.Put(&Assignment{JobID: 3, Status: AssignmentFinished, Outcome: "success"})
+	if err := s.Cancel(3, "late"); err == nil {
+		t.Fatal("expected error cancelling a finished success job")
+	}
+}
+
 func TestAssignmentStore_FailedNotClaimable(t *testing.T) {
 	s := NewAssignmentStore()
 	s.Put(&Assignment{JobID: 9, Status: AssignmentFailed, Error: "mint"})

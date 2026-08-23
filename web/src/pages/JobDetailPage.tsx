@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 
-import { api, formatDuration, type Job, type JobDetail, type JobStep } from "../api";
+import { api, cancelJob, formatDuration, jobIsActive, type Job, type JobDetail, type JobStep } from "../api";
+import { Button } from "@/components/ui/button";
 import { formatStepClock, jobStepProgress, lastWorkflowGroup, parseStepTime, settleSteps, stepElapsedMs } from "../lib/job-steps";
 import { suggestJobTab } from "../lib/job-tabs";
 import { EmptyState } from "../components/empty-state";
@@ -27,6 +28,7 @@ export function JobDetailPage() {
   const [params, setParams] = useSearchParams();
   const [data, setData] = useState<JobDetail | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [cancelling, setCancelling] = useState(false);
   const tabRaw = params.get("tab") || "events";
   const tab = jobTabs.has(tabRaw) ? tabRaw : "events";
   const [follow, setFollow] = useState(() => !params.get("tab"));
@@ -104,6 +106,24 @@ export function JobDetailPage() {
         description={`${j.workflow_name ? `${j.workflow_name} · ` : ""}${j.repo_full_name || "unknown repo"} · ${j.runner_name || "runner"}${
           j.name ? ` · ${j.job_id}` : ""
         }${running ? (follow ? " · live follow" : " · live (tab pinned)") : ""}`}
+        actions={
+          jobIsActive(j.status) ? (
+            <Button
+              type="button"
+              variant="outline"
+              disabled={cancelling}
+              onClick={() => {
+                if (!window.confirm(`Cancel job ${j.job_id} and kill its microVM?`)) return;
+                setCancelling(true);
+                cancelJob(j.job_id)
+                  .catch((e: Error) => setErr(e.message))
+                  .finally(() => setCancelling(false));
+              }}
+            >
+              {cancelling ? "Cancelling…" : "Cancel job"}
+            </Button>
+          ) : undefined
+        }
       />
 
       <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">

@@ -88,6 +88,18 @@ type RegisterResponse struct {
 	AgentID string `json:"agent_id"`
 	// CacheOps are pending operator cache commands for this agent to apply.
 	CacheOps []CacheOp `json:"cache_ops,omitempty"`
+	// Commands are pending operator actions (kill VM, etc.).
+	Commands []AgentCmd `json:"commands,omitempty"`
+}
+
+const AgentCmdKillVM = "kill_vm"
+
+// AgentCmd is a pending operator command the agent should apply on heartbeat.
+type AgentCmd struct {
+	ID     string `json:"id"`
+	Action string `json:"action"`
+	VMID   string `json:"vm_id,omitempty"`
+	JobID  int64  `json:"job_id,omitempty"`
 }
 
 // Cache usage / operator command types.

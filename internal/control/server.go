@@ -27,6 +27,8 @@ type Server struct {
 	dash          *DashboardConfig
 	hub           *Hub
 	cacheq        *cacheQueue
+	cmdq          *cmdQueue
+	runnerDelete  RunnerDeleter
 	jobLogs       JobLogDownloader
 	wfFetchMu     sync.Mutex
 	wfFetchAt     map[int64]time.Time
@@ -49,6 +51,8 @@ type ServerConfig struct {
 	Hub *Hub
 	// JobLogs downloads official GitHub Actions job logs for the dashboard.
 	JobLogs JobLogDownloader
+	// RunnerDelete removes a JIT self-hosted runner after operator cancel.
+	RunnerDelete RunnerDeleter
 }
 
 // NewServer builds an HTTP handler serving health, GitHub webhooks, agent APIs, and metrics.
@@ -82,6 +86,8 @@ func NewServer(cfg ServerConfig) *Server {
 		mux:           http.NewServeMux(),
 		hub:           hub,
 		cacheq:        newCacheQueue(),
+		cmdq:          newCmdQueue(),
+		runnerDelete:  cfg.RunnerDelete,
 		jobLogs:       cfg.JobLogs,
 		wfFetchAt:     make(map[int64]time.Time),
 		jobMeta:       make(map[int64]jobMetaCache),
@@ -271,6 +277,7 @@ func (s *Server) handleAgentRegister(w http.ResponseWriter, r *http.Request) {
 		OK:       true,
 		AgentID:  info.AgentID,
 		CacheOps: s.cacheq.take(info.AgentID),
+		Commands: s.cmdq.take(info.AgentID),
 	})
 }
 

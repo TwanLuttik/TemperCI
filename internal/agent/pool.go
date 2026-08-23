@@ -384,6 +384,25 @@ func (p *Pool) RunnerWaiter() RunnerStarter {
 	return p.runner
 }
 
+// KillVM force-destroys a tracked VM (busy, warm, or booting).
+func (p *Pool) KillVM(ctx context.Context, id vmm.ID, reason string) error {
+	if reason == "" {
+		reason = "killed"
+	}
+	p.mu.Lock()
+	vm, ok := p.vms[id]
+	if !ok {
+		p.mu.Unlock()
+		return fmt.Errorf("agent: unknown vm %s", id)
+	}
+	busy := vm.state == StateBusy
+	p.mu.Unlock()
+	if busy {
+		return p.JobFinished(ctx, id, reason)
+	}
+	return p.beginDestroy(ctx, id, reason)
+}
+
 // JobFinished signals a terminal job outcome: busy → destroying → cleanup → replenish.
 func (p *Pool) JobFinished(ctx context.Context, id vmm.ID, reason string) error {
 	p.mu.Lock()
