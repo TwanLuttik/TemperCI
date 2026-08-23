@@ -11,37 +11,52 @@ import (
 
 var errNoClone = errors.New("firecracker: clone not supported")
 
+// CopyMethod is how a rootfs/overlay file was materialized.
+type CopyMethod string
+
+const (
+	CopyClone  CopyMethod = "clone"
+	CopySparse CopyMethod = "sparse"
+	CopyDense  CopyMethod = "dense"
+)
+
 // copyFile copies src to dst, preferring a filesystem clone (reflink/clonefile)
 // and falling back to a hole-preserving copy so sparse guest images stay sparse.
 func copyFile(src, dst string) error {
+	_, err := copyFileWithMethod(src, dst)
+	return err
+}
+
+func copyFileWithMethod(src, dst string) (CopyMethod, error) {
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
-		return err
+		return "", err
 	}
 	_ = os.Remove(dst)
 	if err := cloneFile(src, dst); err == nil {
-		return nil
+		return CopyClone, nil
 	}
-	return copySparse(src, dst)
+	method, err := copySparse(src, dst)
+	return method, err
 }
 
-func copySparse(src, dst string) error {
+func copySparse(src, dst string) (CopyMethod, error) {
 	in, err := os.Open(src)
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer in.Close()
 	st, err := in.Stat()
 	if err != nil {
-		return err
+		return "", err
 	}
 	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer out.Close()
 	size := st.Size()
 	if err := out.Truncate(size); err != nil {
-		return err
+		return "", err
 	}
 
 	seek := func(off int64, whence int) (int64, error) {
@@ -51,30 +66,30 @@ func copySparse(src, dst string) error {
 	if err != nil {
 		// SEEK_HOLE/SEEK_DATA unsupported — dense copy.
 		if _, err := in.Seek(0, io.SeekStart); err != nil {
-			return err
+			return "", err
 		}
 		if _, err := out.Seek(0, io.SeekStart); err != nil {
-			return err
+			return "", err
 		}
 		if _, err := io.Copy(out, in); err != nil {
-			return err
+			return "", err
 		}
-		return out.Close()
+		return CopyDense, out.Close()
 	}
 	buf := make([]byte, 256<<10)
 	for _, e := range extents {
 		if _, err := in.Seek(e[0], io.SeekStart); err != nil {
-			return err
+			return "", err
 		}
 		if _, err := out.Seek(e[0], io.SeekStart); err != nil {
-			return err
+			return "", err
 		}
 		n := e[1] - e[0]
 		if _, err := io.CopyBuffer(out, io.LimitReader(in, n), buf); err != nil {
-			return err
+			return "", err
 		}
 	}
-	return out.Close()
+	return CopySparse, out.Close()
 }
 
 // walkDataExtents returns [start,end) data ranges using SEEK_DATA / SEEK_HOLE.

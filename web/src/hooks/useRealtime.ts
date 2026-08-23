@@ -13,6 +13,10 @@ export type VMRow = {
   rss_mib: number;
   disk_mib?: number;
   created_at?: string;
+  guest_ip?: string;
+  host_ip?: string;
+  tap?: string;
+  shape?: string;
 };
 
 export type RealtimeSnapshot = {

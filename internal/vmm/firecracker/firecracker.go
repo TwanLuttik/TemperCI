@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"hash/fnv"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -51,6 +52,9 @@ type Config struct {
 	// host:port so the Actions cache gateway can intercept results/blob TLS.
 	// Use 127.0.0.1:port (DNAT + route_localnet); 0.0.0.0:port uses REDIRECT.
 	CacheListenAddr string
+	// RequireClone refuses Create when the rootfs cannot be reflink/clonefile'd.
+	// Off by default: we still copy, but log at Error so silent 12G copies are visible.
+	RequireClone bool
 }
 
 // Manager drives Firecracker instances under a host layout root.
@@ -86,7 +90,7 @@ func New(cfg Config) (*Manager, error) {
 		cfg.HTTPTimeout = 10 * time.Second
 	}
 	if cfg.StopGrace == 0 {
-		cfg.StopGrace = 2 * time.Second
+		cfg.StopGrace = 200 * time.Millisecond
 	}
 	if cfg.SetupNetwork == nil {
 		cfg.SetupNetwork = realSetupNetwork
@@ -122,6 +126,7 @@ func New(cfg Config) (*Manager, error) {
 	if err := os.MkdirAll(cfg.Layout.InstancesDir(), 0o755); err != nil {
 		return nil, fmt.Errorf("firecracker: instances dir: %w", err)
 	}
+	_ = ensureInjectTemplate(injectTemplatePath(cfg.Layout))
 	return &Manager{cfg: cfg, layout: cfg.Layout}, nil
 }
 
@@ -139,6 +144,7 @@ func NewForTest(layout vmm.Layout) *Manager {
 	}
 	_ = os.MkdirAll(layout.ImagesDir(), 0o755)
 	_ = os.MkdirAll(layout.InstancesDir(), 0o755)
+	_ = ensureInjectTemplate(injectTemplatePath(layout))
 	return &Manager{cfg: cfg, layout: layout}
 }
 
@@ -181,25 +187,61 @@ func (m *Manager) Create(ctx context.Context, cfg vmm.Config) (*vmm.Info, error)
 	}
 	m.mu.Unlock()
 
-	// Clone / hole-preserving copy of the (sparse) base rootfs. Do not hold
-	// the manager lock across this — parallel pool boots would otherwise serialize.
-	if err := copyFile(cfg.RootfsPath, m.layout.OverlayPath(cfg.ID)); err != nil {
+	var (
+		wg        sync.WaitGroup
+		copyErr   error
+		injectErr error
+		netErr    error
+		netState  vmm.NetworkState
+		method    CopyMethod
+	)
+	wg.Add(3)
+	go func() {
+		defer wg.Done()
+		var err error
+		method, err = copyFileWithMethod(cfg.RootfsPath, m.layout.OverlayPath(cfg.ID))
+		if err != nil {
+			copyErr = err
+			return
+		}
+		if method != CopyClone {
+			if m.cfg.RequireClone {
+				copyErr = fmt.Errorf("firecracker: reflink required but overlay used %s (put data_dir on xfs/btrfs)", method)
+				return
+			}
+			// Loud: a 12G ext4 copy is the common "first job is slow" cause.
+			slog.Default().Error("rootfs overlay is not a filesystem clone",
+				"vm_id", string(cfg.ID),
+				"method", string(method),
+				"hint", "put data_dir on xfs/btrfs with reflink to avoid multi-GB copies",
+			)
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		tmpl := injectTemplatePath(m.layout)
+		if err := cloneInjectDrive(tmpl, m.layout.InjectDrivePath(cfg.ID)); err != nil {
+			_ = os.WriteFile(m.layout.InjectDrivePath(cfg.ID), make([]byte, 4096), 0o600)
+			_ = os.WriteFile(filepath.Join(dir, "inject.warn"), []byte(err.Error()), 0o600)
+			injectErr = err
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		st, err := m.cfg.SetupNetwork(cfg.ID, m.layout.NetDir(cfg.ID))
+		netState = st
+		netErr = err
+	}()
+	wg.Wait()
+	if copyErr != nil {
 		_ = os.RemoveAll(dir)
-		return nil, fmt.Errorf("firecracker: create overlay: %w", err)
+		return nil, fmt.Errorf("firecracker: create overlay: %w", copyErr)
 	}
-
-	// Second disk for host↔guest inject (JIT + runner.exit). Best-effort format.
-	if err := createInjectDrive(m.layout.InjectDrivePath(cfg.ID)); err != nil {
-		// Tests without mkfs: leave empty file so Destroy still works.
-		_ = os.WriteFile(m.layout.InjectDrivePath(cfg.ID), make([]byte, 4096), 0o600)
-		_ = os.WriteFile(filepath.Join(dir, "inject.warn"), []byte(err.Error()), 0o600)
-	}
+	_ = injectErr
 	_ = os.MkdirAll(m.layout.GuestDir(cfg.ID), 0o700)
-
-	netState, err := m.cfg.SetupNetwork(cfg.ID, m.layout.NetDir(cfg.ID))
-	if err != nil {
+	if netErr != nil {
 		_ = os.RemoveAll(dir)
-		return nil, fmt.Errorf("firecracker: setup network: %w", err)
+		return nil, fmt.Errorf("firecracker: setup network: %w", netErr)
 	}
 
 	meta := vmm.InstanceMeta{
@@ -233,18 +275,19 @@ func (m *Manager) Boot(ctx context.Context, id vmm.ID) error {
 	}
 
 	m.mu.Lock()
-	defer m.mu.Unlock()
-
 	meta, err := vmm.ReadMeta(m.layout.MetaPath(id))
 	if err != nil {
+		m.mu.Unlock()
 		if errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("%w: %s", vmm.ErrNotFound, id)
 		}
 		return err
 	}
 	if meta.State == vmm.StateRunning {
+		m.mu.Unlock()
 		return fmt.Errorf("%w: %s", vmm.ErrAlreadyRunning, id)
 	}
+	m.mu.Unlock()
 
 	sock := m.layout.APISockPath(id)
 	_ = os.Remove(sock)
@@ -280,9 +323,6 @@ func (m *Manager) Destroy(ctx context.Context, id vmm.ID) error {
 	if err := id.Validate(); err != nil {
 		return err
 	}
-
-	m.mu.Lock()
-	defer m.mu.Unlock()
 
 	return m.destroyLocked(id)
 }

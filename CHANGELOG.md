@@ -7,10 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.6] - 2026-08-23
+
 ### Added
 
-- Dashboard sidebar shows the running control version and a link when a newer GitHub release exists. Control checks `releases/latest` at most once every 6 hours (15 minutes after a failed check).
+- MicroVM detail page with live serial console and guest-agent log. Click a VM on the MicroVMs list (or the VM id on a job).
+- Guest UDP mailbox for ready/exit so the host does not loop-mount `inject.ext4` every 20ms. Proxmox INPUT accepts UDP 9876 on the TAP; inject read is a 500ms fallback.
+- Dashboard sidebar shows the running control version and a link when a newer GitHub release exists.
 - Actions cache page expands each `org/repo` to show how disk is split across cache keys (size, share, version).
+- Job list and detail show GitHub step progress and live durations.
+
+### Changed
+
+- Job pickup: ACK GitHub webhooks before JIT mint; persist assignments after unlocking the store; SQLite WAL; skip extra sleep after a long-poll miss.
+- VM create: clone a preformatted inject template, copy overlay / inject / TAP in parallel, and do not hold the VMM lock across boot or destroy. Overlay clone vs sparse vs dense is logged; disk admission uses allocated blocks.
+- Cache hit path is an in-memory index (`OpenBlob` does not walk the tree). OCI uploads stream to disk. Hub anonymous tokens are cached.
+- Docker wrapper only rewrites to `buildx` when the plugin exists; default build-cache mode is `min`. Guest image installs `docker-buildx`.
+- Checkout / npm / Go HTTPS skip the cache intercept (`ipset` bypass). TLS leaves are ECDSA P-256 with HTTP/2.
+- Dashboard: no 1s REST polling when the WebSocket is live; job list does not N+1 GitHub; snapshots skip when no clients are connected.
+- `make test` rebuilds the Vite dashboard only when UI sources change (`make test-go` runs Go tests against an existing `dist/`).
+
+### Fixed
+
+- Guest ready no longer depends on fighting the guest for a loop-mounted inject disk (the cause of 45s warm-pool timeouts on PVE).
+- `GET /api/v1/jobs` no longer fetches GitHub job metadata for every live row.
 
 ## [0.1.5] - 2026-08-23
 
@@ -65,7 +85,8 @@ Initial tagged release.
 - Control plane + host agent, Firecracker warm pool, official `actions/runner` via JIT.
 - Operator dashboard, host-local Actions cache, OCI pull-through, and host resource admission.
 
-[Unreleased]: https://github.com/TwanLuttik/TemperCI/compare/v0.1.5...HEAD
+[Unreleased]: https://github.com/TwanLuttik/TemperCI/compare/v0.1.6...HEAD
+[0.1.6]: https://github.com/TwanLuttik/TemperCI/compare/v0.1.5...v0.1.6
 [0.1.5]: https://github.com/TwanLuttik/TemperCI/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/TwanLuttik/TemperCI/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/TwanLuttik/TemperCI/compare/v0.1.2...v0.1.3

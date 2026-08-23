@@ -23,6 +23,18 @@ func TestShouldIntercept(t *testing.T) {
 	}
 }
 
+func TestShouldBypass(t *testing.T) {
+	if !ShouldBypass("github.com") || !ShouldBypass("registry.npmjs.org") || !ShouldBypass("proxy.golang.org") {
+		t.Fatal("expected common hosts to bypass")
+	}
+	if ShouldBypass("results-receiver.actions.githubusercontent.com") {
+		t.Fatal("actions cache host must not bypass")
+	}
+	if ShouldBypass("registry-1.docker.io") {
+		t.Fatal("hub must not bypass")
+	}
+}
+
 func TestListenPort(t *testing.T) {
 	if p := ListenPort("127.0.0.1:8743"); p != 8743 {
 		t.Fatalf("port=%d", p)

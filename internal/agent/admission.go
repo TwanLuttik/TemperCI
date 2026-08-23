@@ -1,6 +1,9 @@
 package agent
 
-import "os"
+import (
+	"os"
+	"syscall"
+)
 
 const (
 	DefaultReserveRAMMiB  = 2048
@@ -123,12 +126,26 @@ func (a Admission) Remaining(inv HostInventory, allocated int) int {
 }
 
 // OverlayEstimateMiB is the host disk we expect one new instance to consume.
+// Uses allocated blocks (not logical size) so a 12G sparse image is not
+// charged as 12G when the filesystem keeps holes.
 func OverlayEstimateMiB(imagePath string) int {
 	fi, err := os.Stat(imagePath)
 	if err != nil || fi.Size() <= 0 {
 		return OverlaySlopMiB
 	}
-	return int(fi.Size()/(1024*1024)) + OverlaySlopMiB
+	n := fi.Size()
+	if alloc := allocatedBytes(fi); alloc > 0 && alloc < n {
+		n = alloc
+	}
+	return int(n/(1024*1024)) + OverlaySlopMiB
+}
+
+func allocatedBytes(fi os.FileInfo) int64 {
+	st, ok := fi.Sys().(*syscall.Stat_t)
+	if !ok || st == nil {
+		return 0
+	}
+	return st.Blocks * 512
 }
 
 // ClampPoolToHost lowers MinReady/MaxReady so they cannot exceed host fit.

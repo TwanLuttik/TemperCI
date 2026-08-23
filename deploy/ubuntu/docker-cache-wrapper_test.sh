@@ -14,15 +14,16 @@ expect_eq() {
   fi
 }
 
-# build without existing cache-to → buildx build --load + cache flags
+# build without existing cache-to → buildx build --load + cache flags (mode=min)
+export TEMPERCI_FORCE_BUILDX=1
 GITHUB_REPOSITORY=acme/app
 got="$(temperci_docker_rewrite build -t x .)"
-want="buildx build --load --cache-from type=registry,ref=ghcr.io/__temperci_cache/acme/app/buildkit --cache-to type=registry,ref=ghcr.io/__temperci_cache/acme/app/buildkit,mode=max -t x ."
+want="buildx build --load --cache-from type=registry,ref=ghcr.io/__temperci_cache/acme/app/buildkit --cache-to type=registry,ref=ghcr.io/__temperci_cache/acme/app/buildkit,mode=min -t x ."
 expect_eq "$got" "$want" "plain docker build"
 
 # buildx build
 got="$(temperci_docker_rewrite buildx build -t x .)"
-want="buildx build --cache-from type=registry,ref=ghcr.io/__temperci_cache/acme/app/buildkit --cache-to type=registry,ref=ghcr.io/__temperci_cache/acme/app/buildkit,mode=max -t x ."
+want="buildx build --cache-from type=registry,ref=ghcr.io/__temperci_cache/acme/app/buildkit --cache-to type=registry,ref=ghcr.io/__temperci_cache/acme/app/buildkit,mode=min -t x ."
 expect_eq "$got" "$want" "docker buildx build"
 
 # existing --cache-to is left alone
@@ -40,5 +41,13 @@ unset GITHUB_REPOSITORY
 got="$(temperci_docker_rewrite build -t x .)"
 want=""
 expect_eq "$got" "$want" "missing GITHUB_REPOSITORY"
+
+# without buildx, do not rewrite (job must still build)
+unset TEMPERCI_FORCE_BUILDX
+export TEMPERCI_DISABLE_BUILDX=1
+GITHUB_REPOSITORY=acme/app
+got="$(temperci_docker_rewrite build -t x .)"
+want=""
+expect_eq "$got" "$want" "no buildx leaves docker build alone"
 
 echo "ok"

@@ -109,6 +109,7 @@ func (s *Server) mountDashboard(d DashboardConfig) {
 	s.mux.HandleFunc("POST /api/v1/system/install", s.withUIAuth(s.handleSystemInstall, true))
 	s.mux.HandleFunc("GET /api/v1/ws", s.handleDashboardWS)
 	s.mux.HandleFunc("GET /api/v1/vms", s.withUIAuth(s.handleVMs, false))
+	s.mux.HandleFunc("GET /api/v1/vms/{id}", s.withUIAuth(s.handleVMDetail, false))
 	s.mux.HandleFunc("GET /api/v1/cache", s.withUIAuth(s.handleCache, false))
 	s.mux.HandleFunc("POST /api/v1/cache/clear", s.withUIAuth(s.handleCacheClear, true))
 	// Vite SPA (embedded dist/). More specific /api and /v1 routes take precedence.
@@ -153,6 +154,47 @@ func (s *Server) handleVMs(w http.ResponseWriter, r *http.Request, _ *uiPrincipa
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":  true,
 		"vms": snap.VMs,
+	})
+}
+
+func (s *Server) handleVMDetail(w http.ResponseWriter, r *http.Request, _ *uiPrincipal) {
+	vmID := strings.TrimSpace(r.PathValue("id"))
+	if vmID == "" {
+		writeAPIError(w, http.StatusBadRequest, "vm id required")
+		return
+	}
+	var found *api.VMUsage
+	agentID := ""
+	for _, a := range s.agents.List() {
+		for i := range a.VMs {
+			if a.VMs[i].ID == vmID {
+				cp := a.VMs[i]
+				found = &cp
+				agentID = a.AgentID
+				break
+			}
+		}
+		if found != nil {
+			break
+		}
+	}
+	if found == nil {
+		writeAPIError(w, http.StatusNotFound, "vm not reported by any agent")
+		return
+	}
+	var job any
+	if found.JobID != "" {
+		if jid, err := strconv.ParseInt(strings.TrimSpace(found.JobID), 10, 64); err == nil && jid != 0 {
+			if a := s.store.Get(jid); a != nil {
+				job = s.jobListRow(a, time.Now().UTC(), false, r)
+			}
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":       true,
+		"agent_id": agentID,
+		"vm":       found,
+		"job":      job,
 	})
 }
 
@@ -1099,7 +1141,7 @@ func (s *Server) handleJobs(w http.ResponseWriter, r *http.Request, _ *uiPrincip
 	now := time.Now().UTC()
 	rows := make([]jobRowWS, 0, len(list))
 	for _, a := range list {
-		rows = append(rows, s.jobListRow(a, now, true, r))
+		rows = append(rows, s.jobListRow(a, now, false, r))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "jobs": rows})
 }

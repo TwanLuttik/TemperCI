@@ -186,37 +186,22 @@ func (f *FirecrackerGuestExec) Exec(ctx context.Context, id vmm.ID, name string,
 // guest agent is also mounting /dev/vdb (causes missed JIT / stuck jobs).
 func (f *FirecrackerGuestExec) WaitRunner(ctx context.Context, id vmm.ID) (int, error) {
 	layout := f.layout()
-	// Brief quiet window so the guest can mount inject, copy JIT, and unmount.
-	select {
-	case <-ctx.Done():
-		return -1, ctx.Err()
-	case <-time.After(200 * time.Millisecond):
-	}
-	ticker := time.NewTicker(2 * time.Second)
-	defer ticker.Stop()
+	exitPath := filepath.Join(layout.GuestDir(id), "runner.exit")
+	// Prefer the host-visible mailbox file. Fall back to a slow inject
+	// mount only if the guest never signaled over UDP.
+	fast := time.NewTicker(50 * time.Millisecond)
+	defer fast.Stop()
+	slowAt := time.Now().Add(2 * time.Second)
 	for {
-		if _, err := os.Stat(layout.InjectDrivePath(id)); err != nil {
-			return 1, nil
-		}
-		files, _ := firecracker.CopyInjectFiles(layout, id, layout.GuestDir(id),
-			[]string{"runner.exit", "runner.log", "agent.log", "workflow.log"})
-		if layout.Root != "" && len(files) > 0 {
-			arch := filepath.Join(layout.Root, "job-logs", string(id))
-			_ = os.MkdirAll(arch, 0o755)
-			for name, body := range files {
-				_ = os.WriteFile(filepath.Join(arch, name), body, 0o600)
-			}
-			if _, ok := files["console.log"]; !ok {
-				ArchiveConsole(layout, id)
-			}
-		}
-		if b, ok := files["runner.exit"]; ok {
+		if b, err := os.ReadFile(exitPath); err == nil {
 			text := strings.TrimSpace(string(b))
 			if text != "" {
 				code := 0
 				if _, err := fmt.Sscanf(text, "%d", &code); err != nil {
 					code = 1
 				}
+				files, _ := firecracker.CopyInjectFiles(layout, id, layout.GuestDir(id),
+					[]string{"runner.log", "agent.log", "workflow.log"})
 				if code != 0 {
 					slog.Default().Warn("guest runner failed",
 						"vm_id", string(id),
@@ -228,12 +213,26 @@ func (f *FirecrackerGuestExec) WaitRunner(ctx context.Context, id vmm.ID) (int, 
 				return code, nil
 			}
 		}
+		if time.Now().After(slowAt) {
+			slowAt = time.Now().Add(5 * time.Second)
+			if files, _ := firecracker.CopyInjectFiles(layout, id, layout.GuestDir(id),
+				[]string{"runner.exit", "runner.log", "agent.log", "workflow.log"}); files != nil {
+				if b, ok := files["runner.exit"]; ok && len(bytesTrim(b)) > 0 {
+					_ = os.WriteFile(exitPath, b, 0o600)
+					continue
+				}
+			}
+		}
 		select {
 		case <-ctx.Done():
 			return -1, ctx.Err()
-		case <-ticker.C:
+		case <-fast.C:
 		}
 	}
+}
+
+func bytesTrim(b []byte) []byte {
+	return []byte(strings.TrimSpace(string(b)))
 }
 
 func truncateForLog(s string, max int) string {

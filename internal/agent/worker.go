@@ -108,11 +108,7 @@ func (w *Worker) Run(ctx context.Context) error {
 			continue
 		}
 		if job == nil {
-			select {
-			case <-ctx.Done():
-				return w.drainReturn(ctx.Err())
-			case <-time.After(poll):
-			}
+			// Claim already long-polled; loop immediately.
 			continue
 		}
 		jobsWG.Add(1)

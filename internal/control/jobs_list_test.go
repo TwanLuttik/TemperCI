@@ -80,12 +80,10 @@ func TestJobsList_IncludesStepsAndTimestampsForStartedJob(t *testing.T) {
 	if body.Jobs[0].AssignedAt.IsZero() {
 		t.Fatal("assigned_at missing")
 	}
-	if len(body.Jobs[0].Steps) != 3 || body.Jobs[0].Steps[1].Name != "Run tests" || body.Jobs[0].Steps[1].Status != "in_progress" {
-		t.Fatalf("steps = %#v", body.Jobs[0].Steps)
+	if stub.sawJob.jobID != 0 {
+		t.Fatalf("list must not fetch GitHub job meta, got %+v", stub.sawJob)
 	}
-	if stub.sawJob.jobID != 101 {
-		t.Fatalf("expected GetJob for started list row, got %+v", stub.sawJob)
-	}
+	_ = stub
 }
 
 func TestBuildSnapshot_IncludesTimestampsAndCachedSteps(t *testing.T) {

@@ -70,6 +70,12 @@ func realSetupNetwork(id vmm.ID, netDir string) (vmm.NetworkState, error) {
 	if exec.Command("iptables", "-C", "FORWARD", "-o", tap, "-j", "ACCEPT").Run() != nil {
 		_ = exec.Command("iptables", "-A", "FORWARD", "-o", tap, "-j", "ACCEPT").Run()
 	}
+	// PVE/Tailscale INPUT DROP would swallow guest UDP ready/exit (mailbox).
+	if spec := mailboxInputSpec(tap); spec != nil {
+		if exec.Command("iptables", append([]string{"-C"}, spec...)...).Run() != nil {
+			_ = exec.Command("iptables", append([]string{"-I"}, spec...)...).Run()
+		}
+	}
 
 	proxy := filepath.Join(netDir, "proxy.marker")
 	_ = os.WriteFile(proxy, []byte(string(id)+"\n"), 0o600)
@@ -86,6 +92,14 @@ func realSetupNetwork(id vmm.ID, netDir string) (vmm.NetworkState, error) {
 	}, nil
 }
 
+// mailboxInputSpec accepts guest UDP ready/exit on the TAP (must insert before PVE DROP).
+func mailboxInputSpec(tap string) []string {
+	if tap == "" {
+		return nil
+	}
+	return []string{"INPUT", "-i", tap, "-p", "udp", "--dport", "9876", "-j", "ACCEPT"}
+}
+
 func realTeardownNetwork(id vmm.ID, net vmm.NetworkState) error {
 	_ = id
 	if net.ProxyMarker != "" {
@@ -94,6 +108,9 @@ func realTeardownNetwork(id vmm.ID, net vmm.NetworkState) error {
 	if runtime.GOOS == "linux" && net.TapDevice != "" {
 		_ = exec.Command("iptables", "-D", "FORWARD", "-i", net.TapDevice, "-j", "ACCEPT").Run()
 		_ = exec.Command("iptables", "-D", "FORWARD", "-o", net.TapDevice, "-j", "ACCEPT").Run()
+		if spec := mailboxInputSpec(net.TapDevice); spec != nil {
+			_ = exec.Command("iptables", append([]string{"-D"}, spec...)...).Run()
+		}
 		_ = exec.Command("ip", "link", "del", net.TapDevice).Run()
 	}
 	return nil

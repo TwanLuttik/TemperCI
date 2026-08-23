@@ -1,6 +1,7 @@
 package control
 
 import (
+	"context"
 	"crypto/subtle"
 	"encoding/json"
 	"io"
@@ -184,26 +185,53 @@ func (s *Server) handleGitHubWebhook(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "handler not configured", http.StatusInternalServerError)
 		return
 	}
-	result, err := s.handler.HandleWorkflowJob(r.Context(), body)
+
+	// ACK before GitHub's ~10s budget. Ignore-only events stay on this
+	// goroutine (no GitHub API). Owned queued jobs mint in the background.
+	ev, err := github.ParseWorkflowJobEvent(body)
 	if err != nil {
-		s.log.Error("webhook handling failed", "err", err)
-		if ev, pErr := github.ParseWorkflowJobEvent(body); pErr == nil {
-			s.recordJobEvent(ev.WorkflowJob.ID, "control", "error", "mint JIT failed: "+err.Error())
-		}
 		http.Error(w, "handler error", http.StatusInternalServerError)
 		return
 	}
-	if result != nil && !result.Ignored && result.Assignment != nil {
-		s.recordJobEvent(result.Assignment.JobID, "control", "info",
-			"minted JIT config repo="+result.Assignment.RepoFullName+" runner="+result.Assignment.RunnerName)
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	if result.Ignored {
-		_, _ = w.Write([]byte(`{"ok":true,"ignored":true,"reason":"` + result.Reason + `"}`))
+	if ev.Action != "queued" || !IsOwned(ev.WorkflowJob.Labels, s.handler.cfg.LabelPrefix) {
+		result, herr := s.handler.HandleWorkflowJob(r.Context(), body)
+		if herr != nil {
+			s.log.Error("webhook handling failed", "err", herr)
+			http.Error(w, "handler error", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		if result != nil && result.Ignored {
+			_, _ = w.Write([]byte(`{"ok":true,"ignored":true,"reason":"` + result.Reason + `"}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"ok":true,"accepted":true}`))
 		return
 	}
-	_, _ = w.Write([]byte(`{"ok":true,"minted":true}`))
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(`{"ok":true,"accepted":true}`))
+	if f, ok := w.(http.Flusher); ok {
+		f.Flush()
+	}
+	bodyCopy := append([]byte(nil), body...)
+	go func() {
+		result, herr := s.handler.HandleWorkflowJob(context.Background(), bodyCopy)
+		if herr != nil {
+			s.log.Error("webhook handling failed", "err", herr)
+			if ev, pErr := github.ParseWorkflowJobEvent(bodyCopy); pErr == nil {
+				s.recordJobEvent(ev.WorkflowJob.ID, "control", "error", "mint JIT failed: "+herr.Error())
+			}
+			return
+		}
+		if result != nil && !result.Ignored && result.Assignment != nil {
+			s.recordJobEvent(result.Assignment.JobID, "control", "info",
+				"minted JIT config repo="+result.Assignment.RepoFullName+" runner="+result.Assignment.RunnerName)
+			s.PublishSnapshot()
+		}
+	}()
 }
 
 func (s *Server) recordWebhookDelivery(event, delivery string) {
@@ -429,7 +457,6 @@ func (s *Server) handleJobLogs(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mergeJobLogs(req.JobID, req.RunnerLog, req.AgentLog, req.ConsoleLog, req.WorkflowLog)
 	s.agents.Touch(req.AgentID)
-	s.PublishSnapshot()
 	writeJSON(w, http.StatusOK, api.JobLogsResponse{OK: true})
 }
 

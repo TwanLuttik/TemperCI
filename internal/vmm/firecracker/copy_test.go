@@ -94,8 +94,12 @@ func TestCopyFilePreservesHoles(t *testing.T) {
 		t.Skipf("filesystem does not keep holes (allocated %d of %d); extent walker is covered by TestWalkDataExtents", srcAlloc, size)
 	}
 
-	if err := copyFile(src, dst); err != nil {
+	method, err := copyFileWithMethod(src, dst)
+	if err != nil {
 		t.Fatal(err)
+	}
+	if method != CopyClone && method != CopySparse {
+		t.Fatalf("method=%s want clone or sparse", method)
 	}
 
 	got, err := os.ReadFile(dst)

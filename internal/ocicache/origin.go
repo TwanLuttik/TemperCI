@@ -7,8 +7,19 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 )
+
+type hubTok struct {
+	token string
+	exp   time.Time
+}
+
+var hubTokenCache = struct {
+	mu sync.Mutex
+	by map[string]hubTok
+}{by: map[string]hubTok{}}
 
 func defaultAnonymousToken(host, name string) (string, error) {
 	h := strings.ToLower(strings.TrimSpace(host))
@@ -21,6 +32,14 @@ func defaultAnonymousToken(host, name string) (string, error) {
 	if name == "" {
 		return "", nil
 	}
+	key := h + "\x00" + name
+	hubTokenCache.mu.Lock()
+	if t, ok := hubTokenCache.by[key]; ok && time.Now().Before(t.exp) {
+		tok := t.token
+		hubTokenCache.mu.Unlock()
+		return tok, nil
+	}
+	hubTokenCache.mu.Unlock()
 	q := url.Values{}
 	q.Set("service", "registry.docker.io")
 	q.Set("scope", "repository:"+name+":pull")
@@ -48,8 +67,14 @@ func defaultAnonymousToken(host, name string) (string, error) {
 	if err := json.Unmarshal(body, &out); err != nil {
 		return "", err
 	}
-	if out.Token != "" {
-		return out.Token, nil
+	tok := out.Token
+	if tok == "" {
+		tok = out.AccessToken
 	}
-	return out.AccessToken, nil
+	if tok != "" {
+		hubTokenCache.mu.Lock()
+		hubTokenCache.by[key] = hubTok{token: tok, exp: time.Now().Add(4 * time.Minute)}
+		hubTokenCache.mu.Unlock()
+	}
+	return tok, nil
 }

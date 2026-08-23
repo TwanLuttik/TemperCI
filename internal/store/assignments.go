@@ -152,29 +152,19 @@ func (s *Store) PruneFinished(olderThan time.Duration) (int, error) {
 	if olderThan <= 0 {
 		return 0, nil
 	}
-	rows, err := s.ListAssignments()
+	cutoff := time.Now().UTC().Add(-olderThan).Format(time.RFC3339Nano)
+	res, err := s.db.Exec(`
+DELETE FROM assignments
+WHERE status IN ('finished', 'failed')
+  AND (
+    (finished_at != '' AND finished_at < ?)
+    OR (finished_at = '' AND created_at != '' AND created_at < ?)
+  )`, cutoff, cutoff)
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("store: prune finished: %w", err)
 	}
-	now := time.Now().UTC()
-	n := 0
-	for _, r := range rows {
-		if r.Status != "finished" && r.Status != "failed" {
-			continue
-		}
-		ref := r.FinishedAt
-		if ref.IsZero() {
-			ref = r.CreatedAt
-		}
-		if ref.IsZero() || now.Sub(ref) < olderThan {
-			continue
-		}
-		if err := s.DeleteAssignment(r.JobID); err != nil {
-			return n, err
-		}
-		n++
-	}
-	return n, nil
+	n, _ := res.RowsAffected()
+	return int(n), nil
 }
 
 func scanAssignment(row scannable) (*AssignmentRow, error) {

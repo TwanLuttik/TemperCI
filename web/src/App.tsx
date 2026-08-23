@@ -11,6 +11,7 @@ import { OverviewPage } from "./pages/OverviewPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { SetupPage } from "./pages/SetupPage";
 import { UsersPage } from "./pages/UsersPage";
+import { VMDetailPage } from "./pages/VMDetailPage";
 import { VMsPage } from "./pages/VMsPage";
 import { AnalyticsPage } from "./pages/AnalyticsPage";
 
@@ -111,6 +112,7 @@ export default function App() {
         <Route path="/" element={<OverviewPage onOverview={setOverview} />} />
         <Route path="/hosts" element={<HostsPage />} />
         <Route path="/vms" element={<VMsPage />} />
+        <Route path="/vms/:id" element={<VMDetailPage />} />
         <Route path="/jobs" element={<JobsPage />} />
         <Route path="/analytics" element={<AnalyticsPage />} />
         <Route path="/cache" element={<CachePage />} />

@@ -68,6 +68,7 @@ type Pool struct {
 	clampReason   string
 	lastAdmit     string
 	readyCheck    func(id vmm.ID) bool
+	mailbox       *MailboxHub
 
 	reconcileMu sync.Mutex
 
@@ -89,8 +90,10 @@ type PoolDeps struct {
 	// Inventory optional host sample; nil keeps slot-only create checks.
 	Inventory InventorySource
 	// ReadyCheck, if set, reports whether the guest agent has signaled ready
-	// (Firecracker reads agent.ready from the inject disk).
+	// (host-visible guest/agent.ready — written by the UDP mailbox).
 	ReadyCheck func(id vmm.ID) bool
+	// Mailbox optional UDP ready/exit channel (Firecracker).
+	Mailbox *MailboxHub
 }
 
 // NewPool builds a pool. Call Start to sweep orphans and run the reconciler.
@@ -206,6 +209,7 @@ func NewPool(cfg PoolConfig, deps PoolDeps) (*Pool, error) {
 		configuredMax: configuredMax,
 		clampReason:   clampReason,
 		readyCheck:    deps.ReadyCheck,
+		mailbox:       deps.Mailbox,
 	}, nil
 }
 
@@ -727,6 +731,7 @@ func (p *Pool) provision(ctx context.Context, id vmm.ID, shape VMShape) error {
 	if _, err := p.vmm.Create(ctx, cfg); err != nil {
 		return fmt.Errorf("create: %w", err)
 	}
+	p.listenMailbox(id)
 	if err := p.vmm.Boot(ctx, id); err != nil {
 		_ = p.cleaner.Destroy(context.Background(), id)
 		return fmt.Errorf("boot: %w", err)
@@ -736,6 +741,30 @@ func (p *Pool) provision(ctx context.Context, id vmm.ID, shape VMShape) error {
 		return fmt.Errorf("guest ready: %w", err)
 	}
 	return nil
+}
+
+func (p *Pool) listenMailbox(id vmm.ID) {
+	if p.mailbox == nil {
+		return
+	}
+	hostIP := p.HostIP(id)
+	if hostIP == "" {
+		return
+	}
+	_ = p.mailbox.Listen(id, hostIP)
+}
+
+// HostIP returns the TAP host address recorded at VM create, or empty.
+func (p *Pool) HostIP(id vmm.ID) string {
+	layout := p.HostLayout()
+	if layout.Root == "" || id == "" {
+		return ""
+	}
+	raw, err := os.ReadFile(filepath.Join(layout.NetDir(id), "host_ip"))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(raw))
 }
 
 func (p *Pool) waitGuestReady(ctx context.Context, id vmm.ID) error {
@@ -754,7 +783,7 @@ func (p *Pool) waitGuestReady(ctx context.Context, id vmm.ID) error {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-time.After(20 * time.Millisecond):
+		case <-time.After(50 * time.Millisecond):
 		}
 	}
 }
@@ -839,6 +868,9 @@ func (p *Pool) beginDestroy(ctx context.Context, id vmm.ID, reason string) error
 }
 
 func (p *Pool) destroyNow(ctx context.Context, id vmm.ID) error {
+	if p.mailbox != nil {
+		p.mailbox.Close(id)
+	}
 	err := p.cleaner.Destroy(ctx, id)
 	p.mu.Lock()
 	defer p.mu.Unlock()
