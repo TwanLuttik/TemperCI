@@ -53,7 +53,7 @@ temperci_os_supported() {
 # qemu-kvm is only for stock Ubuntu. Proxmox already ships pve-qemu-kvm;
 # installing Debian qemu-kvm on a PVE node can conflict.
 temperci_apt_packages() {
-  local pkgs=(iproute2 e2fsprogs debootstrap iptables curl ca-certificates)
+  local pkgs=(iproute2 e2fsprogs debootstrap iptables curl ca-certificates sudo)
   if [[ -z "${TEMPERCI_SKIP_QEMU_KVM:-}" ]] && ! command -v pveversion >/dev/null 2>&1; then
     if ! dpkg -s pve-qemu-kvm >/dev/null 2>&1; then
       pkgs+=(qemu-kvm)
@@ -110,6 +110,20 @@ memory_mib = 6144
 cache_listen_addr = "127.0.0.1:8743"
 EOF
   chmod 0600 "$path"
+}
+
+temperci_install_sudoers() {
+  local src="$1" dest
+  dest="$(temperci_root /etc/sudoers.d/temperci-hostctl)"
+  mkdir -p "$(dirname "$dest")"
+  install -m 0440 "$src" "$dest"
+  if [[ -z "${DESTDIR:-}" ]] && command -v visudo >/dev/null 2>&1; then
+    if ! visudo -cf "$dest" >/dev/null; then
+      rm -f "$dest"
+      echo "install.sh: invalid sudoers drop-in ${dest}" >&2
+      return 1
+    fi
+  fi
 }
 
 temperci_wizard_url() {
@@ -290,6 +304,9 @@ copy_support_files() {
     install -m 0644 "${repo_root}/deploy/systemd/temperci-control.service" "${dest_unit}/temperci-control.service"
     install -m 0644 "${repo_root}/deploy/systemd/temperci-agent.service" "${dest_unit}/temperci-agent.service"
     install -m 0644 "${repo_root}/deploy/systemd/temperci-guest-image.service" "${dest_unit}/temperci-guest-image.service"
+  fi
+  if [[ -f "${repo_root}/deploy/sudoers.temperci-hostctl" ]]; then
+    temperci_install_sudoers "${repo_root}/deploy/sudoers.temperci-hostctl" || die "invalid sudoers drop-in"
   fi
 }
 

@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -418,6 +419,8 @@ func (s *Server) handleSetupApply(w http.ResponseWriter, r *http.Request) {
 
 	*s.dash.Config = newCfg
 	s.agentToken = newCfg.AgentToken
+	s.webhookSecret = []byte(newCfg.GitHubWebhookSecret)
+	s.markFleetReadyIfConfigured()
 
 	resp := map[string]any{
 		"ok":          true,
@@ -887,6 +890,7 @@ func (s *Server) handleSettingsConfigSave(w http.ResponseWriter, r *http.Request
 	*s.dash.Config = newCfg
 	s.agentToken = newCfg.AgentToken
 	s.webhookSecret = []byte(newCfg.GitHubWebhookSecret)
+	s.markFleetReadyIfConfigured()
 
 	resp := map[string]any{
 		"ok":          true,
@@ -1232,6 +1236,15 @@ func (s *Server) hostctlAvailable() bool {
 	return false
 }
 
+func (s *Server) markFleetReadyIfConfigured() {
+	if s.dash == nil || s.dash.Config == nil {
+		return
+	}
+	if !s.dash.Config.NeedsSetup() {
+		s.dash.FleetReady = true
+	}
+}
+
 func (s *Server) hostctlPath() string {
 	if s.dash != nil && s.dash.Config != nil && s.dash.Config.HostctlPath != "" {
 		return s.dash.Config.HostctlPath
@@ -1241,7 +1254,8 @@ func (s *Server) hostctlPath() string {
 
 // hostctlUnitState runs `temperci-hostctl status <target>` and returns systemd is-active text.
 func (s *Server) hostctlUnitState(target string) string {
-	cmd := exec.Command(s.hostctlPath(), "status", target)
+	name, argv := hostctlInvocation(os.Geteuid(), currentUsername(), s.hostctlPath(), "status", target)
+	cmd := exec.Command(name, argv...)
 	out, err := cmd.CombinedOutput()
 	text := strings.TrimSpace(string(out))
 	// systemctl is-active prints active/inactive/failed even on non-zero exit.
@@ -1274,10 +1288,31 @@ func (s *Server) hostctlUnitState(target string) string {
 	}
 }
 
+// hostctlInvocation prefixes sudo -n for the installer service user so
+// /etc/sudoers.d/temperci-hostctl can restart units. Other users (tests,
+// root) invoke hostctl directly.
+func hostctlInvocation(euid int, username, path string, args ...string) (string, []string) {
+	if euid != 0 && username == "temperci" {
+		return "sudo", append([]string{"-n", path}, args...)
+	}
+	return path, args
+}
+
+func currentUsername() string {
+	if u := strings.TrimSpace(os.Getenv("USER")); u != "" {
+		return u
+	}
+	if u, err := user.Current(); err == nil && u != nil {
+		return u.Username
+	}
+	return ""
+}
+
 func (s *Server) runHostctl(action, target string, extra ...string) error {
 	path := s.hostctlPath()
 	args := append([]string{action, target}, extra...)
-	cmd := exec.Command(path, args...)
+	name, argv := hostctlInvocation(os.Geteuid(), currentUsername(), path, args...)
+	cmd := exec.Command(name, argv...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		s.log.Error("hostctl failed", "err", err, "out", string(out))

@@ -47,11 +47,18 @@ expect_fail temperci_os_supported $'NAME="Fedora Linux"\nVERSION_ID="41"\nID=fed
 pkgs="$(TEMPERCI_SKIP_QEMU_KVM=1 temperci_apt_packages | tr '\n' ' ')"
 echo "$pkgs" | grep -q qemu-kvm && fail "qemu-kvm must not be installed when skipped"
 echo "$pkgs" | grep -q debootstrap || fail "debootstrap required"
+echo "$pkgs" | grep -qw sudo || fail "sudo required so user temperci can run hostctl"
 
 # control runs as User=temperci with ProtectSystem=strict; wizard writes
 # github-app.pem and control.toml under /etc/temperci.
 unit="$root/../systemd/temperci-control.service"
 grep -E '^ReadWritePaths=.*\/etc\/temperci' "$unit" >/dev/null || fail "control unit must ReadWritePaths=/etc/temperci (wizard PEM write)"
+# hostctl restart needs sudo; NoNewPrivileges would block that.
+grep -E '^NoNewPrivileges=false' "$unit" >/dev/null || fail "control unit must allow sudo for hostctl (NoNewPrivileges=false)"
+
+sudoers="$root/../sudoers.temperci-hostctl"
+grep -E '^temperci ALL=\(root\) NOPASSWD: /usr/local/bin/temperci-hostctl$' "$sudoers" >/dev/null \
+  || fail "sudoers must allow temperci to run hostctl as root"
 
 # --- write-once TOML ---
 tmp="$(mktemp -d)"
@@ -89,6 +96,15 @@ grep -q "agent_token = \"$token\"" "$agent" || fail "agent token"
 echo "keep" >"$agent"
 temperci_write_agent_toml "$agent" "nope" "/var/lib/temperci"
 expect_eq "$(cat "$agent")" "keep" "agent.toml write-once"
+
+# --- sudoers drop-in ---
+DESTDIR="$tmp" temperci_install_sudoers "$sudoers"
+got_sudoers="$tmp/etc/sudoers.d/temperci-hostctl"
+[[ -f "$got_sudoers" ]] || fail "sudoers not installed"
+mode="$(stat -c '%a' "$got_sudoers" 2>/dev/null || stat -f '%OLp' "$got_sudoers")"
+expect_eq "$mode" "440" "sudoers mode"
+grep -E '^temperci ALL=\(root\) NOPASSWD: /usr/local/bin/temperci-hostctl$' "$got_sudoers" >/dev/null \
+  || fail "installed sudoers missing hostctl rule"
 
 # --- wizard URL ---
 got="$(temperci_wizard_url $'127.0.0.1\n192.168.1.10\n10.0.0.50')"

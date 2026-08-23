@@ -1,4 +1,4 @@
-# Allow temperci-control (or a dedicated user) to run only temperci-hostctl.
-# hostctl may restart units or install the agent (binary + systemd unit).
+# Allow temperci-control to run only temperci-hostctl (restart/status/install).
 # Install: copy to /etc/sudoers.d/temperci-hostctl && chmod 440
-# temperci ALL=(root) NOPASSWD: /usr/local/bin/temperci-hostctl
+# Requires NoNewPrivileges=false on temperci-control.service so sudo can work.
+temperci ALL=(root) NOPASSWD: /usr/local/bin/temperci-hostctl

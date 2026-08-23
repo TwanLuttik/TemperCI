@@ -136,6 +136,66 @@ func TestSetupApply_DraftWritesGitHubWithoutCompleting(t *testing.T) {
 	}
 }
 
+func TestSetupApply_MarksFleetReadyWithoutRestart(t *testing.T) {
+	dir := t.TempDir()
+	controlPath := filepath.Join(dir, "control.toml")
+	agentPath := filepath.Join(dir, "agent.toml")
+	pem := filepath.Join(dir, "github-app.pem")
+	if err := os.WriteFile(agentPath, []byte("agent_token = \"tok\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(controlPath, []byte("setup_completed = false\nagent_token = \"tok\"\nauth_mode = \"open\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	dash := &DashboardConfig{
+		Config: &config.ControlConfig{
+			AuthMode:                "open",
+			SetupCompleted:          false,
+			AgentToken:              "tok",
+			GitHubAppPrivateKeyPath: pem,
+			ListenAddr:              "0.0.0.0:8080",
+		},
+		ConfigPath:      controlPath,
+		AgentConfigPath: agentPath,
+		FleetReady:      false,
+	}
+	srv := NewServer(ServerConfig{
+		AgentToken: "tok",
+		Dashboard:  dash,
+	})
+	body := `{
+		"auth_mode": "open",
+		"github_org": "coatcheckapp",
+		"github_app_id": 4575087,
+		"github_webhook_secret": "whsec",
+		"github_app_private_key_pem": "-----BEGIN RSA PRIVATE KEY-----\nMIIB\n-----END RSA PRIVATE KEY-----",
+		"restart": false
+	}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/setup/apply", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d %s", rr.Code, rr.Body.String())
+	}
+	st := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(st, httptest.NewRequest(http.MethodGet, "/api/v1/setup/status", nil))
+	if st.Code != http.StatusOK {
+		t.Fatalf("status=%d %s", st.Code, st.Body.String())
+	}
+	var snap struct {
+		FleetReady     bool `json:"fleet_ready"`
+		NeedsSetup     bool `json:"needs_setup"`
+		SetupCompleted bool `json:"setup_completed"`
+	}
+	if err := json.Unmarshal(st.Body.Bytes(), &snap); err != nil {
+		t.Fatal(err)
+	}
+	if !snap.FleetReady || snap.NeedsSetup || !snap.SetupCompleted {
+		t.Fatalf("setup snapshot after apply = %+v", snap)
+	}
+}
+
 func TestSetupApply_ReentryKeepsSecrets(t *testing.T) {
 	dir := t.TempDir()
 	pem := filepath.Join(dir, "github-app.pem")

@@ -11,8 +11,8 @@ Group=temperci
 ExecStart=/usr/local/bin/temperci-control -config /etc/temperci/control.toml
 Restart=on-failure
 RestartSec=5
-# Limit ambient capability; adjust when the service needs more privileges.
-NoNewPrivileges=true
+# Must stay false: Apply/Restart run sudo -n temperci-hostctl via sudoers.
+NoNewPrivileges=false
 ProtectSystem=strict
 ProtectHome=true
 # Wizard/settings write control.toml + github-app.pem here. Without this path,
