@@ -31,7 +31,7 @@ The operator should run **one command**. Everything the machine needs is install
 
 | Topic | Choice |
 |---|---|
-| Command | `curl -fsSL https://github.com/TwanLuttik/TemperCI/releases/latest/download/install.sh \| sudo bash` |
+| Command | `curl -fsSL https://github.com/TwanLuttik/TemperCI/releases/latest/download/install.sh \| bash` (as root) |
 | Scope | Single-node: control + agent + hostctl on the same box |
 | Distro | Ubuntu 22.04 or 24.04, x86_64, `/dev/kvm` required |
 | Progress | `[n/8] name .... ok\|fail\|running` on stderr |
@@ -49,7 +49,7 @@ The operator should run **one command**. Everything the machine needs is install
 ```text
 operator                          host
    |                                |
-   |  curl .../install.sh | sudo bash
+   |  curl .../install.sh | bash
    |------------------------------->|
    |                                |  [1] check Linux/root/kvm/ubuntu
    |                                |  [2] apt packages
@@ -219,7 +219,7 @@ Local/dev: `TEMPERCI_RELEASE_URL=file:///path/to/bin` or `TEMPERCI_BIN_DIR=./bin
 I1 is enough to run from a git checkout:
 
 ```bash
-sudo TEMPERCI_BIN_DIR=./bin ./deploy/ubuntu/install.sh
+TEMPERCI_BIN_DIR=./bin ./deploy/ubuntu/install.sh
 ```
 
 I2 is required for `curl …/releases/latest/download/install.sh`.

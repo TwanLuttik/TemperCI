@@ -46,7 +46,7 @@ Prefer **Funnel for GitHub webhooks only**; put the **UI on Tailscale Serve** (t
 On a new Ubuntu/KVM host, prefer the one-liner (prints the wizard URL):
 
 ```bash
-curl -fsSL https://github.com/TwanLuttik/TemperCI/releases/latest/download/install.sh | sudo bash
+curl -fsSL https://github.com/TwanLuttik/TemperCI/releases/latest/download/install.sh | bash
 ```
 
 From a checkout:

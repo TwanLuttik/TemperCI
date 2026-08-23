@@ -7,7 +7,7 @@ Run **control plane + host agent** on one Ubuntu 22.04/24.04 host with KVM, then
 Requires Ubuntu 22.04/24.04, x86_64, `/dev/kvm`, and root. The script installs packages, Firecracker, TemperCI, systemd units, and starts the dashboard. The guest image builds in the background.
 
 ```bash
-curl -fsSL https://github.com/TwanLuttik/TemperCI/releases/latest/download/install.sh | sudo bash
+curl -fsSL https://github.com/TwanLuttik/TemperCI/releases/latest/download/install.sh | bash
 ```
 
 Open the printed URL (port `8080`) and finish the setup wizard (auth + GitHub App). The host is reachable on the LAN with `auth_mode=open` until you choose password mode.
@@ -23,7 +23,7 @@ From a git checkout (uses local binaries):
 
 ```bash
 make build-ui build-linux   # or: make build  on the Linux host
-sudo TEMPERCI_BIN_DIR=./bin ./deploy/ubuntu/install.sh
+TEMPERCI_BIN_DIR=./bin ./deploy/ubuntu/install.sh
 ```
 
 For guest image internals see [guest-image.md](guest-image.md). Host packages and Firecracker: [README.md](README.md).
@@ -140,7 +140,7 @@ sudo ./scripts/verify-cleanup.sh --data-dir /var/lib/temperci --expect-warm-max 
 
 Use this as an operator runbook:
 
-- [ ] `curl …/install.sh | sudo bash` (or the manual steps below)
+- [ ] `curl …/install.sh | bash` as root (or the manual steps below)
 - [ ] Open the printed wizard URL; finish GitHub App + auth
 - [ ] Guest image unit reached `/var/lib/temperci/images/.ready`
 - [ ] Install GitHub App; webhook delivers `workflow_job` queued events

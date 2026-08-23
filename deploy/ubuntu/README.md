@@ -5,7 +5,7 @@ Primary install target: **Ubuntu 22.04 or 24.04 LTS** with KVM.
 One-command install (packages, Firecracker, binaries, wizard):
 
 ```bash
-curl -fsSL https://github.com/TwanLuttik/TemperCI/releases/latest/download/install.sh | sudo bash
+curl -fsSL https://github.com/TwanLuttik/TemperCI/releases/latest/download/install.sh | bash
 ```
 
 This document covers host setup for the agent VMM path. Related:

@@ -31,7 +31,7 @@ Ubuntu single-node job path is in place: control plane + host agent, Firecracker
 Ubuntu 22.04/24.04 amd64 with `/dev/kvm`. One command installs packages, Firecracker, binaries, systemd, and starts the setup wizard. The guest image builds in the background.
 
 ```bash
-curl -fsSL https://github.com/TwanLuttik/TemperCI/releases/latest/download/install.sh | sudo bash
+curl -fsSL https://github.com/TwanLuttik/TemperCI/releases/latest/download/install.sh | bash
 ```
 
 Then open the printed URL (port `8080`) and finish the wizard (GitHub App + auth). The host is `auth_mode=open` on the LAN until you set a password. See [deploy/ubuntu/quickstart.md](deploy/ubuntu/quickstart.md).
@@ -40,7 +40,7 @@ From a git checkout (dev):
 
 ```bash
 make build-ui build-linux
-sudo TEMPERCI_BIN_DIR=./bin ./deploy/ubuntu/install.sh
+TEMPERCI_BIN_DIR=./bin ./deploy/ubuntu/install.sh
 ```
 
 ## Local development

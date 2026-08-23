@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # TemperCI one-command installer for a single Ubuntu/KVM host.
 #
-#   curl -fsSL https://github.com/TwanLuttik/TemperCI/releases/latest/download/install.sh | sudo bash
-#   sudo TEMPERCI_BIN_DIR=./bin ./deploy/ubuntu/install.sh
+#   curl -fsSL https://github.com/TwanLuttik/TemperCI/releases/latest/download/install.sh | bash
+#   TEMPERCI_BIN_DIR=./bin ./deploy/ubuntu/install.sh
+# Must run as root (no sudo required if you are already root).
 #
 # The operator then opens the printed URL and finishes the setup wizard.
 set -euo pipefail
@@ -270,7 +271,7 @@ main() {
   local os_rel
   temperci_step 1 "$TOTAL" "Checking host" running
   [[ "$(uname -s)" == "Linux" ]] || step_fail 1 "Checking host" "Linux required (got $(uname -s))"
-  [[ "$(id -u)" -eq 0 ]] || step_fail 1 "Checking host" "run as root (sudo)"
+  [[ "$(id -u)" -eq 0 ]] || step_fail 1 "Checking host" "must run as root"
   [[ "$(uname -m)" == "x86_64" ]] || step_fail 1 "Checking host" "x86_64 required (got $(uname -m))"
   [[ -e /dev/kvm ]] || step_fail 1 "Checking host" "/dev/kvm missing — enable KVM"
   if [[ -f /etc/os-release ]]; then
