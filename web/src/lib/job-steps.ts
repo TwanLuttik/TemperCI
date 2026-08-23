@@ -61,7 +61,9 @@ export function lastWorkflowGroup(log?: string): string | undefined {
 export function parseStepTime(iso?: string): number | undefined {
   if (!iso) return undefined;
   const t = Date.parse(iso);
-  return Number.isNaN(t) ? undefined : t;
+  // Reject Go's zero time.Time ("0001-01-01T00:00:00Z") and other pre-epoch junk.
+  if (Number.isNaN(t) || t < Date.UTC(2000, 0, 1)) return undefined;
+  return t;
 }
 
 /** Elapsed time for a step. Live steps use `now`; completed steps use GitHub timestamps. */

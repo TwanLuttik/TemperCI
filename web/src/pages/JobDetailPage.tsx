@@ -3,6 +3,8 @@ import { Link, useParams, useSearchParams } from "react-router-dom";
 
 import { api, cancelJob, formatDuration, jobIsActive, type Job, type JobDetail, type JobStep } from "../api";
 import { Button } from "@/components/ui/button";
+import { useNow } from "../hooks/useNow";
+import { liveJobTimings } from "../lib/job-duration";
 import { formatStepClock, jobStepProgress, lastWorkflowGroup, parseStepTime, settleSteps, stepElapsedMs } from "../lib/job-steps";
 import { suggestJobTab } from "../lib/job-tabs";
 import { EmptyState } from "../components/empty-state";
@@ -58,7 +60,7 @@ export function JobDetailPage() {
         });
     };
     load();
-    const t = setInterval(load, 2000);
+    const t = setInterval(load, 1000);
     return () => {
       stop = true;
       clearInterval(t);
@@ -73,9 +75,7 @@ export function JobDetailPage() {
 
   const jobStatus = String(data?.job.status || "").toLowerCase();
   const jobDone = jobStatus === "finished" || jobStatus === "failed";
-  const stepLive =
-    !jobDone && (data?.job.steps || []).some((s) => String(s.status || "").toLowerCase() === "in_progress");
-  const now = useNow(stepLive);
+  const now = useNow(!jobDone && Boolean(data));
 
   if (err) return <p className="text-sm text-destructive">{err}</p>;
   if (!data) return <p className="text-sm text-muted-foreground">Loading job…</p>;
@@ -85,6 +85,7 @@ export function JobDetailPage() {
   const events = logs.events || [];
   const running = !["finished", "failed"].includes(String(j.status || "").toLowerCase());
   const progress = jobStepProgress(j.steps);
+  const timings = liveJobTimings(j, now);
   const currentMs = progress.current ? stepElapsedMs(progress.current, now, parseStepTime(progress.current.started_at)) : undefined;
   const gh =
     j.repo_full_name && j.run_id
@@ -155,10 +156,10 @@ export function JobDetailPage() {
           value={<span className="font-mono text-sm">{j.assigned_agent_id || "—"}</span>}
           hint={j.vm_id}
         />
-        <StatCard label="Queue" value={formatDuration(j.queue_ms)} hint="created → assigned" />
-        <StatCard label="Bind" value={formatDuration(j.bind_ms)} hint="assigned → started" />
-        <StatCard label="Run" value={formatDuration(j.run_ms)} hint="started → finished" />
-        <StatCard label="Total" value={formatDuration(j.total_ms)} hint="created → finished" />
+        <StatCard label="Queue" value={formatDuration(timings.queue)} hint="created → assigned" />
+        <StatCard label="Bind" value={formatDuration(timings.bind)} hint="assigned → started" />
+        <StatCard label="Run" value={formatDuration(timings.run)} hint="started → finished" />
+        <StatCard label="Total" value={formatDuration(timings.total)} hint="created → finished" />
         <StatCard
           label="Cache"
           value={
@@ -264,17 +265,6 @@ export function JobDetailPage() {
       </p>
     </>
   );
-}
-
-function useNow(enabled: boolean): number {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    if (!enabled) return;
-    setNow(Date.now());
-    const t = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(t);
-  }, [enabled]);
-  return now;
 }
 
 function WorkflowSteps({ job, running, now }: { job: Job; running: boolean; now: number }) {

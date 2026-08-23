@@ -1078,58 +1078,10 @@ func (s *Server) handleCacheClear(w http.ResponseWriter, r *http.Request, _ *uiP
 
 func (s *Server) handleJobs(w http.ResponseWriter, r *http.Request, _ *uiPrincipal) {
 	list := s.store.ListRecent(100)
-	type jobRow struct {
-		JobID           int64     `json:"job_id"`
-		RunID           int64     `json:"run_id"`
-		Org             string    `json:"org"`
-		RepoFullName    string    `json:"repo_full_name"`
-		Name            string    `json:"name,omitempty"`
-		WorkflowName    string    `json:"workflow_name,omitempty"`
-		Labels          []string  `json:"labels"`
-		Status          string    `json:"status"`
-		AssignedAgentID string    `json:"assigned_agent_id,omitempty"`
-		VMID            string    `json:"vm_id,omitempty"`
-		WarmBind        bool      `json:"warm_bind,omitempty"`
-		Outcome         string    `json:"outcome,omitempty"`
-		Error           string    `json:"error,omitempty"`
-		CreatedAt       time.Time `json:"created_at"`
-		StartedAt       time.Time `json:"started_at,omitempty"`
-		FinishedAt      time.Time `json:"finished_at,omitempty"`
-		QueueMS         int64     `json:"queue_ms,omitempty"`
-		BindMS          int64     `json:"bind_ms,omitempty"`
-		RunMS           int64     `json:"run_ms,omitempty"`
-		TotalMS         int64     `json:"total_ms,omitempty"`
-		CacheHits       int       `json:"cache_hits,omitempty"`
-		CacheMisses     int       `json:"cache_misses,omitempty"`
-	}
 	now := time.Now().UTC()
-	rows := make([]jobRow, 0, len(list))
+	rows := make([]jobRowWS, 0, len(list))
 	for _, a := range list {
-		tm := timingsFromAssignment(a, now)
-		rows = append(rows, jobRow{
-			JobID:           a.JobID,
-			RunID:           a.RunID,
-			Org:             a.Org,
-			RepoFullName:    a.RepoFullName,
-			Name:            a.Name,
-			WorkflowName:    a.WorkflowName,
-			Labels:          a.Labels,
-			Status:          string(a.Status),
-			AssignedAgentID: a.AssignedAgentID,
-			VMID:            a.VMID,
-			WarmBind:        a.WarmBind,
-			Outcome:         a.Outcome,
-			Error:           a.Error,
-			CreatedAt:       a.CreatedAt,
-			StartedAt:       a.StartedAt,
-			FinishedAt:      a.FinishedAt,
-			QueueMS:         tm.QueueMS,
-			BindMS:          tm.BindMS,
-			RunMS:           tm.RunMS,
-			TotalMS:         tm.TotalMS,
-			CacheHits:       a.CacheHits,
-			CacheMisses:     a.CacheMisses,
-		})
+		rows = append(rows, s.jobListRow(a, now, true, r))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "jobs": rows})
 }

@@ -6,7 +6,10 @@ import { Button } from "@/components/ui/button";
 import { EmptyState } from "../components/empty-state";
 import { PageHeader } from "../components/page-header";
 import { LiveDot, StatusBadge } from "../components/status-badge";
+import { useNow } from "../hooks/useNow";
 import { useRealtime, type VMRow } from "../hooks/useRealtime";
+import { jobsNeedLiveClock, liveJobClockMs, mergeJobSnapshots } from "../lib/job-duration";
+import { jobStepProgress, settleSteps } from "../lib/job-steps";
 import { findJobForVM } from "../lib/vm-job";
 import { orderVMs } from "../lib/vm-list";
 import { Card } from "@/components/ui/card";
@@ -48,7 +51,7 @@ function UsageBar({
   );
 }
 
-function VMJobCell({ jobId, job }: { jobId?: string; job?: Job }) {
+function VMJobCell({ jobId, job, now }: { jobId?: string; job?: Job; now: number }) {
   if (!jobId) {
     return <span className="font-mono text-xs text-muted-foreground">—</span>;
   }
@@ -80,7 +83,8 @@ function VMJobCell({ jobId, job }: { jobId?: string; job?: Job }) {
               {job?.outcome ? <StatusBadge status={job.outcome} /> : null}
             </dd>
             <dt className="text-muted-foreground">Run</dt>
-            <dd className="font-mono text-[11px]">{formatDuration(job?.run_ms || job?.total_ms)}</dd>
+            <dd className="font-mono text-[11px] tabular-nums">{formatDuration(liveJobClockMs(job, now))}</dd>
+            <VMJobStepRows job={job} />
             <dt className="text-muted-foreground">Bind</dt>
             <dd>{job?.warm_bind ? "warm pool" : job ? "cold" : "—"}</dd>
             {job?.labels && job.labels.length > 0 ? (
@@ -97,26 +101,64 @@ function VMJobCell({ jobId, job }: { jobId?: string; job?: Job }) {
   );
 }
 
+function VMJobStepRows({ job }: { job?: Job }) {
+  if (!job) return null;
+  const progress = jobStepProgress(settleSteps(job.steps, job));
+  if (!progress.total) return null;
+  return (
+    <>
+      <dt className="text-muted-foreground">Step</dt>
+      <dd className="truncate">
+        {progress.current
+          ? `${progress.current.name} · ${progress.index}/${progress.total}`
+          : `${progress.done}/${progress.total}`}
+      </dd>
+    </>
+  );
+}
+
 export function VMsPage() {
   const rt = useRealtime(true);
   const [vms, setVms] = useState<VMRow[]>([]);
   const [jobs, setJobs] = useState<Job[]>([]);
   const [err, setErr] = useState<string | null>(null);
   const [killing, setKilling] = useState<string | null>(null);
+  const live = jobsNeedLiveClock(jobs) || vms.some((v) => Boolean(v.job_id));
+  const now = useNow(live);
 
   useEffect(() => {
     if (rt.last?.vms) {
       setVms((prev) => orderVMs(prev, rt.last?.vms || []));
-      if (rt.last.jobs) setJobs(rt.last.jobs);
+      if (rt.last.jobs) setJobs((prev) => mergeJobSnapshots(rt.last?.jobs || [], prev));
       return;
     }
     Promise.all([api<{ vms: VMRow[] }>("/api/v1/vms"), api<{ jobs: Job[] }>("/api/v1/jobs")])
       .then(([v, j]) => {
         setVms((prev) => orderVMs(prev, v.vms || []));
-        setJobs(j.jobs || []);
+        setJobs((prev) => mergeJobSnapshots(j.jobs || [], prev));
       })
       .catch((e: Error) => setErr(e.message));
   }, [rt.last]);
+
+  useEffect(() => {
+    if (!live) return;
+    let stop = false;
+    const load = () => {
+      api<{ jobs: Job[] }>("/api/v1/jobs")
+        .then((d) => {
+          if (!stop) setJobs((prev) => mergeJobSnapshots(d.jobs || [], prev));
+        })
+        .catch(() => {
+          /* keep last snapshot */
+        });
+    };
+    load();
+    const t = setInterval(load, 1000);
+    return () => {
+      stop = true;
+      clearInterval(t);
+    };
+  }, [live]);
 
   if (err && vms.length === 0) return <p className="text-sm text-destructive">{err}</p>;
 
@@ -167,7 +209,7 @@ export function VMsPage() {
                     <StatusBadge status={v.state} />
                   </TableCell>
                   <TableCell>
-                    <VMJobCell jobId={v.job_id} job={findJobForVM(jobs, v.job_id)} />
+                    <VMJobCell jobId={v.job_id} job={findJobForVM(jobs, v.job_id)} now={now} />
                   </TableCell>
                   <TableCell>
                     <UsageBar label="CPU" value={v.cpu_percent || 0} max={100} unit="%" />

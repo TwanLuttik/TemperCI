@@ -1,10 +1,12 @@
 package control
 
 import (
+	"context"
 	"sort"
 	"time"
 
 	"github.com/TwanLuttik/TemperCI/internal/api"
+	"github.com/TwanLuttik/TemperCI/internal/github"
 )
 
 // RealtimeSnapshot is pushed over the dashboard WebSocket.
@@ -18,25 +20,78 @@ type RealtimeSnapshot struct {
 }
 
 type jobRowWS struct {
-	JobID           int64     `json:"job_id"`
-	RunID           int64     `json:"run_id"`
-	Org             string    `json:"org"`
-	RepoFullName    string    `json:"repo_full_name"`
-	Name            string    `json:"name,omitempty"`
-	WorkflowName    string    `json:"workflow_name,omitempty"`
-	Labels          []string  `json:"labels"`
-	Status          string    `json:"status"`
-	AssignedAgentID string    `json:"assigned_agent_id,omitempty"`
-	VMID            string    `json:"vm_id,omitempty"`
-	WarmBind        bool      `json:"warm_bind,omitempty"`
-	Outcome         string    `json:"outcome,omitempty"`
-	CreatedAt       time.Time `json:"created_at"`
-	QueueMS         int64     `json:"queue_ms,omitempty"`
-	BindMS          int64     `json:"bind_ms,omitempty"`
-	RunMS           int64     `json:"run_ms,omitempty"`
-	TotalMS         int64     `json:"total_ms,omitempty"`
-	CacheHits       int       `json:"cache_hits,omitempty"`
-	CacheMisses     int       `json:"cache_misses,omitempty"`
+	JobID           int64                    `json:"job_id"`
+	RunID           int64                    `json:"run_id"`
+	Org             string                   `json:"org"`
+	RepoFullName    string                   `json:"repo_full_name"`
+	Name            string                   `json:"name,omitempty"`
+	WorkflowName    string                   `json:"workflow_name,omitempty"`
+	Labels          []string                 `json:"labels"`
+	Status          string                   `json:"status"`
+	AssignedAgentID string                   `json:"assigned_agent_id,omitempty"`
+	VMID            string                   `json:"vm_id,omitempty"`
+	WarmBind        bool                     `json:"warm_bind,omitempty"`
+	Outcome         string                   `json:"outcome,omitempty"`
+	Error           string                   `json:"error,omitempty"`
+	CreatedAt       time.Time                `json:"created_at"`
+	AssignedAt      time.Time                `json:"assigned_at,omitempty"`
+	StartedAt       time.Time                `json:"started_at,omitempty"`
+	FinishedAt      time.Time                `json:"finished_at,omitempty"`
+	QueueMS         int64                    `json:"queue_ms,omitempty"`
+	BindMS          int64                    `json:"bind_ms,omitempty"`
+	RunMS           int64                    `json:"run_ms,omitempty"`
+	TotalMS         int64                    `json:"total_ms,omitempty"`
+	CacheHits       int                      `json:"cache_hits,omitempty"`
+	CacheMisses     int                      `json:"cache_misses,omitempty"`
+	Steps           []github.WorkflowJobStep `json:"steps,omitempty"`
+}
+
+func (s *Server) jobListRow(a *Assignment, now time.Time, fetchMeta bool, req interface{ Context() context.Context }) jobRowWS {
+	if a == nil {
+		return jobRowWS{}
+	}
+	tm := timingsFromAssignment(a, now)
+	return jobRowWS{
+		JobID:           a.JobID,
+		RunID:           a.RunID,
+		Org:             a.Org,
+		RepoFullName:    a.RepoFullName,
+		Name:            a.Name,
+		WorkflowName:    a.WorkflowName,
+		Labels:          a.Labels,
+		Status:          string(a.Status),
+		AssignedAgentID: a.AssignedAgentID,
+		VMID:            a.VMID,
+		WarmBind:        a.WarmBind,
+		Outcome:         a.Outcome,
+		Error:           a.Error,
+		CreatedAt:       a.CreatedAt,
+		AssignedAt:      a.AssignedAt,
+		StartedAt:       a.StartedAt,
+		FinishedAt:      a.FinishedAt,
+		QueueMS:         tm.QueueMS,
+		BindMS:          tm.BindMS,
+		RunMS:           tm.RunMS,
+		TotalMS:         tm.TotalMS,
+		CacheHits:       a.CacheHits,
+		CacheMisses:     a.CacheMisses,
+		Steps:           s.jobListSteps(a, fetchMeta, req),
+	}
+}
+
+func (s *Server) jobListSteps(a *Assignment, fetchMeta bool, req interface{ Context() context.Context }) []github.WorkflowJobStep {
+	if a == nil {
+		return nil
+	}
+	if fetchMeta && (a.Status == AssignmentStarted || a.Status == AssignmentAssigned) {
+		if meta := s.ensureJobMeta(req, a); meta != nil && len(meta.Steps) > 0 {
+			return meta.Steps
+		}
+	}
+	if meta := s.cachedJob(a.JobID); meta != nil && len(meta.Steps) > 0 {
+		return meta.Steps
+	}
+	return nil
 }
 
 type vmRowWS struct {
@@ -96,28 +151,7 @@ func (s *Server) BuildSnapshot() RealtimeSnapshot {
 	now := time.Now().UTC()
 	jobs := make([]jobRowWS, 0, len(list))
 	for _, a := range list {
-		tm := timingsFromAssignment(a, now)
-		jobs = append(jobs, jobRowWS{
-			JobID:           a.JobID,
-			RunID:           a.RunID,
-			Org:             a.Org,
-			RepoFullName:    a.RepoFullName,
-			Name:            a.Name,
-			WorkflowName:    a.WorkflowName,
-			Labels:          a.Labels,
-			Status:          string(a.Status),
-			AssignedAgentID: a.AssignedAgentID,
-			VMID:            a.VMID,
-			WarmBind:        a.WarmBind,
-			Outcome:         a.Outcome,
-			CreatedAt:       a.CreatedAt,
-			QueueMS:         tm.QueueMS,
-			BindMS:          tm.BindMS,
-			RunMS:           tm.RunMS,
-			TotalMS:         tm.TotalMS,
-			CacheHits:       a.CacheHits,
-			CacheMisses:     a.CacheMisses,
-		})
+		jobs = append(jobs, s.jobListRow(a, now, false, nil))
 	}
 	p50, p95 := recentRunPercentiles(list)
 	cacheHits, cacheMisses, _, _ := recentCacheTotals(list)
