@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -90,9 +91,37 @@ func TestGateway_CreateUploadDownload(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer dl.Body.Close()
+	// actions/cache@v5 rejects the restore unless the blob GET has a quoted ETag
+	// (Azure Block Blob shape). Missing it is: "File download response doesn't
+	// contain valid etag header".
+	if etag := dl.Header.Get("ETag"); !validAzureETag(etag) {
+		t.Fatalf("missing valid ETag header: %q", etag)
+	}
+	if got := dl.Header.Get("x-ms-blob-type"); got != "BlockBlob" {
+		t.Fatalf("x-ms-blob-type=%q", got)
+	}
 	data, _ := io.ReadAll(dl.Body)
 	if string(data) != string(payload) {
 		t.Fatalf("downloaded %q", data)
+	}
+
+	headReq, err := http.NewRequest(http.MethodHead, got.URL, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	headReq.URL.Scheme = "http"
+	headReq.URL.Host = strings.TrimPrefix(ts.URL, "http://")
+	headReq.Host = cacheBlobHost
+	hd, err := http.DefaultClient.Do(headReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hd.Body.Close()
+	if hd.StatusCode != http.StatusOK {
+		t.Fatalf("HEAD status=%d", hd.StatusCode)
+	}
+	if etag := hd.Header.Get("ETag"); !validAzureETag(etag) {
+		t.Fatalf("HEAD missing valid ETag header: %q", etag)
 	}
 	stt := g.TakeStats("acme/app")
 	if stt.Hits != 1 || stt.Misses != 0 || stt.BytesIn != 13 {
@@ -252,4 +281,111 @@ func TestLocalCachePath_AzureContainer(t *testing.T) {
 	if !localCachePath("/c/u/abc") {
 		t.Fatal("expected /c/ azure path to be local")
 	}
+}
+
+func TestGateway_BlobGetHonorsXMSRange(t *testing.T) {
+	st := openTestStore(t, 1<<20)
+	g := NewGateway(st)
+	g.BindRemote("127.0.0.1", "acme/app")
+	ts := httptest.NewServer(g.Handler())
+	t.Cleanup(ts.Close)
+
+	payload := []byte("0123456789abcdefghij") // 20 bytes
+	dlURL := seedCache(t, ts, "range-key", "v1", payload)
+
+	req, err := http.NewRequest(http.MethodGet, dlURL, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.URL.Scheme = "http"
+	req.URL.Host = strings.TrimPrefix(ts.URL, "http://")
+	req.Host = cacheBlobHost
+	// Azure BlockBlobClient uses x-ms-range, not HTTP Range. Serving the full
+	// blob for each chunk produces a corrupt archive that tar/gzip rejects.
+	req.Header.Set("x-ms-range", "bytes=4-11")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusPartialContent {
+		t.Fatalf("status=%d want 206 body=%q", resp.StatusCode, body)
+	}
+	if string(body) != "456789ab" {
+		t.Fatalf("body=%q", body)
+	}
+	if got := resp.Header.Get("Content-Range"); got != "bytes 4-11/20" {
+		t.Fatalf("Content-Range=%q", got)
+	}
+}
+
+// validAzureETag matches what @actions/cache accepts: a non-empty quoted tag.
+func validAzureETag(etag string) bool {
+	return len(etag) >= 2 && etag[0] == '"' && etag[len(etag)-1] == '"'
+}
+
+func seedCache(t *testing.T, ts *httptest.Server, key, version string, payload []byte) string {
+	t.Helper()
+	createBody := `{"key":"` + key + `","version":"` + version + `"}`
+	resp, err := http.Post(ts.URL+twirpPrefix+"CreateCacheEntry", "application/json", strings.NewReader(createBody))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var created struct {
+		OK  bool   `json:"ok"`
+		URL string `json:"signed_upload_url"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&created); err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if !created.OK || created.URL == "" {
+		t.Fatalf("create = %+v", created)
+	}
+
+	req, err := http.NewRequest(http.MethodPut, created.URL, bytes.NewReader(payload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.URL.Scheme = "http"
+	req.URL.Host = strings.TrimPrefix(ts.URL, "http://")
+	req.Host = cacheBlobHost
+	putResp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	putResp.Body.Close()
+	if putResp.StatusCode != http.StatusCreated {
+		t.Fatalf("put status=%d", putResp.StatusCode)
+	}
+
+	finBody := `{"key":"` + key + `","version":"` + version + `","size_bytes":` + strconv.Itoa(len(payload)) + `}`
+	finResp, err := http.Post(ts.URL+twirpPrefix+"FinalizeCacheEntry", "application/json", strings.NewReader(finBody))
+	if err != nil {
+		t.Fatal(err)
+	}
+	finResp.Body.Close()
+	if finResp.StatusCode != http.StatusOK {
+		t.Fatalf("finalize status=%d", finResp.StatusCode)
+	}
+
+	getBody := `{"key":"` + key + `","version":"` + version + `"}`
+	getResp, err := http.Post(ts.URL+twirpPrefix+"GetCacheEntryDownloadURL", "application/json", strings.NewReader(getBody))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer getResp.Body.Close()
+	var got struct {
+		OK  bool   `json:"ok"`
+		URL string `json:"signed_download_url"`
+	}
+	if err := json.NewDecoder(getResp.Body).Decode(&got); err != nil {
+		t.Fatal(err)
+	}
+	if !got.OK || got.URL == "" {
+		t.Fatalf("get = %+v", got)
+	}
+	return got.URL
 }

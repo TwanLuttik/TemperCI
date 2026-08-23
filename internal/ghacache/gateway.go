@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -316,6 +317,12 @@ func (g *Gateway) handleBlobGet(w http.ResponseWriter, r *http.Request, id strin
 		http.Error(w, "stat", http.StatusInternalServerError)
 		return
 	}
+	// actions/cache@v5 (Azure blob client) requires a quoted ETag on GET/HEAD
+	// or restore fails with "File download response doesn't contain valid etag header".
+	// http.ServeContent does not set ETag. It also only honors HTTP Range;
+	// the Azure SDK sends x-ms-range for concurrent chunk downloads.
+	applyAzureRange(r)
+	writeAzureBlobHeaders(w, st.Size(), st.ModTime())
 	http.ServeContent(w, r, rest, st.ModTime(), f)
 }
 
@@ -366,11 +373,34 @@ func blobURL(r *http.Request, suffix string) string {
 }
 
 func writeAzureCreated(w http.ResponseWriter) {
-	w.Header().Set("ETag", `"0"`)
-	w.Header().Set("Last-Modified", time.Now().UTC().Format(http.TimeFormat))
+	writeAzureBlobHeaders(w, 0, time.Now())
+	w.WriteHeader(http.StatusCreated)
+}
+
+// applyAzureRange copies x-ms-range onto Range so http.ServeContent can
+// emit 206 slices. Azure prefers x-ms-range when both are present.
+func applyAzureRange(r *http.Request) {
+	if r == nil {
+		return
+	}
+	if xr := r.Header.Get("x-ms-range"); xr != "" {
+		r.Header.Set("Range", xr)
+	}
+}
+
+func writeAzureBlobHeaders(w http.ResponseWriter, size int64, mod time.Time) {
+	etag := fmt.Sprintf(`"%x-%x"`, size, mod.UTC().UnixNano())
+	if size == 0 {
+		etag = `"0"`
+	}
+	w.Header().Set("ETag", etag)
+	if !mod.IsZero() {
+		w.Header().Set("Last-Modified", mod.UTC().Format(http.TimeFormat))
+	}
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("x-ms-blob-type", "BlockBlob")
 	w.Header().Set("x-ms-request-id", "temperci")
 	w.Header().Set("x-ms-version", "2020-10-02")
-	w.WriteHeader(http.StatusCreated)
 }
 
 func numericEntryID(s string) int64 {
