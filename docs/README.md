@@ -1,6 +1,6 @@
 # TemperCI documentation
 
-Start here when onboarding to the project.
+Start here when onboarding to the project. Release notes live in [CHANGELOG.md](../CHANGELOG.md).
 
 ## Product and architecture
 
