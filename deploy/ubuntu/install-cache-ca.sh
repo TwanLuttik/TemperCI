@@ -36,7 +36,9 @@ temperci_write_user_ca_env() {
     grep -q 'NODE_EXTRA_CA_CERTS=' "$home/.bashrc" 2>/dev/null || \
       printf '\nexport NODE_EXTRA_CA_CERTS=%s\nexport SSL_CERT_FILE=%s\n' "$CA_REL" "$BUNDLE_REL" >>"$home/.bashrc"
   fi
-  printf 'cafile=%s\n' "$CA_REL" >"$home/.npmrc"
+  # cafile replaces npm/pnpm's default store. Point at the full system
+  # bundle (which includes our CA after update-ca-certificates).
+  printf 'cafile=%s\n' "$BUNDLE_REL" >"$home/.npmrc"
 }
 
 temperci_install_cache_ca() {
@@ -89,6 +91,9 @@ EOF
   if [[ -d "$root/root" ]]; then
     temperci_write_user_ca_env "$root/root"
   fi
+
+  printf 'cafile=%s\n' "$BUNDLE_REL" >"$root/etc/npmrc"
+  chmod 0644 "$root/etc/npmrc"
 
   install -d -m 0755 "$root/etc/sudoers.d"
   cat >"$root/etc/sudoers.d/temperci-cache-ca" <<'EOF'

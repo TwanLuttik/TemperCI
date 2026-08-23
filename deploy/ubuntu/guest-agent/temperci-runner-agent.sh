@@ -263,23 +263,29 @@ apply_cache_ca() {
   done
   [ -n "$ca" ] || return 0
   export NODE_EXTRA_CA_CERTS="$ca"
-  if [ -f /etc/ssl/certs/ca-certificates.crt ]; then
-    export SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
-    export REQUESTS_CA_BUNDLE="$SSL_CERT_FILE"
-    export CURL_CA_BUNDLE="$SSL_CERT_FILE"
-    export GIT_SSL_CAINFO="$SSL_CERT_FILE"
+  local bundle="/etc/ssl/certs/ca-certificates.crt"
+  if [ -f "$bundle" ]; then
+    export SSL_CERT_FILE="$bundle"
+    export REQUESTS_CA_BUNDLE="$bundle"
+    export CURL_CA_BUNDLE="$bundle"
+    export GIT_SSL_CAINFO="$bundle"
+  else
+    bundle="$ca"
   fi
   if [ -d /opt/actions-runner ]; then
     printf 'NODE_EXTRA_CA_CERTS=%s\nSSL_CERT_FILE=%s\nREQUESTS_CA_BUNDLE=%s\nCURL_CA_BUNDLE=%s\nGIT_SSL_CAINFO=%s\n' \
       "$ca" "${SSL_CERT_FILE:-}" "${SSL_CERT_FILE:-}" "${SSL_CERT_FILE:-}" "${SSL_CERT_FILE:-}" \
       >/opt/actions-runner/.env 2>/dev/null || true
   fi
+  # npm/pnpm cafile replaces the default CA list. Use the full bundle so
+  # registry.npmjs.org still verifies (intercept CA alone breaks public TLS).
+  printf 'cafile=%s\n' "$bundle" >/etc/npmrc 2>/dev/null || true
   for home in /root /home/runner; do
     [ -d "$home" ] || continue
     if [ ! -f "$home/.profile" ] || ! grep -q NODE_EXTRA_CA_CERTS "$home/.profile" 2>/dev/null; then
       printf '\nexport NODE_EXTRA_CA_CERTS=%s\nexport SSL_CERT_FILE=%s\n' "$ca" "${SSL_CERT_FILE:-}" >>"$home/.profile" 2>/dev/null || true
     fi
-    printf 'cafile=%s\n' "$ca" >"$home/.npmrc" 2>/dev/null || true
+    printf 'cafile=%s\n' "$bundle" >"$home/.npmrc" 2>/dev/null || true
   done
   mkdir -p /etc/sudoers.d 2>/dev/null || true
   printf 'Defaults env_keep += "NODE_EXTRA_CA_CERTS SSL_CERT_FILE REQUESTS_CA_BUNDLE CURL_CA_BUNDLE GIT_SSL_CAINFO"\n' \

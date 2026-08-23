@@ -25,6 +25,13 @@ grep -q '^NODE_EXTRA_CA_CERTS=' "$tmp/root/etc/environment" || fail "environment
 grep -q 'NODE_EXTRA_CA_CERTS' "$tmp/root/opt/actions-runner/.env" || fail "runner .env"
 grep -q 'cafile=' "$tmp/root/home/runner/.npmrc" || fail "runner npmrc"
 grep -q 'cafile=' "$tmp/root/root/.npmrc" || fail "root npmrc"
+# npm/pnpm cafile replaces the default store — must be the full bundle, not
+# the intercept CA alone, or registry.npmjs.org fails UNABLE_TO_GET_ISSUER_CERT_LOCALLY.
+grep -q "cafile=${BUNDLE_REL}" "$tmp/root/home/runner/.npmrc" || fail "runner npmrc cafile must be system bundle"
+grep -q "cafile=${BUNDLE_REL}" "$tmp/root/etc/npmrc" || fail "/etc/npmrc must set cafile to system bundle"
+if grep -q "cafile=${CA_REL}" "$tmp/root/home/runner/.npmrc" "$tmp/root/root/.npmrc" "$tmp/root/etc/npmrc"; then
+  fail "npm cafile must not be the intercept-only cert"
+fi
 grep -q 'NODE_EXTRA_CA_CERTS' "$tmp/root/home/runner/.profile" || fail "runner profile"
 grep -q 'NODE_EXTRA_CA_CERTS' "$tmp/root/etc/sudoers.d/temperci-cache-ca" || fail "sudoers env_keep"
 
