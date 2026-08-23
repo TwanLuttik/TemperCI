@@ -38,12 +38,26 @@ export function jobStepProgress(steps?: JobStep[] | null): JobStepProgress {
   const list = steps || [];
   const total = list.length;
   const done = list.filter((s) => norm(s.status) === "completed").length;
-  const running = list.find((s) => norm(s.status) === "in_progress");
-  const failed = list.find(
+  const runningIdx = list.findIndex((s) => norm(s.status) === "in_progress");
+  const failedIdx = list.findIndex(
     (s) => norm(s.status) === "completed" && ["failure", "cancelled"].includes(norm(s.conclusion)),
   );
+  const running = runningIdx >= 0 ? list[runningIdx] : undefined;
+  const failed = failedIdx >= 0 ? list[failedIdx] : undefined;
+  // Prefer the live step, else the next pending row, else a failed row.
   const current = running || (done < total ? list[done] : failed);
-  const index = current?.number || (total > 0 && done === total ? total : done);
+  // GitHub's step.number counts hidden pre/post hooks (24 of 16). Use the
+  // 1-based index in the array we actually render.
+  let index = 0;
+  if (runningIdx >= 0) {
+    index = runningIdx + 1;
+  } else if (current && done < total) {
+    index = done + 1;
+  } else if (total > 0 && done === total) {
+    index = total;
+  } else {
+    index = done;
+  }
   return { total, done, current, index };
 }
 
