@@ -230,11 +230,31 @@ install_firecracker() {
   return 0
 }
 
+# Download url to dest via a temp file + install(1). curl -o onto a running
+# executable fails with ETXTBSY / curl 23 ("client returned ERROR on write").
+temperci_fetch_install() {
+  local url="$1" dest="$2" tmp
+  tmp="$(mktemp)"
+  curl -fsSL "$url" -o "$tmp"
+  mkdir -p "$(dirname "$dest")"
+  install -m 0755 "$tmp" "$dest"
+  rm -f "$tmp"
+}
+
+stop_temperci_units() {
+  if [[ -n "${DESTDIR:-}" ]] || ! command -v systemctl >/dev/null 2>&1; then
+    return 0
+  fi
+  systemctl stop temperci-agent.service 2>/dev/null || true
+  systemctl stop temperci-control.service 2>/dev/null || true
+}
+
 install_temperci_bins() {
   local dest_dir names n src dest
   dest_dir="$(temperci_root /usr/local/bin)"
   mkdir -p "$dest_dir"
   names=(temperci-control temperci-agent temperci-hostctl)
+  stop_temperci_units
   if [[ -n "$TEMPERCI_BIN_DIR" ]]; then
     for n in "${names[@]}"; do
       src=""
@@ -252,9 +272,7 @@ install_temperci_bins() {
   local base
   base="$(release_base)"
   for n in "${names[@]}"; do
-    dest="${dest_dir}/${n}"
-    curl -fsSL "${base}/${n}-linux-amd64" -o "$dest"
-    chmod 0755 "$dest"
+    temperci_fetch_install "${base}/${n}-linux-amd64" "${dest_dir}/${n}"
   done
 }
 

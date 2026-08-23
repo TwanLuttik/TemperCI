@@ -56,6 +56,16 @@ grep -E '^ReadWritePaths=.*\/etc\/temperci' "$unit" >/dev/null || fail "control 
 # --- write-once TOML ---
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
+
+# fetch+install must replace dest via install(1), not curl -o dest
+rep="$tmp/replace-dest"
+echo old >"$rep"
+chmod 0755 "$rep"
+srcf="$tmp/replace-src"
+echo newbin >"$srcf"
+install -m 0755 "$srcf" "$rep"
+expect_eq "$(cat "$rep")" "newbin" "install replaces dest inode"
+
 ctl="$tmp/control.toml"
 agent="$tmp/agent.toml"
 token="aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899"
