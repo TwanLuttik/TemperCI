@@ -2,16 +2,42 @@
 
 Run **control plane + host agent** on one Ubuntu 22.04/24.04 host with KVM, then execute a real GitHub Actions job via JIT self-hosted runners.
 
-For guest image build details see [guest-image.md](guest-image.md). Host packages and Firecracker: [README.md](README.md).
+## Recommended: one command
 
-## Prerequisites
+Requires Ubuntu 22.04/24.04, x86_64, `/dev/kvm`, and root. The script installs packages, Firecracker, TemperCI, systemd units, and starts the dashboard. The guest image builds in the background.
+
+```bash
+curl -fsSL https://github.com/TwanLuttik/TemperCI/releases/latest/download/install.sh | sudo bash
+```
+
+Open the printed URL (port `8080`) and finish the setup wizard (auth + GitHub App). The host is reachable on the LAN with `auth_mode=open` until you choose password mode.
+
+Re-run is safe: existing `/etc/temperci/*.toml` is not overwritten. If the guest image unit fails:
+
+```bash
+sudo journalctl -u temperci-guest-image -e
+sudo systemctl start temperci-guest-image
+```
+
+From a git checkout (uses local binaries):
+
+```bash
+make build-ui build-linux   # or: make build  on the Linux host
+sudo TEMPERCI_BIN_DIR=./bin ./deploy/ubuntu/install.sh
+```
+
+For guest image internals see [guest-image.md](guest-image.md). Host packages and Firecracker: [README.md](README.md).
+
+## Manual install (from a git checkout)
+
+### Prerequisites
 
 - Ubuntu with `/dev/kvm`
 - Root or a user in group `kvm` with write access to `/var/lib/temperci`
 - GitHub org where you can install a GitHub App
 - Go 1.22+ to build binaries (or copy prebuilt `temperci-control` / `temperci-agent`)
 
-## 1. Install host deps + layout
+### 1. Install host deps + layout
 
 ```bash
 sudo ./deploy/ubuntu/host-prereqs.sh
@@ -19,14 +45,14 @@ sudo ./deploy/ubuntu/host-prereqs.sh
 sudo ./deploy/ubuntu/build-guest-image.sh   # rootfs + kernel; see guest-image.md
 ```
 
-## 2. Build TemperCI
+### 2. Build TemperCI
 
 ```bash
 make build
-sudo install -m 0755 bin/temperci-control bin/temperci-agent /usr/local/bin/
+sudo install -m 0755 bin/temperci-control bin/temperci-agent bin/temperci-hostctl /usr/local/bin/
 ```
 
-## 3. Configure
+### 3. Configure
 
 ```bash
 sudo mkdir -p /etc/temperci
@@ -58,7 +84,7 @@ max_ready = 2
 job_simulate_seconds = 0
 ```
 
-## 4. Start services
+### 4. Start services
 
 Manual (debug):
 
@@ -78,7 +104,7 @@ curl -sS http://127.0.0.1:8080/healthz
 
 Agent logs should show `agent worker registered` and `warm VM ready`.
 
-## 5. GitHub App + webhook
+## 5. GitHub App + webhook (wizard or manual)
 
 1. Create/install the GitHub App on your test org (permissions: org self-hosted runners).
 2. Webhook URL: `https://<public-or-tunnel-host>/webhooks/github` (or SSH tunnel to :8080).
@@ -114,11 +140,9 @@ sudo ./scripts/verify-cleanup.sh --data-dir /var/lib/temperci --expect-warm-max 
 
 Use this as an operator runbook:
 
-- [ ] Install deps + KVM (`host-prereqs.sh`, Firecracker binary, `/dev/kvm`)
-- [ ] Build Ubuntu base image + `actions/runner` + kernel (`sudo ./deploy/ubuntu/build-guest-image.sh`)
-- [ ] `make build` and install both binaries
-- [ ] Configure `/etc/temperci/{control,agent}.toml` with matching `agent_token`
-- [ ] Start `temperci-control` and `temperci-agent`
+- [ ] `curl …/install.sh | sudo bash` (or the manual steps below)
+- [ ] Open the printed wizard URL; finish GitHub App + auth
+- [ ] Guest image unit reached `/var/lib/temperci/images/.ready`
 - [ ] Install GitHub App; webhook delivers `workflow_job` queued events
 - [ ] Push workflow with `runs-on: temperci-…`
 - [ ] Job green on GitHub (`checkout` + `uname` / `echo`)

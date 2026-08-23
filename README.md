@@ -26,6 +26,23 @@ Ubuntu single-node job path is in place: control plane + host agent, Firecracker
 | [docs/superpowers/specs/2026-08-12-temperci-platform-design.md](docs/superpowers/specs/2026-08-12-temperci-platform-design.md) | Full product design spec |
 | [docs/superpowers/plans/2026-08-12-temperci-mvp-plan.md](docs/superpowers/plans/2026-08-12-temperci-mvp-plan.md) | Trackable MVP plan (checkboxes) |
 
+## Install on a Linux host
+
+Ubuntu 22.04/24.04 amd64 with `/dev/kvm`. One command installs packages, Firecracker, binaries, systemd, and starts the setup wizard. The guest image builds in the background.
+
+```bash
+curl -fsSL https://github.com/TwanLuttik/TemperCI/releases/latest/download/install.sh | sudo bash
+```
+
+Then open the printed URL (port `8080`) and finish the wizard (GitHub App + auth). The host is `auth_mode=open` on the LAN until you set a password. See [deploy/ubuntu/quickstart.md](deploy/ubuntu/quickstart.md).
+
+From a git checkout (dev):
+
+```bash
+make build-ui build-linux
+sudo TEMPERCI_BIN_DIR=./bin ./deploy/ubuntu/install.sh
+```
+
 ## Local development
 
 Requirements: **Go 1.22+** and **Node.js 20+** (Vite dashboard under `web/`).
@@ -35,6 +52,7 @@ Requirements: **Go 1.22+** and **Node.js 20+** (Vite dashboard under `web/`).
 make build
 # UI only: make build-ui
 # Go only (after UI): make build-go
+# Linux amd64 artifacts: make build-linux
 
 # Run unit tests
 make test
@@ -47,7 +65,7 @@ make test
 # ./bin/temperci-control -config /etc/temperci/control.toml
 ```
 
-Example operator configs live under [`deploy/`](deploy/) (`control.example.toml`, `agent.example.toml`, systemd units). Copy them to `/etc/temperci/` when installing on a host — do not commit real secrets.
+Example operator configs live under [`deploy/`](deploy/) (`control.example.toml`, `agent.example.toml`, systemd units). The installer writes these for you; do not commit real secrets.
 
 **Operator dashboard** (embedded in control plane): open `http://<control>:8080/` after install — setup wizard, hosts, jobs, optional password users. See [deploy/dashboard.md](deploy/dashboard.md).
 

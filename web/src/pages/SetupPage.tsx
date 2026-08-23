@@ -75,6 +75,19 @@ export function SetupPage({ onDone }: Props) {
       .catch((e: Error) => setErr(e.message));
   }, []);
 
+  const imageReady = Boolean(status?.values?.guest_image && status?.values?.guest_kernel);
+  useEffect(() => {
+    if (imageReady) {
+      return;
+    }
+    const id = window.setInterval(() => {
+      api<SetupStatus>("/api/v1/setup/status")
+        .then(setStatus)
+        .catch(() => {});
+    }, 5000);
+    return () => window.clearInterval(id);
+  }, [imageReady]);
+
   const patch = (p: Partial<Wizard>) => setData((d) => ({ ...d, ...p }));
   const check = (id: string) => status?.steps?.find((s) => s.id === id);
 

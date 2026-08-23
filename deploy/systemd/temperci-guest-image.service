@@ -1,0 +1,19 @@
+[Unit]
+Description=TemperCI guest image (kernel + Ubuntu runner rootfs)
+Documentation=https://github.com/TwanLuttik/TemperCI
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=!/var/lib/temperci/images/.ready
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+User=root
+Group=root
+ExecStart=/usr/local/lib/temperci/prepare-guest-image.sh
+ExecStartPost=-/usr/local/bin/temperci-hostctl restart agent
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

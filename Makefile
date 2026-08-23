@@ -8,7 +8,7 @@ LDFLAGS  := -X main.version=$(VERSION)
 WEB_DIR  := web
 UI_DIST  := internal/webui/dist/index.html
 
-.PHONY: all build build-ui build-go test lint clean
+.PHONY: all build build-ui build-go build-linux test lint clean
 
 all: build
 
@@ -34,8 +34,18 @@ build-go:
 	go build -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/temperci-agent ./cmd/temperci-agent
 	go build -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/temperci-hostctl ./cmd/temperci-hostctl
 
+# Cross-compile Linux amd64 binaries for release / install.sh (needs prior build-ui).
+build-linux:
+	@test -f $(UI_DIST) || { echo "error: missing $(UI_DIST) — run: make build-ui"; exit 1; }
+	@mkdir -p $(BIN_DIR)
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/temperci-control-linux-amd64 ./cmd/temperci-control
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/temperci-agent-linux-amd64 ./cmd/temperci-agent
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/temperci-hostctl-linux-amd64 ./cmd/temperci-hostctl
+
 test: build-ui
 	go test ./...
+	bash -n deploy/ubuntu/install.sh deploy/ubuntu/prepare-guest-image.sh
+	bash deploy/ubuntu/install_test.sh
 
 # Placeholder until golangci-lint (or equivalent) is configured.
 lint:

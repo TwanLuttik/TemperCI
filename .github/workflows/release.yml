@@ -1,0 +1,51 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  linux:
+    name: linux-amd64
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: build linux binaries
+        run: make build-ui build-linux
+        env:
+          VERSION: ${{ github.ref_name }}
+
+      - name: stage assets
+        run: |
+          mkdir -p dist
+          cp bin/temperci-control-linux-amd64 dist/
+          cp bin/temperci-agent-linux-amd64 dist/
+          cp bin/temperci-hostctl-linux-amd64 dist/
+          cp deploy/ubuntu/install.sh dist/install.sh
+          sed -i.bak "s/TEMPERCI_VERSION:-latest/TEMPERCI_VERSION:-${GITHUB_REF_NAME}/" dist/install.sh
+          rm -f dist/install.sh.bak
+
+      - name: publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/temperci-control-linux-amd64
+            dist/temperci-agent-linux-amd64
+            dist/temperci-hostctl-linux-amd64
+            dist/install.sh
+          generate_release_notes: true

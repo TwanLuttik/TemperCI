@@ -27,5 +27,11 @@ jobs:
         run: |
           go build -o /tmp/temperci-control ./cmd/temperci-control
           go build -o /tmp/temperci-agent ./cmd/temperci-agent
+          go build -o /tmp/temperci-hostctl ./cmd/temperci-hostctl
           /tmp/temperci-control -version
           /tmp/temperci-agent -version
+
+      - name: install script tests
+        run: |
+          bash -n deploy/ubuntu/install.sh deploy/ubuntu/prepare-guest-image.sh
+          bash deploy/ubuntu/install_test.sh

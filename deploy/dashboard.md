@@ -43,13 +43,21 @@ Prefer **Funnel for GitHub webhooks only**; put the **UI on Tailscale Serve** (t
 
 ## Install / upgrade
 
+On a new Ubuntu/KVM host, prefer the one-liner (prints the wizard URL):
+
 ```bash
-make build   # or: GOOS=linux GOARCH=amd64 make build
+curl -fsSL https://github.com/TwanLuttik/TemperCI/releases/latest/download/install.sh | sudo bash
+```
+
+From a checkout:
+
+```bash
+make build   # or: make build-linux
 install -m 0755 bin/temperci-control bin/temperci-agent bin/temperci-hostctl /usr/local/bin/
 systemctl restart temperci-control
 ```
 
-Open `http://<control-host>:8080/` (or your Serve URL).
+Open the URL printed by `install.sh`, or `http://<control-host>:8080/` (or your Serve URL). The wizard is shown until GitHub App fields are saved. The host stays `auth_mode=open` on the LAN until you pick password mode.
 
 Existing installs that already have GitHub App fields filled keep fleet mode even without `setup_completed = true`.
 
