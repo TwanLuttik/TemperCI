@@ -156,6 +156,16 @@ if [[ ! -f "${INJECT}/jitconfig" ]]; then
   exit 1
 fi
 
+if [[ ! -f "${INJECT}/agent.ready" && ! -f "${TEMPERCI_WORKDIR}/agent.ready" ]]; then
+  echo "FAIL: agent.ready was not written" >&2
+  exit 1
+fi
+
+if grep -q 'restarting with DOCKER_INSECURE' "${TEMPERCI_WORKDIR}/agent.log" 2>/dev/null; then
+  echo "FAIL: guest agent restarted docker despite already-up path" >&2
+  exit 1
+fi
+
 if [[ ! -f "${TEMPERCI_WORKDIR}/node-ca.env" ]] || ! grep -q 'TESTCA\|temperci-cache' "${TEMPERCI_WORKDIR}/node-ca.env"; then
   # The stub records the env path; the file itself is the PEM copy under WORKDIR.
   if [[ ! -f "${TEMPERCI_WORKDIR}/temperci-cache.crt" ]]; then

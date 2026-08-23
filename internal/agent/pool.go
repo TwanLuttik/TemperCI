@@ -67,6 +67,7 @@ type Pool struct {
 	configuredMax int
 	clampReason   string
 	lastAdmit     string
+	readyCheck    func(id vmm.ID) bool
 
 	reconcileMu sync.Mutex
 
@@ -87,6 +88,9 @@ type PoolDeps struct {
 	NewID func() (vmm.ID, error)
 	// Inventory optional host sample; nil keeps slot-only create checks.
 	Inventory InventorySource
+	// ReadyCheck, if set, reports whether the guest agent has signaled ready
+	// (Firecracker reads agent.ready from the inject disk).
+	ReadyCheck func(id vmm.ID) bool
 }
 
 // NewPool builds a pool. Call Start to sweep orphans and run the reconciler.
@@ -138,6 +142,9 @@ func NewPool(cfg PoolConfig, deps PoolDeps) (*Pool, error) {
 	}
 	if cfg.BindWait <= 0 {
 		cfg.BindWait = 2 * time.Second
+	}
+	if cfg.GuestReadyWait <= 0 {
+		cfg.GuestReadyWait = 45 * time.Second
 	}
 
 	log := deps.Log
@@ -198,6 +205,7 @@ func NewPool(cfg PoolConfig, deps PoolDeps) (*Pool, error) {
 		inventory:     deps.Inventory,
 		configuredMax: configuredMax,
 		clampReason:   clampReason,
+		readyCheck:    deps.ReadyCheck,
 	}, nil
 }
 
@@ -282,7 +290,9 @@ func (p *Pool) Bind(ctx context.Context, job JobPayload) (*BindResult, error) {
 	}
 	shape := ResolveJobShape(job.Labels, p.cfg.Shapes, p.cfg.VCPUs, p.cfg.MemoryMiB)
 
-	deadline := p.now().Add(p.cfg.BindWait)
+	started := p.now()
+	bindDeadline := started.Add(p.cfg.BindWait)
+	bootDeadline := started.Add(p.cfg.GuestReadyWait)
 	var selected vmm.ID
 	var warmStart bool
 
@@ -302,6 +312,17 @@ func (p *Pool) Bind(ctx context.Context, job JobPayload) (*BindResult, error) {
 			vm.warmSince = time.Time{}
 			p.mu.Unlock()
 			break
+		}
+		// A matching VM is already booting — wait for it instead of a second create.
+		if p.matchingPoolBootLocked(shape.VCPUs, shape.MemoryMiB) && p.now().Before(bootDeadline) {
+			p.mu.Unlock()
+			p.kick()
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(50 * time.Millisecond):
+			}
+			continue
 		}
 		// No matching warm: try cold boot of the requested size if capacity allows.
 		if p.canCreateLocked(shape.MemoryMiB) {
@@ -338,7 +359,11 @@ func (p *Pool) Bind(ctx context.Context, job JobPayload) (*BindResult, error) {
 		}
 		p.mu.Unlock()
 
-		if p.now().After(deadline) {
+		if p.now().After(bindDeadline) && p.now().After(bootDeadline) {
+			return nil, fmt.Errorf("%w: no warm VM and cannot cold create", ErrNoCapacity)
+		}
+		if p.now().After(bindDeadline) {
+			// No in-flight boot to wait for (or boot wait already expired above).
 			return nil, fmt.Errorf("%w: no warm VM and cannot cold create", ErrNoCapacity)
 		}
 		// Wait briefly for reconciler to finish a pool_boot.
@@ -587,77 +612,82 @@ func (p *Pool) replenish(ctx context.Context) {
 			continue
 		}
 		for {
-			p.mu.Lock()
-			if p.stopping {
-				p.mu.Unlock()
-				return
-			}
-			c := p.countsLocked()
-			have := p.countShapeLocked(shape.VCPUs, shape.MemoryMiB, StateWarm, StatePoolBoot)
-			if have >= shape.MinReady || !p.canCreateLocked(shape.MemoryMiB) {
-				p.mu.Unlock()
-				break
-			}
-			if c.Warm+c.PoolBoot >= p.cfg.MaxReady {
-				p.mu.Unlock()
-				return
-			}
-			p.mu.Unlock()
-
-			id, err := p.bootIntoWarm(ctx, shape)
+			id, err := p.reservePoolBoot(shape)
 			if err != nil {
-				if errors.Is(err, ErrNoCapacity) {
+				if errors.Is(err, ErrNoCapacity) || errors.Is(err, ErrPoolStopped) {
+					break
+				}
+				p.log.Error("pool boot reserve failed", "err", err, "shape", shape.Label)
+				return
+			}
+			p.wg.Add(1)
+			go func(id vmm.ID, shape VMShape) {
+				defer p.wg.Done()
+				if err := p.finishBootWarm(ctx, id, shape); err != nil {
+					if !errors.Is(err, ErrPoolStopped) && ctx.Err() == nil {
+						p.log.Error("pool boot failed", "err", err, "shape", shape.Label, "vm_id", string(id))
+					}
 					return
 				}
-				p.log.Error("pool boot failed", "err", err, "shape", shape.Label)
-				return
-			}
-			p.log.Info("warm VM ready", "vm_id", string(id), "shape", shape.Label, "warm", p.Counts().Warm)
+				p.log.Info("warm VM ready", "vm_id", string(id), "shape", shape.Label, "warm", p.Counts().Warm)
+			}(id, shape)
 		}
 	}
 }
 
-// bootIntoWarm creates+boots a VM and registers it as warm.
-func (p *Pool) bootIntoWarm(ctx context.Context, shape VMShape) (vmm.ID, error) {
-	// Reserve pool_boot slot with a provisional id so DesiredIDs / counts work mid-boot.
+func (p *Pool) reservePoolBoot(shape VMShape) (vmm.ID, error) {
 	id, err := p.newID()
 	if err != nil {
 		return "", err
 	}
 	p.mu.Lock()
+	defer p.mu.Unlock()
 	if p.stopping {
-		p.mu.Unlock()
 		return "", ErrPoolStopped
 	}
 	c := p.countsLocked()
-	if c.Warm+c.PoolBoot >= p.cfg.MaxReady || !p.canCreateLocked(shape.MemoryMiB) {
-		p.mu.Unlock()
+	have := p.countShapeLocked(shape.VCPUs, shape.MemoryMiB, StateWarm, StatePoolBoot)
+	if have >= shape.MinReady || !p.canCreateLocked(shape.MemoryMiB) {
+		return "", ErrNoCapacity
+	}
+	if c.Warm+c.PoolBoot >= p.cfg.MaxReady {
 		return "", ErrNoCapacity
 	}
 	p.vms[id] = &poolVM{id: id, state: StatePoolBoot, vcpus: shape.VCPUs, memoryMiB: shape.MemoryMiB, createdAt: p.now()}
-	p.mu.Unlock()
+	return id, nil
+}
 
+// bootIntoWarm creates+boots a VM and registers it as warm.
+func (p *Pool) bootIntoWarm(ctx context.Context, shape VMShape) (vmm.ID, error) {
+	id, err := p.reservePoolBoot(shape)
+	if err != nil {
+		return "", err
+	}
+	if err := p.finishBootWarm(ctx, id, shape); err != nil {
+		return "", err
+	}
+	return id, nil
+}
+
+func (p *Pool) finishBootWarm(ctx context.Context, id vmm.ID, shape VMShape) error {
 	if err := p.provision(ctx, id, shape); err != nil {
 		p.mu.Lock()
 		delete(p.vms, id)
 		p.mu.Unlock()
-		// Best-effort cleanup of partial create.
 		_ = p.cleaner.Destroy(context.Background(), id)
-		return "", err
+		return err
 	}
-
 	p.mu.Lock()
 	vm, ok := p.vms[id]
 	if !ok {
 		p.mu.Unlock()
-		// Stopped mid-boot; destroy.
 		_ = p.cleaner.Destroy(context.Background(), id)
-		return "", ErrPoolStopped
+		return ErrPoolStopped
 	}
 	vm.state = StateWarm
 	vm.warmSince = p.now()
 	p.mu.Unlock()
-	return id, nil
+	return nil
 }
 
 // createAndBoot provisions a VM without registering warm (cold bind path).
@@ -701,7 +731,44 @@ func (p *Pool) provision(ctx context.Context, id vmm.ID, shape VMShape) error {
 		_ = p.cleaner.Destroy(context.Background(), id)
 		return fmt.Errorf("boot: %w", err)
 	}
+	if err := p.waitGuestReady(ctx, id); err != nil {
+		_ = p.cleaner.Destroy(context.Background(), id)
+		return fmt.Errorf("guest ready: %w", err)
+	}
 	return nil
+}
+
+func (p *Pool) waitGuestReady(ctx context.Context, id vmm.ID) error {
+	deadline := p.now().Add(p.cfg.GuestReadyWait)
+	readyPath := filepath.Join(p.cleaner.Layout.GuestDir(id), "agent.ready")
+	for {
+		if p.readyCheck != nil && p.readyCheck(id) {
+			return nil
+		}
+		if _, err := os.Stat(readyPath); err == nil {
+			return nil
+		}
+		if p.now().After(deadline) {
+			return fmt.Errorf("timeout after %s", p.cfg.GuestReadyWait)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(20 * time.Millisecond):
+		}
+	}
+}
+
+func (p *Pool) matchingPoolBootLocked(vcpus, memoryMiB int) bool {
+	for _, vm := range p.vms {
+		if vm == nil || vm.state != StatePoolBoot {
+			continue
+		}
+		if vm.vcpus == vcpus && vm.memoryMiB == memoryMiB {
+			return true
+		}
+	}
+	return false
 }
 
 func (p *Pool) recycleIdle(ctx context.Context) {

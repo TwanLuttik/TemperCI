@@ -1,7 +1,9 @@
 package control
 
 import (
+	"context"
 	"testing"
+	"time"
 )
 
 func TestAssignmentStore_ClaimNextFIFO(t *testing.T) {
@@ -125,5 +127,21 @@ func TestAssignmentStore_ClaimNextPrefersCachedRepo(t *testing.T) {
 	got = s.ClaimNext("host-1", []string{"acme/hot"})
 	if got == nil || got.JobID != 1 {
 		t.Fatalf("fallback claim = %+v want job 1", got)
+	}
+}
+
+func TestAssignmentStore_WaitMintedWakesOnPut(t *testing.T) {
+	s := NewAssignmentStore()
+	done := make(chan struct{})
+	go func() {
+		s.WaitMinted(context.Background(), time.Second)
+		close(done)
+	}()
+	time.Sleep(20 * time.Millisecond)
+	s.Put(&Assignment{JobID: 99, Status: AssignmentMinted, EncodedJITConfig: "jit"})
+	select {
+	case <-done:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("WaitMinted did not wake after Put minted job")
 	}
 }

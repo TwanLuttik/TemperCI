@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -127,6 +128,72 @@ func (s *Store) PutBlob(scope Scope, repo, digest string, data []byte) error {
 		return err
 	}
 	return s.evictLocked(int64(len(data)))
+}
+
+// PutBlobFromReader streams a blob to disk and verifies digest. Does not
+// buffer the whole layer in memory.
+func (s *Store) PutBlobFromReader(scope Scope, repo, digest string, r io.Reader) error {
+	if err := validateScopeRepo(scope, repo); err != nil {
+		return err
+	}
+	hexPart, err := digestHex(digest)
+	if err != nil {
+		return err
+	}
+	h := sha256.New()
+	tmp, err := os.CreateTemp(s.root, "blob-*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	n, err := io.Copy(io.MultiWriter(tmp, h), io.LimitReader(r, 2<<30))
+	_ = tmp.Close()
+	if err != nil {
+		_ = os.Remove(tmpName)
+		return err
+	}
+	if hex.EncodeToString(h.Sum(nil)) != hexPart {
+		_ = os.Remove(tmpName)
+		return fmt.Errorf("ocicache: digest mismatch")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	dir := s.blobDir(scope, repo, hexPart)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		_ = os.Remove(tmpName)
+		return err
+	}
+	dst := filepath.Join(dir, "data")
+	if err := os.Rename(tmpName, dst); err != nil {
+		// Cross-device: copy then remove.
+		in, oerr := os.Open(tmpName)
+		if oerr != nil {
+			_ = os.Remove(tmpName)
+			return oerr
+		}
+		out, oerr := os.Create(dst)
+		if oerr != nil {
+			_ = in.Close()
+			_ = os.Remove(tmpName)
+			return oerr
+		}
+		_, oerr = io.Copy(out, in)
+		_ = in.Close()
+		_ = out.Close()
+		_ = os.Remove(tmpName)
+		if oerr != nil {
+			return oerr
+		}
+	}
+	now := time.Now().UTC()
+	m := blobMeta{
+		Digest: digest, Size: n, Scope: scope, Repo: repo,
+		Created: now, LastAccess: now,
+	}
+	if err := writeJSON(filepath.Join(dir, "meta.json"), m); err != nil {
+		return err
+	}
+	return s.evictLocked(n)
 }
 
 // GetBlob reads a blob from the given scope.

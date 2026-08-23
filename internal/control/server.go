@@ -300,7 +300,19 @@ func (s *Server) handleJobClaim(w http.ResponseWriter, r *http.Request) {
 	}
 	s.agents.UpdateCapacity(req.AgentID, req.FreeSlots, req.Warm, req.Busy)
 	s.agents.Touch(req.AgentID)
-	a := s.store.ClaimNext(req.AgentID, req.CachedRepos)
+	wait := time.Duration(req.WaitMS) * time.Millisecond
+	if wait > 30*time.Second {
+		wait = 30 * time.Second
+	}
+	deadline := time.Now().Add(wait)
+	var a *Assignment
+	for {
+		a = s.store.ClaimNext(req.AgentID, req.CachedRepos)
+		if a != nil || wait <= 0 || !time.Now().Before(deadline) {
+			break
+		}
+		s.store.WaitMinted(r.Context(), time.Until(deadline))
+	}
 	if a == nil {
 		writeJSON(w, http.StatusOK, api.ClaimResponse{OK: true, Job: nil})
 		return

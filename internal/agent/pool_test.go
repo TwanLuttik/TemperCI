@@ -678,3 +678,88 @@ func (a *atomicInventory) set(inv agent.HostInventory) {
 	a.inv = inv
 	a.mu.Unlock()
 }
+
+// delayedVMM wraps fake.Manager to slow Boot and count concurrent boots.
+type delayedVMM struct {
+	inner   *fake.Manager
+	delay   time.Duration
+	creates *atomic.Int32
+	current *atomic.Int32
+	max     *atomic.Int32
+}
+
+func (d *delayedVMM) Create(ctx context.Context, cfg vmm.Config) (*vmm.Info, error) {
+	if d.creates != nil {
+		d.creates.Add(1)
+	}
+	return d.inner.Create(ctx, cfg)
+}
+
+func (d *delayedVMM) Boot(ctx context.Context, id vmm.ID) error {
+	if d.current != nil {
+		n := d.current.Add(1)
+		for {
+			old := d.max.Load()
+			if n <= old || d.max.CompareAndSwap(old, n) {
+				break
+			}
+		}
+		defer d.current.Add(-1)
+	}
+	if d.delay > 0 {
+		time.Sleep(d.delay)
+	}
+	return d.inner.Boot(ctx, id)
+}
+
+func (d *delayedVMM) Destroy(ctx context.Context, id vmm.ID) error {
+	return d.inner.Destroy(ctx, id)
+}
+func (d *delayedVMM) Exists(ctx context.Context, id vmm.ID) (bool, error) {
+	return d.inner.Exists(ctx, id)
+}
+func (d *delayedVMM) Info(ctx context.Context, id vmm.ID) (*vmm.Info, error) {
+	return d.inner.Info(ctx, id)
+}
+func (d *delayedVMM) List(ctx context.Context) ([]vmm.Info, error) {
+	return d.inner.List(ctx)
+}
+
+func TestBindWaitsForInFlightPoolBoot(t *testing.T) {
+	var creates atomic.Int32
+	p := testPool(t, agent.PoolConfig{
+		MinReady: 1, MaxReady: 2, BindWait: time.Second,
+	}, func(deps *agent.PoolDeps, mgr *fake.Manager) {
+		deps.VMM = &delayedVMM{inner: mgr, delay: 150 * time.Millisecond, creates: &creates}
+	})
+	waitFor(t, 2*time.Second, func() bool {
+		c := p.Counts()
+		return c.Warm+c.PoolBoot >= 1
+	})
+	res, err := p.Bind(context.Background(), agent.JobPayload{JobID: "wait-boot", JITConfig: "jit"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.WarmStart {
+		t.Fatal("expected warm bind from in-flight pool_boot, not a second cold create")
+	}
+	if n := creates.Load(); n != 1 {
+		t.Fatalf("creates=%d want 1 (replenish only)", n)
+	}
+}
+
+func TestReplenishBootsInParallel(t *testing.T) {
+	var current, max atomic.Int32
+	p := testPool(t, agent.PoolConfig{
+		MinReady: 2, MaxReady: 2,
+	}, func(deps *agent.PoolDeps, mgr *fake.Manager) {
+		deps.VMM = &delayedVMM{
+			inner: mgr, delay: 120 * time.Millisecond,
+			current: &current, max: &max,
+		}
+	})
+	waitFor(t, 3*time.Second, func() bool { return p.Counts().Warm >= 2 })
+	if max.Load() < 2 {
+		t.Fatalf("replenish was serial: max concurrent boots=%d want 2", max.Load())
+	}
+}

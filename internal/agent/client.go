@@ -38,7 +38,7 @@ type ClientTLSConfig struct {
 // NewControlClient builds a client. httpClient may be nil (defaults with timeout).
 func NewControlClient(baseURL, agentID, token string, httpClient *http.Client) *ControlClient {
 	if httpClient == nil {
-		httpClient = &http.Client{Timeout: 30 * time.Second}
+		httpClient = &http.Client{Timeout: 60 * time.Second}
 	}
 	return &ControlClient{
 		BaseURL:    strings.TrimRight(baseURL, "/"),
@@ -70,7 +70,7 @@ func NewHTTPClientTLS(tlsCfg ClientTLSConfig) (*http.Client, error) {
 		t.Certificates = []tls.Certificate{cert}
 	}
 	return &http.Client{
-		Timeout: 30 * time.Second,
+		Timeout: 60 * time.Second,
 		Transport: &http.Transport{
 			TLSClientConfig: t,
 		},
@@ -121,6 +121,7 @@ func (c *ControlClient) Claim(ctx context.Context, cap CapacitySnapshot) (*api.J
 		Warm:        cap.Warm,
 		Busy:        cap.Busy,
 		CachedRepos: cap.CachedRepos,
+		WaitMS:      25000,
 	}
 	var resp api.ClaimResponse
 	if err := c.post(ctx, "/v1/agent/jobs/claim", req, &resp); err != nil {

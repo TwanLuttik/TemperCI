@@ -42,8 +42,12 @@ type PoolConfig struct {
 	ReconcileInterval time.Duration
 	DestroyRetryBase  time.Duration
 	DestroyRetryMax   time.Duration
-	// BindWait is how long Bind waits for a warm VM before cold-booting.
+	// BindWait is how long Bind waits for a warm VM before cold-booting
+	// when no matching pool_boot is in flight.
 	BindWait time.Duration
+	// GuestReadyWait is how long provision waits for the guest agent ready
+	// signal (and how long Bind will wait for an in-flight pool_boot).
+	GuestReadyWait time.Duration
 	// Shapes is the warm catalog. Empty means a single shape from VCPUs/MemoryMiB/MinReady.
 	Shapes []VMShape
 }
@@ -66,6 +70,7 @@ func PoolConfigFromAgent(cfg *config.AgentConfig) PoolConfig {
 		DestroyRetryBase:  100 * time.Millisecond,
 		DestroyRetryMax:   5 * time.Second,
 		BindWait:          2 * time.Second,
+		GuestReadyWait:    45 * time.Second,
 		Shapes:            ShapesFromConfig(cfg),
 	}
 	if pc.ReconcileInterval <= 0 {

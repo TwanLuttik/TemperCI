@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"sync"
 )
@@ -216,7 +217,10 @@ func (g *Gateway) serveBlob(w http.ResponseWriter, r *http.Request, name, digest
 		g.writeBlob(w, r, scope, repo, digest)
 		return
 	}
-	status, hdr, body, scope, err := g.fetchOrigin(r, name)
+	status, hdr, rc, scope, err := g.fetchOriginStream(r, name)
+	if rc != nil {
+		defer rc.Close()
+	}
 	if err != nil || status >= 500 || status == 0 {
 		if scope, ok := g.Store.FindBlob(repo, digest); ok {
 			g.writeBlob(w, r, scope, repo, digest)
@@ -230,30 +234,41 @@ func (g *Gateway) serveBlob(w http.ResponseWriter, r *http.Request, name, digest
 	if status != http.StatusOK {
 		copyHeader(w.Header(), hdr)
 		w.WriteHeader(status)
-		if r.Method != http.MethodHead {
-			_, _ = w.Write(body)
+		if r.Method != http.MethodHead && rc != nil {
+			_, _ = io.Copy(w, rc)
 		}
-		return
-	}
-	if len(body) == 0 {
-		http.Error(w, "empty origin blob", http.StatusBadGateway)
 		return
 	}
 	if scope == ScopeRepo && repo == "" {
 		w.WriteHeader(http.StatusUnauthorized)
 		return
 	}
-	if err := g.Store.PutBlob(scope, repo, digest, body); err != nil {
-		// still serve
-	}
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Docker-Content-Digest", digest)
-	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(body)))
+	if cl := hdr.Get("Content-Length"); cl != "" {
+		w.Header().Set("Content-Length", cl)
+	}
 	if r.Method == http.MethodHead {
 		w.WriteHeader(http.StatusOK)
 		return
 	}
-	_, _ = w.Write(body)
+	tmp, err := os.CreateTemp("", "temperci-oci-blob-*")
+	if err != nil {
+		http.Error(w, "cache temp", http.StatusInternalServerError)
+		return
+	}
+	tmpName := tmp.Name()
+	defer func() {
+		_ = tmp.Close()
+		_ = os.Remove(tmpName)
+	}()
+	w.WriteHeader(http.StatusOK)
+	if _, err := io.Copy(io.MultiWriter(w, tmp), io.LimitReader(rc, 2<<30)); err != nil {
+		return
+	}
+	if _, err := tmp.Seek(0, io.SeekStart); err == nil {
+		_ = g.Store.PutBlobFromReader(scope, repo, digest, tmp)
+	}
 }
 
 func (g *Gateway) writeBlob(w http.ResponseWriter, r *http.Request, scope Scope, repo, digest string) {
@@ -356,33 +371,38 @@ func (g *Gateway) serveUpload(w http.ResponseWriter, r *http.Request, name, uuid
 }
 
 func (g *Gateway) fetchOrigin(r *http.Request, name string) (status int, hdr http.Header, body []byte, scope Scope, err error) {
+	status, hdr, rc, scope, err := g.fetchOriginStream(r, name)
+	if rc != nil {
+		defer rc.Close()
+	}
+	if err != nil {
+		return 0, nil, nil, "", err
+	}
+	b, rerr := io.ReadAll(io.LimitReader(rc, 2<<30))
+	return status, hdr, b, scope, rerr
+}
+
+func (g *Gateway) fetchOriginStream(r *http.Request, name string) (status int, hdr http.Header, body io.ReadCloser, scope Scope, err error) {
 	host := hostOf(r)
 	anon, err := g.doOrigin(r, name, host, "")
 	if err != nil {
 		return 0, nil, nil, "", err
 	}
-	defer anon.Body.Close()
 	if anon.StatusCode == http.StatusOK {
-		b, err := io.ReadAll(io.LimitReader(anon.Body, 2<<30))
-		return anon.StatusCode, anon.Header, b, ScopePublic, err
+		return anon.StatusCode, anon.Header, anon.Body, ScopePublic, nil
 	}
 	guestAuth := r.Header.Get("Authorization")
 	repo, bound := g.repoOf(r)
 	if (anon.StatusCode == http.StatusUnauthorized || anon.StatusCode == http.StatusForbidden) && guestAuth != "" && bound && repo != "" {
 		_, _ = io.Copy(io.Discard, anon.Body)
+		_ = anon.Body.Close()
 		priv, err := g.doOrigin(r, name, host, guestAuth)
 		if err != nil {
 			return 0, nil, nil, "", err
 		}
-		defer priv.Body.Close()
-		b, err := io.ReadAll(io.LimitReader(priv.Body, 2<<30))
-		if priv.StatusCode == http.StatusOK {
-			return priv.StatusCode, priv.Header, b, ScopeRepo, err
-		}
-		return priv.StatusCode, priv.Header, b, ScopeRepo, err
+		return priv.StatusCode, priv.Header, priv.Body, ScopeRepo, nil
 	}
-	b, err := io.ReadAll(io.LimitReader(anon.Body, 2<<30))
-	return anon.StatusCode, anon.Header, b, ScopePublic, err
+	return anon.StatusCode, anon.Header, anon.Body, ScopePublic, nil
 }
 
 func (g *Gateway) doOrigin(r *http.Request, name, host, authorization string) (*http.Response, error) {

@@ -45,6 +45,11 @@ type Worker struct {
 	// Used so FreeSlots drops immediately on claim, before Pool.Busy updates.
 	inflightMu sync.Mutex
 	inflight   int
+
+	invMu    sync.Mutex
+	invAt    time.Time
+	invRepos []string
+	invCache *api.CacheUsage
 }
 
 // Run registers then polls until ctx is cancelled.
@@ -182,6 +187,25 @@ func (w *Worker) snapshot() CapacitySnapshot {
 	if free < 0 {
 		free = 0
 	}
+	repos, cache := w.cachedInventory()
+	return CapacitySnapshot{
+		MaxCapacity: w.Capacity,
+		FreeSlots:   free,
+		Warm:        c.Warm,
+		Busy:        c.Busy,
+		VMs:         w.Pool.ListUsage(),
+		CachedRepos: repos,
+		Cache:       cache,
+		Resources:   w.Pool.HostResources(),
+	}
+}
+
+func (w *Worker) cachedInventory() ([]string, *api.CacheUsage) {
+	w.invMu.Lock()
+	defer w.invMu.Unlock()
+	if time.Since(w.invAt) < 10*time.Second && w.invCache != nil {
+		return append([]string(nil), w.invRepos...), w.invCache
+	}
 	var repos []string
 	var ghaStore *ghacache.Store
 	var ociStore *ocicache.Store
@@ -199,16 +223,10 @@ func (w *Worker) snapshot() CapacitySnapshot {
 	}
 	repos = uniqueSorted(repos)
 	cache := CacheUsageFromStores(ghaStore, ociStore)
-	return CapacitySnapshot{
-		MaxCapacity: w.Capacity,
-		FreeSlots:   free,
-		Warm:        c.Warm,
-		Busy:        c.Busy,
-		VMs:         w.Pool.ListUsage(),
-		CachedRepos: repos,
-		Cache:       cache,
-		Resources:   w.Pool.HostResources(),
-	}
+	w.invAt = time.Now()
+	w.invRepos = repos
+	w.invCache = cache
+	return repos, cache
 }
 
 func (w *Worker) register(ctx context.Context) error {

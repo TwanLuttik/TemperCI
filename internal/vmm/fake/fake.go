@@ -153,6 +153,12 @@ func (m *Manager) Boot(ctx context.Context, id vmm.ID) error {
 	if err := os.WriteFile(m.layout.PIDPath(id), []byte("0\n"), 0o600); err != nil {
 		return err
 	}
+	if err := os.MkdirAll(m.layout.GuestDir(id), 0o700); err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(m.layout.GuestDir(id), "agent.ready"), []byte("ready\n"), 0o600); err != nil {
+		return err
+	}
 	meta.State = vmm.StateRunning
 	meta.PID = 0
 	return vmm.WriteMeta(m.layout.MetaPath(id), meta)

@@ -1,6 +1,7 @@
 package control
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"sort"
@@ -64,6 +65,8 @@ type AssignmentStore struct {
 	// pending is FIFO job ids with status minted (claim order).
 	pending   []int64
 	persister AssignmentPersister
+	// minted is signaled when a job becomes claimable (long-poll wake).
+	minted chan struct{}
 }
 
 // StatusCounts is a snapshot of assignment statuses for metrics.
@@ -78,7 +81,7 @@ type StatusCounts struct {
 
 // NewAssignmentStore creates an empty in-memory store (no persistence).
 func NewAssignmentStore() *AssignmentStore {
-	return &AssignmentStore{byID: make(map[int64]*Assignment)}
+	return &AssignmentStore{byID: make(map[int64]*Assignment), minted: make(chan struct{}, 1)}
 }
 
 // NewAssignmentStoreWithPersister creates a store and loads existing rows.
@@ -117,8 +120,44 @@ func (s *AssignmentStore) Put(a *Assignment) {
 		if !existed || prev.Status != AssignmentMinted {
 			s.enqueuePendingLocked(a.JobID)
 		}
+		s.signalMinted()
 	}
 	_ = s.persistLocked(&cp)
+}
+
+func (s *AssignmentStore) signalMinted() {
+	if s.minted == nil {
+		return
+	}
+	select {
+	case s.minted <- struct{}{}:
+	default:
+	}
+}
+
+// WaitMinted blocks until a minted job is available or timeout/ctx fires.
+func (s *AssignmentStore) WaitMinted(ctx context.Context, d time.Duration) {
+	if d <= 0 {
+		return
+	}
+	if s.PendingLen() > 0 {
+		return
+	}
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	ch := s.minted
+	if ch == nil {
+		select {
+		case <-ctx.Done():
+		case <-timer.C:
+		}
+		return
+	}
+	select {
+	case <-ctx.Done():
+	case <-timer.C:
+	case <-ch:
+	}
 }
 
 // Get returns a copy of the assignment for jobID, or nil.

@@ -17,10 +17,7 @@ log() { echo "temperci-agent: $*" | tee -a "$WORKDIR/agent.log" >&2; }
 
 # Ensure root filesystem is writable (runner copies run-helper.sh into place).
 mount -o remount,rw / 2>/dev/null || true
-# Ensure runner dir is writable by the agent (often owned by uid 1001 from the tarball).
-if [ -d "$RUNNER_DIR" ]; then
-  chmod -R u+rwX "$RUNNER_DIR" 2>/dev/null || true
-fi
+# Ownership is set at image build time. Do not chmod -R the runner tree on every boot.
 
 write_exit() {
   local code="$1"
@@ -73,13 +70,40 @@ fi
 log "starting; waiting for JIT (ip=$(hostname -I 2>/dev/null | tr -d '\n' || true); gw=$(ip route 2>/dev/null | awk '/default/{print $3; exit}' || true))"
 log "devices: $(ls /dev/vd* 2>/dev/null | tr '\n' ' ' || true)"
 
+publish_ready() {
+  echo "ready $(date -u +%Y-%m-%dT%H:%M:%SZ)" >"$WORKDIR/agent.ready" 2>/dev/null || true
+  umount "$MNT" 2>/dev/null || true
+  if mount "$INJECT_DEV" "$MNT" 2>/dev/null || mount -o rw "$INJECT_DEV" "$MNT" 2>/dev/null; then
+    echo "ready $(date -u +%Y-%m-%dT%H:%M:%SZ)" >"$MNT/agent.ready" 2>/dev/null || true
+    umount "$MNT" 2>/dev/null || true
+    log "guest ready signaled"
+  fi
+}
+
+# Kick dockerd during JIT wait so bind does not pay a full docker start.
+export DOCKER_INSECURE_NO_IPTABLES_RAW=1
+if [ -x /usr/sbin/iptables-legacy ]; then
+  update-alternatives --set iptables /usr/sbin/iptables-legacy >/dev/null 2>&1 || true
+fi
+if [ -x /usr/bin/dockerd ] && [ ! -S /var/run/docker.sock ]; then
+  systemctl start docker.service >/dev/null 2>&1 &
+fi
+
 # Wait until inject disk has jitconfig (host syncs after bind).
+# Signal agent.ready on first successful mount so the host can mark the VM warm.
 polls=0
+ready_written=0
 while true; do
   INJECT_DEV=$(resolve_inject_dev)
   if [ -e "$INJECT_DEV" ]; then
     umount "$MNT" 2>/dev/null || true
     if mount -o ro "$INJECT_DEV" "$MNT" 2>/dev/null; then
+      if [ "$ready_written" -eq 0 ]; then
+        umount "$MNT" 2>/dev/null || true
+        publish_ready
+        ready_written=1
+        continue
+      fi
       if [ -f "$MNT/jitconfig" ]; then
         log "found jitconfig on $INJECT_DEV"
         break
@@ -89,8 +113,7 @@ while true; do
       if [ $((polls % 20)) -eq 0 ]; then
         umount "$MNT" 2>/dev/null || true
         if mount "$INJECT_DEV" "$MNT" 2>/dev/null; then
-          echo "waiting polls=$polls dev=$INJECT_DEV $(date -Is)" >"$MNT/agent.heartbeat" 2>/dev/null || true
-          sync
+          echo "waiting polls=$polls dev=$INJECT_DEV $(date -u +%Y-%m-%dT%H:%M:%SZ)" >"$MNT/agent.heartbeat" 2>/dev/null || true
           umount "$MNT" 2>/dev/null || true
         fi
       else
@@ -174,14 +197,8 @@ ensure_docker() {
   fi
   prefer_iptables_legacy
   if docker_ready; then
-    if iptables -t raw -L >/dev/null 2>&1; then
-      log "docker already running"
-      return 0
-    fi
-    log "docker is up but iptables raw table is missing; restarting with DOCKER_INSECURE_NO_IPTABLES_RAW"
-    systemctl stop docker.service 2>/dev/null || true
-    pkill -x dockerd 2>/dev/null || true
-    sleep 1
+    log "docker already running"
+    return 0
   fi
   log "starting docker.service"
   systemctl reset-failed docker.service 2>/dev/null || true
@@ -248,10 +265,12 @@ apply_cache_ca() {
   if [ -n "$src" ] && [ -f "$src" ]; then
     cp -f "$src" "$work" 2>/dev/null || true
     mkdir -p /usr/local/share/ca-certificates 2>/dev/null || true
-    cp -f "$src" "$dest" 2>/dev/null || true
-    chmod 0644 "$dest" 2>/dev/null || true
-    if [ -x /usr/sbin/update-ca-certificates ]; then
-      /usr/sbin/update-ca-certificates >/dev/null 2>&1 || true
+    if [ ! -f "$dest" ] || ! cmp -s "$src" "$dest" 2>/dev/null; then
+      cp -f "$src" "$dest" 2>/dev/null || true
+      chmod 0644 "$dest" 2>/dev/null || true
+      if [ -x /usr/sbin/update-ca-certificates ]; then
+        /usr/sbin/update-ca-certificates >/dev/null 2>&1 || true
+      fi
     fi
   fi
   local ca=""
@@ -309,7 +328,6 @@ publish_live_logs() {
   if mount "$INJECT_DEV" "$MNT" 2>/dev/null || mount -o rw "$INJECT_DEV" "$MNT" 2>/dev/null; then
     cp -a "$WORKDIR/agent.log" "$MNT/agent.log" 2>/dev/null || true
     cp -a "$WORKDIR/runner.log" "$MNT/runner.log" 2>/dev/null || true
-    sync
     umount "$MNT" 2>/dev/null || true
   fi
 }

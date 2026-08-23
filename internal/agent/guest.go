@@ -186,11 +186,11 @@ func (f *FirecrackerGuestExec) Exec(ctx context.Context, id vmm.ID, name string,
 // guest agent is also mounting /dev/vdb (causes missed JIT / stuck jobs).
 func (f *FirecrackerGuestExec) WaitRunner(ctx context.Context, id vmm.ID) (int, error) {
 	layout := f.layout()
-	// Give the guest a quiet window to mount inject, copy JIT, and unmount.
+	// Brief quiet window so the guest can mount inject, copy JIT, and unmount.
 	select {
 	case <-ctx.Done():
 		return -1, ctx.Err()
-	case <-time.After(3 * time.Second):
+	case <-time.After(200 * time.Millisecond):
 	}
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()

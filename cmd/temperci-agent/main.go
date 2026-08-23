@@ -5,6 +5,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"flag"
 	"fmt"
@@ -74,12 +75,20 @@ func main() {
 
 	cleaner := &cleanup.Cleaner{VMM: mgr, Layout: layout, Log: log}
 	poolCfg := agent.PoolConfigFromAgent(cfg)
+	var readyCheck func(id vmm.ID) bool
+	if cfg.VMMBackend == "firecracker" {
+		readyCheck = func(id vmm.ID) bool {
+			b, err := firecracker.ReadInjectFile(layout, id, "agent.ready")
+			return err == nil && len(bytes.TrimSpace(b)) > 0
+		}
+	}
 	pool, err := agent.NewPool(poolCfg, agent.PoolDeps{
-		VMM:       mgr,
-		Cleaner:   cleaner,
-		Runner:    runner,
-		Log:       log,
-		Inventory: agent.ProcInventory{DataDir: cfg.DataDir},
+		VMM:        mgr,
+		Cleaner:    cleaner,
+		Runner:     runner,
+		Log:        log,
+		Inventory:  agent.ProcInventory{DataDir: cfg.DataDir},
+		ReadyCheck: readyCheck,
 	})
 	if err != nil {
 		log.Error("init pool", "err", err)

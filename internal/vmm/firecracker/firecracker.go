@@ -162,25 +162,27 @@ func (m *Manager) Create(ctx context.Context, cfg vmm.Config) (*vmm.Info, error)
 	}
 
 	m.mu.Lock()
-	defer m.mu.Unlock()
-
 	dir := m.layout.InstanceDir(cfg.ID)
 	if _, err := os.Stat(dir); err == nil {
+		m.mu.Unlock()
 		return nil, fmt.Errorf("%w: %s", vmm.ErrExists, cfg.ID)
 	} else if !errors.Is(err, os.ErrNotExist) {
+		m.mu.Unlock()
 		return nil, err
 	}
-
 	if err := os.MkdirAll(m.layout.NetDir(cfg.ID), 0o755); err != nil {
+		m.mu.Unlock()
 		return nil, err
 	}
 	if err := os.MkdirAll(m.layout.LogDir(cfg.ID), 0o755); err != nil {
 		_ = os.RemoveAll(dir)
+		m.mu.Unlock()
 		return nil, err
 	}
+	m.mu.Unlock()
 
-	// COW overlay: copy base rootfs into instance dir as a starting point.
-	// Production may switch to reflink/qcow2/overlayfs; copy is correct and simple.
+	// Clone / hole-preserving copy of the (sparse) base rootfs. Do not hold
+	// the manager lock across this — parallel pool boots would otherwise serialize.
 	if err := copyFile(cfg.RootfsPath, m.layout.OverlayPath(cfg.ID)); err != nil {
 		_ = os.RemoveAll(dir)
 		return nil, fmt.Errorf("firecracker: create overlay: %w", err)
@@ -601,24 +603,4 @@ func netNSName(id vmm.ID) string {
 	h := fnv.New32a()
 	_, _ = h.Write([]byte(id))
 	return fmt.Sprintf("tn%08x", h.Sum32())
-}
-
-func copyFile(src, dst string) error {
-	in, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer in.Close()
-	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
-		return err
-	}
-	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
-	if err != nil {
-		return err
-	}
-	defer out.Close()
-	if _, err := io.Copy(out, in); err != nil {
-		return err
-	}
-	return out.Close()
 }

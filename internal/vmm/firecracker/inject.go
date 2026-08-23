@@ -78,9 +78,11 @@ func SyncGuestDirToInjectDrive(layout vmm.Layout, id vmm.ID) error {
 		if err := os.WriteFile(dst, data, mode); err != nil {
 			return err
 		}
+		if f, err := os.OpenFile(dst, os.O_RDWR, 0); err == nil {
+			_ = f.Sync()
+			_ = f.Close()
+		}
 	}
-	// Ensure visibility before umount.
-	_ = exec.Command("sync").Run()
 	return nil
 }
 

@@ -164,6 +164,8 @@ type ClaimRequest struct {
 	Busy int `json:"busy,omitempty"`
 	// CachedRepos is org/repo namespaces this agent already has on disk (sticky claim).
 	CachedRepos []string `json:"cached_repos,omitempty"`
+	// WaitMS, when > 0, long-polls up to that many milliseconds for a minted job.
+	WaitMS int `json:"wait_ms,omitempty"`
 }
 
 // JobAssignment is a claimed job payload delivered to an agent.
