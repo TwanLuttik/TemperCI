@@ -205,6 +205,76 @@ type setupApplyRequest struct {
 	ListenAddr             string `json:"listen_addr"`
 	CacheListenAddr        string `json:"cache_listen_addr"`
 	Restart                bool   `json:"restart"`
+	// Draft writes GitHub/auth fields without completing setup or restarting.
+	// Used when the operator clicks Continue mid-wizard.
+	Draft bool `json:"draft"`
+}
+
+// handleSetupDraft persists wizard fields without flipping setup_completed or restarting.
+func (s *Server) handleSetupDraft(w http.ResponseWriter, req setupApplyRequest) {
+	cur := *s.dash.Config
+	if req.GitHubAppID != 0 {
+		cur.GitHubAppID = req.GitHubAppID
+	}
+	if org := strings.TrimSpace(req.GitHubOrg); org != "" {
+		cur.GitHubOrg = org
+	}
+	if sec := strings.TrimSpace(req.GitHubWebhookSecret); sec != "" {
+		cur.GitHubWebhookSecret = sec
+	}
+	if mode := strings.ToLower(strings.TrimSpace(req.AuthMode)); mode == "open" || mode == "password" {
+		cur.AuthMode = mode
+	}
+	if listen := strings.TrimSpace(req.ListenAddr); listen != "" {
+		cur.ListenAddr = listen
+	}
+	if tok := strings.TrimSpace(req.AgentToken); tok != "" {
+		cur.AgentToken = tok
+		s.agentToken = tok
+	}
+	pemPath := cur.GitHubAppPrivateKeyPath
+	if pemPath == "" {
+		pemPath = "/etc/temperci/github-app.pem"
+	}
+	if pem := strings.TrimSpace(req.GitHubAppPrivateKeyPEM); pem != "" {
+		if !strings.Contains(pem, "PRIVATE KEY") {
+			writeAPIError(w, http.StatusBadRequest, "invalid private key pem")
+			return
+		}
+		if err := os.MkdirAll(filepath.Dir(pemPath), 0o755); err != nil {
+			writeAPIError(w, http.StatusInternalServerError, "mkdir pem: "+err.Error())
+			return
+		}
+		if err := os.WriteFile(pemPath, []byte(pem+"\n"), 0o600); err != nil {
+			writeAPIError(w, http.StatusInternalServerError, "write pem: "+err.Error())
+			return
+		}
+		cur.GitHubAppPrivateKeyPath = pemPath
+	}
+	cfgPath := s.dash.ConfigPath
+	if cfgPath == "" {
+		cfgPath = "/etc/temperci/control.toml"
+	}
+	cur.SetupCompleted = false
+	if err := cur.Validate(); err != nil {
+		writeAPIError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := config.WriteControlFile(cfgPath, &cur); err != nil {
+		writeAPIError(w, http.StatusInternalServerError, "write config: "+err.Error())
+		return
+	}
+	if strings.TrimSpace(req.CacheListenAddr) != "" {
+		if err := s.writeAgentCacheListenAddr(req.CacheListenAddr); err != nil {
+			writeAPIError(w, http.StatusInternalServerError, "write agent cache_listen_addr: "+err.Error())
+			return
+		}
+	}
+	*s.dash.Config = cur
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":    true,
+		"draft": true,
+	})
 }
 
 func (s *Server) handleSetupApply(w http.ResponseWriter, r *http.Request) {
@@ -224,6 +294,10 @@ func (s *Server) handleSetupApply(w http.ResponseWriter, r *http.Request) {
 	var req setupApplyRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeAPIError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	if req.Draft {
+		s.handleSetupDraft(w, req)
 		return
 	}
 	authMode := strings.ToLower(strings.TrimSpace(req.AuthMode))

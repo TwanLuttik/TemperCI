@@ -37,21 +37,50 @@ const STEPS = [
   { id: "review", label: "Review" },
 ];
 
+const DRAFT_KEY = "temperci-setup-draft";
+
+function parseAppID(raw: string): number {
+  const n = Number(String(raw).trim());
+  return Number.isFinite(n) && n > 0 ? Math.trunc(n) : 0;
+}
+
+function githubFieldsReady(
+  data: Wizard,
+  webhookSet: boolean,
+  pemSet: boolean,
+): boolean {
+  return Boolean(
+    data.github_org.trim() &&
+      parseAppID(data.github_app_id) &&
+      (data.github_webhook_secret.trim() || webhookSet) &&
+      (data.github_app_private_key_pem.trim() || pemSet),
+  );
+}
+
 export function SetupPage({ onDone }: Props) {
   const navigate = useNavigate();
   const [step, setStep] = useState(0);
   const [status, setStatus] = useState<SetupStatus | null>(null);
-  const [data, setData] = useState<Wizard>({
-    auth_mode: "password",
-    admin_email: "",
-    admin_password: "",
-    github_app_id: "",
-    github_org: "",
-    github_webhook_secret: "",
-    github_app_private_key_pem: "",
-    agent_token: "",
-    listen_addr: "0.0.0.0:8080",
-    cache_listen_addr: "",
+  const [data, setData] = useState<Wizard>(() => {
+    const empty: Wizard = {
+      auth_mode: "password",
+      admin_email: "",
+      admin_password: "",
+      github_app_id: "",
+      github_org: "",
+      github_webhook_secret: "",
+      github_app_private_key_pem: "",
+      agent_token: "",
+      listen_addr: "0.0.0.0:8080",
+      cache_listen_addr: "",
+    };
+    try {
+      const raw = sessionStorage.getItem(DRAFT_KEY);
+      if (!raw) return empty;
+      return { ...empty, ...(JSON.parse(raw) as Partial<Wizard>) };
+    } catch {
+      return empty;
+    }
   });
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -88,8 +117,72 @@ export function SetupPage({ onDone }: Props) {
     return () => window.clearInterval(id);
   }, [imageReady]);
 
-  const patch = (p: Partial<Wizard>) => setData((d) => ({ ...d, ...p }));
-  const check = (id: string) => status?.steps?.find((s) => s.id === id);
+  const webhookSet = Boolean(status?.values?.webhook_set);
+  const pemSet = Boolean(status?.values?.pem_set);
+  const tokenSet = Boolean(status?.values?.agent_token_set);
+
+  const patch = (p: Partial<Wizard>) => {
+    setData((d) => {
+      const next = { ...d, ...p };
+      try {
+        sessionStorage.setItem(DRAFT_KEY, JSON.stringify(next));
+      } catch {
+        /* ignore quota */
+      }
+      return next;
+    });
+  };
+  const check = (id: string) => {
+    const st = status?.steps?.find((s) => s.id === id);
+    if (id === "github" && githubFieldsReady(data, webhookSet, pemSet) && st?.status !== "ok") {
+      return {
+        id: "github",
+        label: "GitHub App",
+        status: "ok",
+        detail: `${data.github_org} · app ${data.github_app_id}`,
+      };
+    }
+    return st;
+  };
+
+  const payload = () => ({
+    auth_mode: data.auth_mode,
+    admin_email: data.admin_email,
+    admin_password: data.admin_password,
+    github_app_id: parseAppID(data.github_app_id),
+    github_org: data.github_org.trim(),
+    github_webhook_secret: data.github_webhook_secret,
+    github_app_private_key_pem: data.github_app_private_key_pem,
+    agent_token: data.agent_token,
+    listen_addr: data.listen_addr,
+    cache_listen_addr: data.cache_listen_addr,
+  });
+
+  const saveDraft = async () => {
+    await api("/api/v1/setup/apply", {
+      method: "POST",
+      body: JSON.stringify({ ...payload(), draft: true, restart: false }),
+    });
+    const st = await api<SetupStatus>("/api/v1/setup/status");
+    setStatus(st);
+  };
+
+  const continueNext = async () => {
+    if (step === 1 && !githubFieldsReady(data, webhookSet, pemSet)) {
+      setErr("Fill organization, App ID, webhook secret, and the private key PEM before continuing.");
+      return;
+    }
+    setErr(null);
+    setBusy(true);
+    try {
+      await saveDraft();
+      setStep((s) => s + 1);
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const apply = async () => {
     setBusy(true);
@@ -99,21 +192,17 @@ export function SetupPage({ onDone }: Props) {
       const res = await api<{ agent_token?: string; reconnect?: boolean }>("/api/v1/setup/apply", {
         method: "POST",
         body: JSON.stringify({
-          auth_mode: data.auth_mode,
-          admin_email: data.admin_email,
-          admin_password: data.admin_password,
-          github_app_id: data.github_app_id ? Number(data.github_app_id) : 0,
-          github_org: data.github_org,
-          github_webhook_secret: data.github_webhook_secret,
-          github_app_private_key_pem: data.github_app_private_key_pem,
-          agent_token: data.agent_token,
-          listen_addr: data.listen_addr,
-          cache_listen_addr: data.cache_listen_addr,
+          ...payload(),
           restart: true,
         }),
       });
       if (res.agent_token && !review) {
         setMsg(`Config written. Agent token: ${res.agent_token}`);
+      }
+      try {
+        sessionStorage.removeItem(DRAFT_KEY);
+      } catch {
+        /* ignore */
       }
       if (res.reconnect) {
         setMsg("Config written. Reconnecting after restart…");
@@ -132,9 +221,6 @@ export function SetupPage({ onDone }: Props) {
   };
 
   const users = status?.values?.admin_users ?? 0;
-  const webhookSet = Boolean(status?.values?.webhook_set);
-  const pemSet = Boolean(status?.values?.pem_set);
-  const tokenSet = Boolean(status?.values?.agent_token_set);
 
   return (
     <div className="min-h-svh bg-[radial-gradient(900px_400px_at_10%_-10%,oklch(0.72_0.19_45_/_0.08),transparent_55%)]">
@@ -263,6 +349,9 @@ export function SetupPage({ onDone }: Props) {
                 placeholder={webhookSet ? "Leave blank to keep current" : undefined}
               />
             </div>
+            <p className="text-sm text-muted-foreground">
+              Continue writes these values to the server. Apply on Review finishes setup and restarts services.
+            </p>
             <div className="space-y-2">
               <Label>App private key (PEM)</Label>
               <Textarea
@@ -367,7 +456,7 @@ export function SetupPage({ onDone }: Props) {
             </Button>
           ) : null}
           {step < 4 ? (
-            <Button type="button" onClick={() => setStep((s) => s + 1)}>
+            <Button type="button" disabled={busy} onClick={() => void continueNext()}>
               Continue
             </Button>
           ) : (

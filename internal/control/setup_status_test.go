@@ -81,6 +81,61 @@ func TestSetupStatus_ReportsInstalledSteps(t *testing.T) {
 	}
 }
 
+func TestSetupApply_DraftWritesGitHubWithoutCompleting(t *testing.T) {
+	dir := t.TempDir()
+	controlPath := filepath.Join(dir, "control.toml")
+	agentPath := filepath.Join(dir, "agent.toml")
+	pem := filepath.Join(dir, "github-app.pem")
+	if err := os.WriteFile(agentPath, []byte("agent_token = \"tok\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(controlPath, []byte("setup_completed = false\nagent_token = \"tok\"\nauth_mode = \"open\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	srv := NewServer(ServerConfig{
+		AgentToken: "tok",
+		Dashboard: &DashboardConfig{
+			Config: &config.ControlConfig{
+				AuthMode:                "open",
+				SetupCompleted:          false,
+				AgentToken:              "tok",
+				GitHubAppPrivateKeyPath: pem,
+				ListenAddr:              "0.0.0.0:8080",
+			},
+			ConfigPath:      controlPath,
+			AgentConfigPath: agentPath,
+		},
+	})
+	body := `{
+		"draft": true,
+		"github_org": "coatcheckapp",
+		"github_app_id": 4575087,
+		"github_webhook_secret": "whsec",
+		"github_app_private_key_pem": "-----BEGIN RSA PRIVATE KEY-----\nMIIB\n-----END RSA PRIVATE KEY-----"
+	}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/setup/apply", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d %s", rr.Code, rr.Body.String())
+	}
+	got, err := config.LoadControlFile(controlPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.GitHubOrg != "coatcheckapp" || got.GitHubAppID != 4575087 || got.GitHubWebhookSecret != "whsec" {
+		t.Fatalf("github not saved: %+v", got)
+	}
+	if got.SetupCompleted {
+		t.Fatal("draft must not complete setup")
+	}
+	raw, err := os.ReadFile(pem)
+	if err != nil || !strings.Contains(string(raw), "PRIVATE KEY") {
+		t.Fatalf("pem: %s err=%v", raw, err)
+	}
+}
+
 func TestSetupApply_ReentryKeepsSecrets(t *testing.T) {
 	dir := t.TempDir()
 	pem := filepath.Join(dir, "github-app.pem")
