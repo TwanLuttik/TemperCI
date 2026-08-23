@@ -31,6 +31,7 @@ Start here when onboarding to the project.
 |----------|-------------|
 | [superpowers/specs/2026-08-12-temperci-platform-design.md](superpowers/specs/2026-08-12-temperci-platform-design.md) | Approved product design |
 | [superpowers/specs/2026-08-22-oci-image-and-build-cache-design.md](superpowers/specs/2026-08-22-oci-image-and-build-cache-design.md) | Host-local Docker Hub/GHCR pull-through + BuildKit cache |
+| [superpowers/specs/2026-08-23-one-command-linux-install-design.md](superpowers/specs/2026-08-23-one-command-linux-install-design.md) | One-command Ubuntu install + setup wizard |
 | [superpowers/plans/2026-08-12-temperci-mvp-plan.md](superpowers/plans/2026-08-12-temperci-mvp-plan.md) | MVP phases with checkboxes for progress tracking |
 
 ## Conventions
