@@ -28,7 +28,7 @@ Ubuntu single-node job path is in place: control plane + host agent, Firecracker
 
 ## Install on a Linux host
 
-Ubuntu 22.04/24.04 amd64 with `/dev/kvm`. One command installs packages, Firecracker, binaries, systemd, and starts the setup wizard. The guest image builds in the background.
+Ubuntu 22.04/24.04 or Debian 12/13 (including Proxmox VE) amd64 with `/dev/kvm`. One command installs packages, Firecracker, binaries, systemd, and starts the setup wizard. The guest image builds in the background. On Proxmox it will not install Debian `qemu-kvm` (PVE already provides QEMU).
 
 ```bash
 curl -fsSL https://github.com/TwanLuttik/TemperCI/releases/latest/download/install.sh | bash

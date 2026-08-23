@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# TemperCI one-command installer for a single Ubuntu/KVM host.
+# TemperCI one-command installer for a single Ubuntu or Debian/Proxmox KVM host.
 #
 #   curl -fsSL https://github.com/TwanLuttik/TemperCI/releases/latest/download/install.sh | bash
 #   TEMPERCI_BIN_DIR=./bin ./deploy/ubuntu/install.sh
@@ -32,10 +32,37 @@ temperci_step() {
   echo "$(temperci_step_line "$@")" >&2
 }
 
-temperci_ubuntu_supported() {
-  local text="$1"
-  echo "$text" | grep -q '^ID=ubuntu' || return 1
-  echo "$text" | grep -Eq '^VERSION_ID="?(22.04|24.04)"?' || return 1
+temperci_os_supported() {
+  local text="$1" id ver
+  id="$(echo "$text" | sed -n 's/^ID=//p' | tr -d '"' | head -1)"
+  ver="$(echo "$text" | sed -n 's/^VERSION_ID=//p' | tr -d '"' | head -1)"
+  case "$id" in
+    ubuntu)
+      [[ "$ver" == "22.04" || "$ver" == "24.04" ]]
+      ;;
+    debian)
+      # Proxmox VE 8 = Debian 12, PVE 9 = Debian 13.
+      [[ "$ver" == "12" || "$ver" == "13" ]]
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+# qemu-kvm is only for stock Ubuntu. Proxmox already ships pve-qemu-kvm;
+# installing Debian qemu-kvm on a PVE node can conflict.
+temperci_apt_packages() {
+  local pkgs=(iproute2 e2fsprogs debootstrap iptables curl ca-certificates)
+  if [[ -z "${TEMPERCI_SKIP_QEMU_KVM:-}" ]] && ! command -v pveversion >/dev/null 2>&1; then
+    if ! dpkg -s pve-qemu-kvm >/dev/null 2>&1; then
+      pkgs+=(qemu-kvm)
+    fi
+  fi
+  if ! command -v pveversion >/dev/null 2>&1; then
+    pkgs+=(bridge-utils)
+  fi
+  printf '%s\n' "${pkgs[@]}"
 }
 
 temperci_write_control_toml() {
@@ -279,7 +306,7 @@ main() {
   else
     os_rel=""
   fi
-  temperci_ubuntu_supported "$os_rel" || step_fail 1 "Checking host" "Ubuntu 22.04 or 24.04 required"
+  temperci_os_supported "$os_rel" || step_fail 1 "Checking host" "Ubuntu 22.04/24.04 or Debian 12/13 (incl. Proxmox VE) required"
   temperci_step 1 "$TOTAL" "Checking host" ok
 
   temperci_step 2 "$TOTAL" "Installing packages" running
@@ -288,8 +315,8 @@ main() {
   else
     export DEBIAN_FRONTEND=noninteractive
     apt-get update
-    apt-get install -y \
-      qemu-kvm bridge-utils iproute2 e2fsprogs debootstrap iptables curl ca-certificates
+    # shellcheck disable=SC2046
+    apt-get install -y $(temperci_apt_packages)
     temperci_step 2 "$TOTAL" "Installing packages" ok
   fi
 

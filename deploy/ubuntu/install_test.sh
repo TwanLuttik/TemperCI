@@ -35,11 +35,18 @@ expect_eq "$got" "[3/8] Installing Firecracker ...................... ok" "step 
 got="$(temperci_step_line 8 8 "Preparing guest image" skip)"
 expect_eq "$got" "[8/8] Preparing guest image ....................... skip" "step skip line"
 
-# --- ubuntu parse ---
-expect_ok temperci_ubuntu_supported $'NAME="Ubuntu"\nVERSION_ID="24.04"\nID=ubuntu'
-expect_ok temperci_ubuntu_supported $'NAME="Ubuntu"\nVERSION_ID="22.04"\nID=ubuntu'
-expect_fail temperci_ubuntu_supported $'NAME="Ubuntu"\nVERSION_ID="20.04"\nID=ubuntu'
-expect_fail temperci_ubuntu_supported $'NAME="Debian GNU/Linux"\nVERSION_ID="12"\nID=debian'
+# --- os parse ---
+expect_ok temperci_os_supported $'NAME="Ubuntu"\nVERSION_ID="24.04"\nID=ubuntu'
+expect_ok temperci_os_supported $'NAME="Ubuntu"\nVERSION_ID="22.04"\nID=ubuntu'
+expect_fail temperci_os_supported $'NAME="Ubuntu"\nVERSION_ID="20.04"\nID=ubuntu'
+expect_ok temperci_os_supported $'NAME="Debian GNU/Linux"\nVERSION_ID="12"\nID=debian'
+expect_ok temperci_os_supported $'NAME="Debian GNU/Linux"\nVERSION_ID="13"\nID=debian'
+expect_fail temperci_os_supported $'NAME="Debian GNU/Linux"\nVERSION_ID="11"\nID=debian'
+expect_fail temperci_os_supported $'NAME="Fedora Linux"\nVERSION_ID="41"\nID=fedora'
+
+pkgs="$(TEMPERCI_SKIP_QEMU_KVM=1 temperci_apt_packages | tr '\n' ' ')"
+echo "$pkgs" | grep -q qemu-kvm && fail "qemu-kvm must not be installed when skipped"
+echo "$pkgs" | grep -q debootstrap || fail "debootstrap required"
 
 # --- write-once TOML ---
 tmp="$(mktemp -d)"

@@ -4,7 +4,7 @@ Run **control plane + host agent** on one Ubuntu 22.04/24.04 host with KVM, then
 
 ## Recommended: one command
 
-Requires Ubuntu 22.04/24.04, x86_64, `/dev/kvm`, and root. The script installs packages, Firecracker, TemperCI, systemd units, and starts the dashboard. The guest image builds in the background.
+Requires Ubuntu 22.04/24.04 or Debian 12/13 (Proxmox VE 8/9), x86_64, `/dev/kvm`, and root. The script installs packages, Firecracker, TemperCI, systemd units, and starts the dashboard. The guest image builds in the background. On Proxmox it skips Debian `qemu-kvm` so it does not fight `pve-qemu-kvm`.
 
 ```bash
 curl -fsSL https://github.com/TwanLuttik/TemperCI/releases/latest/download/install.sh | bash
