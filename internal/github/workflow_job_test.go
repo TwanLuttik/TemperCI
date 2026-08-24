@@ -43,6 +43,27 @@ func TestParseWorkflowJobEvent_QueuedTemperCI(t *testing.T) {
 	}
 }
 
+func TestParseWorkflowJobEvent_CompletedFailure(t *testing.T) {
+	path := filepath.Join("..", "..", "testdata", "webhooks", "workflow_job_completed_failure.json")
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read fixture: %v", err)
+	}
+	ev, err := ParseWorkflowJobEvent(body)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if ev.Action != "completed" {
+		t.Fatalf("action=%q", ev.Action)
+	}
+	if ev.WorkflowJob.Conclusion != "failure" {
+		t.Fatalf("conclusion=%q want failure", ev.WorkflowJob.Conclusion)
+	}
+	if ev.WorkflowJob.ID != 991001 {
+		t.Fatalf("job.id=%d", ev.WorkflowJob.ID)
+	}
+}
+
 func TestParseWorkflowJobEvent_InvalidJSON(t *testing.T) {
 	_, err := ParseWorkflowJobEvent([]byte(`not-json`))
 	if err == nil {

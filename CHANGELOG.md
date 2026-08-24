@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Mid-job runner OOM / abort 134 is reported as `failure` instead of `success` (upstream `run-helper.sh` maps unknown codes to exit 0).
+- GitHub `workflow_job` completed/cancelled finishes the assignment and kills the guest (OOM-dead runners no longer sit `started` until the one-hour stuck timer). Host `WaitRunner` treats a quiet aborting `runner.log` as exit 97. Stuck reconcile also enqueues a VM kill.
 
 ## [0.1.6] - 2026-08-23
 

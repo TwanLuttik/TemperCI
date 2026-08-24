@@ -193,6 +193,18 @@ func (s *Server) handleGitHubWebhook(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "handler error", http.StatusInternalServerError)
 		return
 	}
+	if ev.Action == "completed" || ev.Action == "cancelled" {
+		result := s.finishFromGitHub(r.Context(), ev)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		if result != nil && result.Ignored {
+			_, _ = w.Write([]byte(`{"ok":true,"ignored":true,"reason":"` + result.Reason + `"}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"ok":true,"accepted":true}`))
+		return
+	}
+
 	if ev.Action != "queued" || !IsOwned(ev.WorkflowJob.Labels, s.handler.cfg.LabelPrefix) {
 		result, herr := s.handler.HandleWorkflowJob(r.Context(), body)
 		if herr != nil {

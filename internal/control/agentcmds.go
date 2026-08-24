@@ -20,6 +20,14 @@ func newCmdQueue() *cmdQueue {
 	return &cmdQueue{byID: make(map[string][]api.AgentCmd)}
 }
 
+// EnqueueKillVM queues a kill_vm command for the next agent heartbeat.
+func (s *Server) EnqueueKillVM(agentID, vmID string, jobID int64) {
+	if s == nil {
+		return
+	}
+	s.cmdq.enqueueKill(agentID, vmID, jobID)
+}
+
 func (q *cmdQueue) enqueueKill(agentID, vmID string, jobID int64) {
 	if q == nil {
 		return

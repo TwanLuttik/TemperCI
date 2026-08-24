@@ -16,7 +16,7 @@ Primary signal is **GitHub**. The guest is already dead; GitHub already knew. Te
 
 Agent-side OOM detection is a faster backup for the window before GitHub’s “runner offline” completion (this incident: ~9 minutes).
 
-## Task 1 — Finish + kill on GitHub completed/cancelled
+## Task 1 — Finish + kill on GitHub completed/cancelled [done]
 
 **Files:**
 - Modify: `internal/github/workflow_job.go` — add `Conclusion string` on `WorkflowJob`
@@ -37,7 +37,7 @@ Agent-side OOM detection is a faster backup for the window before GitHub’s “
 
 **Test first:** webhook `completed` + `conclusion=failure` against a `started` assignment → status `finished`, outcome `failure`, one kill command queued, JIT cleared. Repeat webhook → no second kill. `queued` path unchanged.
 
-## Task 2 — Agent: host-side exit when runner log shows abort
+## Task 2 — Agent: host-side exit when runner log shows abort [done]
 
 **Files:**
 - Modify: `internal/agent/guest.go` `WaitRunner` (or `worker.waitForJob` / `streamLogs`)
@@ -48,7 +48,7 @@ Agent-side OOM detection is a faster backup for the window before GitHub’s “
 
 Do not invent a new outcome string. Do not treat a still-growing log as dead.
 
-## Task 3 — Reconcile kills the VM
+## Task 3 — Reconcile kills the VM [done]
 
 **Files:**
 - Modify: `internal/control/reconcile.go` — after `MarkFinished(..., "stuck")`, enqueue kill when VMID/agent set

@@ -30,6 +30,7 @@ type WorkflowJob struct {
 	Name         string   `json:"name"`
 	WorkflowName string   `json:"workflow_name"`
 	Status       string   `json:"status"`
+	Conclusion   string   `json:"conclusion"`
 	Labels       []string `json:"labels"`
 	HTMLURL      string   `json:"html_url"`
 }

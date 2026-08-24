@@ -53,7 +53,41 @@ func runnerWaitStatus(layout vmm.Layout, id vmm.ID) (code int, done bool, err er
 	if _, statErr := os.Stat(layout.InstanceDir(id)); os.IsNotExist(statErr) {
 		return -1, true, ErrRunnerStopped
 	}
+	if writeAbortExitIfQuiet(layout, id) {
+		return runnerWaitStatus(layout, id)
+	}
 	return 0, false, nil
+}
+
+// abortLogQuiet is how long runner.log must be unchanged before we treat an
+// OOM/134 abort as a finished guest (still-growing logs are left alone).
+const abortLogQuiet = time.Second
+
+func writeAbortExitIfQuiet(layout vmm.Layout, id vmm.ID) bool {
+	if layout.Root == "" || id == "" {
+		return false
+	}
+	dir := layout.GuestDir(id)
+	logPath := filepath.Join(dir, "runner.log")
+	st, err := os.Stat(logPath)
+	if err != nil || time.Since(st.ModTime()) < abortLogQuiet {
+		return false
+	}
+	b, err := os.ReadFile(logPath)
+	if err != nil || !runnerLogIndicatesAbort(string(b)) {
+		return false
+	}
+	exitPath := filepath.Join(dir, "runner.exit")
+	if cur, readErr := os.ReadFile(exitPath); readErr == nil && strings.TrimSpace(string(cur)) != "" {
+		return false
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return false
+	}
+	if err := os.WriteFile(exitPath, []byte("97\n"), 0o600); err != nil {
+		return false
+	}
+	return true
 }
 
 func isHostStoppedExit(text string) bool {

@@ -23,8 +23,11 @@ type Reconciler struct {
 	StaleMintedAfter time.Duration
 	// Interval between reconcile passes.
 	Interval time.Duration
-	Log      *slog.Logger
-	now      func() time.Time
+	// KillVM optionally tears down the guest when a started/assigned job is
+	// marked stuck (dashboard cancel uses the same cmd queue).
+	KillVM func(agentID, vmID string, jobID int64)
+	Log    *slog.Logger
+	now    func() time.Time
 }
 
 // ReconcileOnce runs a single reconciliation pass.
@@ -51,6 +54,9 @@ func (r *Reconciler) ReconcileOnce(ctx context.Context) int {
 			}
 			msg := "assignment stuck past deadline"
 			_ = r.Store.MarkFinished(a.JobID, a.AssignedAgentID, "stuck", a.VMID, a.WarmBind, msg)
+			if r.KillVM != nil && a.AssignedAgentID != "" && a.VMID != "" {
+				r.KillVM(a.AssignedAgentID, a.VMID, a.JobID)
+			}
 			// Clear secret if still present (MarkFinished also clears).
 			if r.Delete != nil && a.RunnerID != 0 && a.Org != "" {
 				if err := r.Delete.DeleteOrgRunner(ctx, a.Org, a.RunnerID, a.InstallationID); err != nil {

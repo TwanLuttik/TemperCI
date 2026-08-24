@@ -50,6 +50,30 @@ func TestFileGuestExec_JITInRunnerExitOut(t *testing.T) {
 	}
 }
 
+func TestFileGuestExec_WaitRunnerAbortLogUnblocks(t *testing.T) {
+	layout := vmm.NewLayout(t.TempDir())
+	id := vmm.ID("oom-vm")
+	g := &agent.FileGuestExec{Layout: layout}
+	if err := os.MkdirAll(layout.GuestDir(id), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	log := "\n√ Connected to GitHub\nOut of memory.\nExiting with unknown error code: 134\nExiting runner...\n"
+	if err := os.WriteFile(filepath.Join(layout.GuestDir(id), "runner.log"), []byte(log), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Quiet period so a still-growing log is not treated as dead.
+	time.Sleep(1100 * time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	code, err := g.WaitRunner(ctx, id)
+	if err != nil {
+		t.Fatalf("WaitRunner err=%v", err)
+	}
+	if code != 97 {
+		t.Fatalf("WaitRunner exit=%d want 97", code)
+	}
+}
+
 func TestFileGuestExec_WaitRunnerCancelledUnblocks(t *testing.T) {
 	layout := vmm.NewLayout(t.TempDir())
 	id := vmm.ID("stop-me")

@@ -180,6 +180,7 @@ func main() {
 			StuckAfter:       stuckAfter,
 			StaleMintedAfter: staleMinted,
 			Interval:         time.Duration(cfg.ReconcileIntervalSeconds) * time.Second,
+			KillVM:           srv.EnqueueKillVM,
 			Log:              log,
 		}
 		go reconciler.Run(ctx)

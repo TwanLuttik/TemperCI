@@ -24,6 +24,35 @@ func (m *mockRunnerDeleter) DeleteOrgRunner(_ context.Context, org string, runne
 	return nil
 }
 
+func TestReconciler_StuckAssignmentQueuesKill(t *testing.T) {
+	store := NewAssignmentStore()
+	now := time.Date(2026, 8, 24, 12, 0, 0, 0, time.UTC)
+	store.Put(&Assignment{
+		JobID:           70,
+		Org:             "acme",
+		Status:          AssignmentStarted,
+		AssignedAgentID: "host-a",
+		AssignedAt:      now.Add(-2 * time.Hour),
+		StartedAt:       now.Add(-2 * time.Hour),
+		VMID:            "vm-stuck",
+	})
+	var kills []string
+	rec := &Reconciler{
+		Store:      store,
+		StuckAfter: time.Hour,
+		now:        func() time.Time { return now },
+		KillVM: func(agentID, vmID string, jobID int64) {
+			kills = append(kills, agentID+"/"+vmID+"/"+fmt.Sprint(jobID))
+		},
+	}
+	if n := rec.ReconcileOnce(context.Background()); n != 1 {
+		t.Fatalf("reconciled=%d", n)
+	}
+	if len(kills) != 1 || kills[0] != "host-a/vm-stuck/70" {
+		t.Fatalf("kills=%v", kills)
+	}
+}
+
 func TestReconciler_StuckAssignmentForceFinish(t *testing.T) {
 	store := NewAssignmentStore()
 	now := time.Date(2026, 8, 12, 12, 0, 0, 0, time.UTC)
