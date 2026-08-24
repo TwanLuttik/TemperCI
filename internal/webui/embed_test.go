@@ -40,6 +40,18 @@ func TestSPAHandler_JobsListDoesNotRedirect(t *testing.T) {
 	}
 }
 
+func TestSPAHandler_MCPPathIsNotSPA(t *testing.T) {
+	h := SPAHandler()
+	for _, path := range []string{"/mcp", "/mcp/"} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, req)
+		if rr.Code != http.StatusNotFound {
+			t.Fatalf("%s status=%d (SPA must not claim /mcp)", path, rr.Code)
+		}
+	}
+}
+
 func TestSPAHandler_AssetsStillServed(t *testing.T) {
 	h := SPAHandler()
 	req := httptest.NewRequest(http.MethodGet, "/", nil)

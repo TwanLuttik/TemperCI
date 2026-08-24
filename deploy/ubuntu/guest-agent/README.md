@@ -36,6 +36,12 @@ job_simulate_seconds = 0
 # job_deadline_seconds = 7200
 ```
 
+The guest agent also:
+
+- Enables a 2 GiB `/swapfile` at boot (`TEMPERCI_SWAP_MIB=0` disables).
+- Starts `run.sh` with `DOTNET_gcServer=0` and `DOTNET_GCHeapHardLimit=1073741824` so Listener does not eat extra guest RAM.
+- Remaps runner abort / `Out of memory` / exit 134 to `runner.exit=97` (upstream `run.sh` otherwise exits 0).
+
 ## Protocol
 
 1. Warm VM boots; guest unit starts and polls `/dev/vdb` for `jitconfig`.

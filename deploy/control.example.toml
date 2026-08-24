@@ -24,6 +24,10 @@ github_org = "your-org"
 # Treat as a secret. Prefer enabling TLS below for production.
 agent_token = "replace-with-long-random-string"
 
+# Optional bearer token for the read-only MCP endpoint (POST /mcp).
+# Empty or omitted disables MCP (404). Do not reuse agent_token.
+# mcp_token = "replace-with-long-random-string"
+
 # Optional HTTPS for the control-plane listener.
 # tls_cert_file = "/etc/temperci/tls/server.crt"
 # tls_key_file = "/etc/temperci/tls/server.key"

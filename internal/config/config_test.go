@@ -18,6 +18,7 @@ github_org = "acme"
 label_prefix = "temperci-"
 runner_group_id = 2
 agent_token = "shared-secret"
+mcp_token = "mcp-secret"
 `
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
@@ -31,6 +32,9 @@ agent_token = "shared-secret"
 	}
 	if cfg.GitHubAppID != 42 || cfg.GitHubOrg != "acme" || cfg.RunnerGroupID != 2 {
 		t.Errorf("cfg = %+v", cfg)
+	}
+	if cfg.MCPToken != "mcp-secret" {
+		t.Errorf("mcp_token = %q", cfg.MCPToken)
 	}
 }
 

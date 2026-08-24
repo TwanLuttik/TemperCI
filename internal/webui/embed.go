@@ -38,6 +38,8 @@ func SPAHandler() http.Handler {
 			strings.HasPrefix(r.URL.Path, "/v1/") ||
 			strings.HasPrefix(r.URL.Path, "/webhooks/") ||
 			strings.HasPrefix(r.URL.Path, "/webhook/") ||
+			r.URL.Path == "/mcp" ||
+			strings.HasPrefix(r.URL.Path, "/mcp/") ||
 			r.URL.Path == "/healthz" ||
 			r.URL.Path == "/metrics" {
 			http.NotFound(w, r)

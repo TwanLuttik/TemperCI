@@ -312,6 +312,8 @@ func (w *Worker) handleJob(ctx context.Context, job *api.JobAssignment) error {
 
 	outcome, waitErr := w.waitForJob(jobCtx, res.VMID, job.JobID)
 	logs := w.collectLogs(res.VMID)
+	reported := outcome
+	outcome = RefineOutcome(outcome, logs.RunnerLog)
 	if waitErr != nil && !errors.Is(waitErr, context.DeadlineExceeded) {
 		_ = w.Pool.JobFinished(jobCtx, res.VMID, "cancelled")
 		_ = w.finish(jobCtx, job.JobID, job.RepoFullName, "cancelled", string(res.VMID), res.WarmStart, waitErr.Error(), logs)
@@ -333,12 +335,16 @@ func (w *Worker) handleJob(ctx context.Context, job *api.JobAssignment) error {
 		return nil
 	}
 
-	// outcome success | failure from runner exit code
+	// outcome success | failure from runner exit code (and OOM log refine)
+	errMsg := ""
+	if reported == "success" && outcome == "failure" {
+		errMsg = "runner aborted (OOM/134)"
+	}
 	if err := w.Pool.JobFinished(jobCtx, res.VMID, outcome); err != nil && !errors.Is(err, ErrNotBusy) {
 		_ = w.finish(jobCtx, job.JobID, job.RepoFullName, "error", string(res.VMID), res.WarmStart, err.Error(), logs)
 		return err
 	}
-	if err := w.finish(jobCtx, job.JobID, job.RepoFullName, outcome, string(res.VMID), res.WarmStart, "", logs); err != nil {
+	if err := w.finish(jobCtx, job.JobID, job.RepoFullName, outcome, string(res.VMID), res.WarmStart, errMsg, logs); err != nil {
 		return err
 	}
 	log.Info("job complete",

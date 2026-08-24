@@ -12,6 +12,7 @@ import {
   type SettingsConfigSave,
   type SettingsShapes,
 } from "../api";
+import { settingsFormPatch, settingsFormValue } from "../lib/settings-form";
 import { GitHubAppGuide } from "../components/GitHubAppGuide";
 import { WebhookStatus } from "../components/WebhookStatus";
 import { PageHeader } from "../components/page-header";
@@ -37,12 +38,14 @@ type FormState = {
   label_prefix: string;
   runner_group_id: string;
   agent_token: string;
+  mcp_token: string;
   auth_mode: string;
   setup_completed: string;
   sqlite_path: string;
   data_dir: string;
   hostctl_path: string;
   cache_listen_addr: string;
+  [key: string]: string;
 };
 
 function emptyForm(): FormState {
@@ -56,6 +59,7 @@ function emptyForm(): FormState {
     label_prefix: "",
     runner_group_id: "",
     agent_token: "",
+    mcp_token: "",
     auth_mode: "open",
     setup_completed: "true",
     sqlite_path: "",
@@ -82,6 +86,16 @@ function formFromConfig(cfg: SettingsConfig): FormState {
   const f = emptyForm();
   const byKey = new Map(cfg.fields.map((x) => [x.key, x]));
   const get = (k: string) => byKey.get(k)?.value ?? "";
+  for (const field of cfg.fields) {
+    if (field.secret || field.input_type === "password") {
+      f[field.key] = "";
+      continue;
+    }
+    if (!field.editable || field.input_type === "readonly") {
+      continue;
+    }
+    f[field.key] = field.value ?? "";
+  }
   f.listen_addr = get("listen_addr");
   f.github_app_id = get("github_app_id") === "0" ? "" : get("github_app_id");
   f.github_org = get("github_org");
@@ -94,10 +108,6 @@ function formFromConfig(cfg: SettingsConfig): FormState {
   f.data_dir = get("data_dir");
   f.hostctl_path = get("hostctl_path");
   f.cache_listen_addr = get("cache_listen_addr");
-  // secrets stay blank (leave unchanged unless user types)
-  f.github_webhook_secret = "";
-  f.agent_token = "";
-  f.github_app_private_key_pem = "";
   return f;
 }
 
@@ -188,10 +198,6 @@ export function SettingsPage({ onOverview }: Props) {
     };
   }, [cfg?.webhook?.received, fieldsByTab]);
 
-  const patch = (key: keyof FormState, value: string) => {
-    setForm((prev) => ({ ...prev, [key]: value }));
-  };
-
   const save = async (withRestart: boolean) => {
     setBusy(true);
     setMsg(null);
@@ -222,8 +228,16 @@ export function SettingsPage({ onOverview }: Props) {
       if (form.agent_token.trim() !== "") {
         body.agent_token = form.agent_token;
       }
+      if (form.mcp_token.trim() !== "") {
+        body.mcp_token = form.mcp_token;
+      }
       if (form.github_app_private_key_pem.trim() !== "") {
         body.github_app_private_key_pem = form.github_app_private_key_pem;
+      }
+      for (const field of cfg?.fields ?? []) {
+        if (!field.secret && field.input_type !== "password") continue;
+        const v = (form[field.key] || "").trim();
+        if (v !== "") body[field.key] = v;
       }
 
       const res = await api<SettingsConfigSave>("/api/v1/settings/config", {
@@ -256,13 +270,10 @@ export function SettingsPage({ onOverview }: Props) {
     }
   };
 
-  const formValue = (key: string): string => {
-    if (key in form) return form[key as keyof FormState];
-    return "";
-  };
+  const formValue = (key: string): string => settingsFormValue(form, key);
 
   const setFormKey = (key: string, value: string) => {
-    if (key in form) patch(key as keyof FormState, value);
+    setForm((prev) => settingsFormPatch(prev, key, value) as FormState);
   };
 
   const saveShapes = async (restart: boolean) => {

@@ -13,7 +13,7 @@ Start here when onboarding to the project. Release notes live in [CHANGELOG.md](
 | [architecture/control-plane-dry-run.md](architecture/control-plane-dry-run.md) | Manual Phase 2 dry-run: GitHub App, webhooks, JIT mint |
 | [../deploy/ubuntu/quickstart.md](../deploy/ubuntu/quickstart.md) | Single-node Ubuntu operator quickstart (Phase 5) |
 | [../deploy/ubuntu/guest-image.md](../deploy/ubuntu/guest-image.md) | Guest rootfs + official actions/runner image pipeline |
-| [../deploy/dashboard.md](../deploy/dashboard.md) | Operator dashboard (setup wizard, fleet UI) |
+| [../deploy/dashboard.md](../deploy/dashboard.md) | Operator dashboard (setup wizard, fleet UI) and read-only MCP (`/mcp`) |
 | [superpowers/specs/2026-08-12-temperci-operator-dashboard-design.md](superpowers/specs/2026-08-12-temperci-operator-dashboard-design.md) | Dashboard design (approach 1b) |
 
 ## Decisions

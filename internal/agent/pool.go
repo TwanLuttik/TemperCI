@@ -650,6 +650,12 @@ func (p *Pool) reservePoolBoot(shape VMShape) (vmm.ID, error) {
 		return "", ErrPoolStopped
 	}
 	c := p.countsLocked()
+	// Warm refill is an idle-pool concern. Creating extra guests while a job
+	// is running is what packed 28 GiB onto a 32 GiB host (busy 8g+6g plus
+	// two replacement warms). Existing warm VMs still bind.
+	if c.Busy > 0 {
+		return "", ErrNoCapacity
+	}
 	have := p.countShapeLocked(shape.VCPUs, shape.MemoryMiB, StateWarm, StatePoolBoot)
 	if have >= shape.MinReady || !p.canCreateLocked(shape.MemoryMiB) {
 		return "", ErrNoCapacity

@@ -112,6 +112,7 @@ func (s *Server) mountDashboard(d DashboardConfig) {
 	s.mux.HandleFunc("GET /api/v1/vms/{id}", s.withUIAuth(s.handleVMDetail, false))
 	s.mux.HandleFunc("GET /api/v1/cache", s.withUIAuth(s.handleCache, false))
 	s.mux.HandleFunc("POST /api/v1/cache/clear", s.withUIAuth(s.handleCacheClear, true))
+	s.mountMCP()
 	// Vite SPA (embedded dist/). More specific /api and /v1 routes take precedence.
 	s.mux.Handle("/", webui.SPAHandler())
 }
@@ -648,6 +649,10 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request, p *uiPrincipal
 }
 
 func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request, _ *uiPrincipal) {
+	writeJSON(w, http.StatusOK, s.overviewPayload())
+}
+
+func (s *Server) overviewPayload() map[string]any {
 	counts := s.store.CountByStatus()
 	agents := s.agents.List()
 	var warm, busy int
@@ -666,17 +671,21 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request, _ *uiPri
 		}
 	}
 	listen := ""
+	org := ""
+	setupDone := false
 	if s.dash != nil && s.dash.Config != nil {
 		listen = s.dash.Config.ListenAddr
+		org = s.dash.Config.GitHubOrg
+		setupDone = s.dash.Config.SetupCompleted
 	}
 	wh := s.webhookSnapshot("", listen)
 	received, _ := wh["received"].(bool)
 	lastEvent, _ := wh["last_event"].(string)
-	writeJSON(w, http.StatusOK, map[string]any{
+	return map[string]any{
 		"ok":                 true,
 		"fleet_ready":        s.dash != nil && s.dash.FleetReady,
-		"setup_completed":    s.dash != nil && s.dash.Config != nil && s.dash.Config.SetupCompleted,
-		"org":                s.dash.Config.GitHubOrg,
+		"setup_completed":    setupDone,
+		"org":                org,
 		"agents_registered":  len(agents),
 		"warm":               warm,
 		"busy":               busy,
@@ -696,7 +705,7 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request, _ *uiPri
 		"cache_misses":       cacheMisses,
 		"cache_bytes":        cacheBytes,
 		"cache_max_bytes":    cacheMax,
-	})
+	}
 }
 
 // handleSettingsConfig returns a safe, redacted view of control-plane config
@@ -757,6 +766,7 @@ func (s *Server) handleSettingsConfig(w http.ResponseWriter, r *http.Request, _ 
 
 	whSet, whSt := secretStatus(strings.TrimSpace(cfg.GitHubWebhookSecret) != "")
 	tokSet, tokSt := secretStatus(strings.TrimSpace(cfg.AgentToken) != "")
+	mcpSet := strings.TrimSpace(cfg.MCPToken) != ""
 	appIDSet := cfg.GitHubAppID != 0
 	orgSet := strings.TrimSpace(cfg.GitHubOrg) != ""
 
@@ -832,6 +842,13 @@ func (s *Server) handleSettingsConfig(w http.ResponseWriter, r *http.Request, _ 
 			Value:    secretHint(cfg.AgentToken),
 			Editable: true, InputType: "password",
 			Description: "Leave blank to keep current. Must match agent.toml after change.",
+		},
+		{
+			Key: "mcp_token", Label: "MCP token", Group: "Dashboard",
+			Secret: true, Configured: mcpSet, Status: "ok",
+			Value:    secretHint(cfg.MCPToken),
+			Editable: true, InputType: "password",
+			Description: "Bearer token for POST /mcp (read-only fleet MCP). Empty disables the endpoint. Leave blank to keep current.",
 		},
 		{
 			Key: "cache_listen_addr", Label: "Cache listen address", Group: "Cache",
@@ -919,6 +936,7 @@ type settingsConfigSaveRequest struct {
 	LabelPrefix             string  `json:"label_prefix"`
 	RunnerGroupID           *int64  `json:"runner_group_id"`
 	AgentToken              string  `json:"agent_token"`
+	MCPToken                string  `json:"mcp_token"`
 	AuthMode                string  `json:"auth_mode"`
 	SetupCompleted          *bool   `json:"setup_completed"`
 	SQLitePath              string  `json:"sqlite_path"`
@@ -969,6 +987,9 @@ func (s *Server) handleSettingsConfigSave(w http.ResponseWriter, r *http.Request
 	}
 	if v := strings.TrimSpace(req.AgentToken); v != "" {
 		newCfg.AgentToken = v
+	}
+	if v := strings.TrimSpace(req.MCPToken); v != "" {
+		newCfg.MCPToken = v
 	}
 	if v := strings.ToLower(strings.TrimSpace(req.AuthMode)); v != "" {
 		if v != "open" && v != "password" {
@@ -1286,6 +1307,10 @@ func (s *Server) handleSystemRestart(w http.ResponseWriter, r *http.Request, _ *
 
 // handleSystemStatus reports control + agent readiness for the dashboard restart UI.
 func (s *Server) handleSystemStatus(w http.ResponseWriter, r *http.Request, _ *uiPrincipal) {
+	writeJSON(w, http.StatusOK, s.systemStatusPayload())
+}
+
+func (s *Server) systemStatusPayload() map[string]any {
 	hostctl := s.hostctlAvailable()
 	controlUnit := "unknown"
 	agentUnit := "unknown"
@@ -1317,7 +1342,7 @@ func (s *Server) handleSystemStatus(w http.ResponseWriter, r *http.Request, _ *u
 			out["overall"] = overallServiceStatus(cs, as)
 		}
 	}
-	writeJSON(w, http.StatusOK, out)
+	return out
 }
 
 func (s *Server) hostctlAvailable() bool {
@@ -1383,8 +1408,10 @@ func (s *Server) hostctlUnitState(target string) string {
 				return last
 			}
 		}
+		// sudo/nnp/sudoers failures print prose, not a unit state. Treat
+		// that as unknown so the dashboard does not show a live process as stopped.
 		if err != nil {
-			return "inactive"
+			return "unknown"
 		}
 		return line
 	}

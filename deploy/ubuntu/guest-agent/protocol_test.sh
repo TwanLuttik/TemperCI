@@ -32,10 +32,16 @@ printf '%s\n' '-----BEGIN CERTIFICATE-----' 'TESTCA' '-----END CERTIFICATE-----'
 
 # Stub runner: official run.sh prints connect markers and exits 0.
 # Also record NODE_EXTRA_CA_CERTS so we know the guest agent exported the CA.
+# Record DOTNET_* so we know Listener heap is capped (not inherited by accident
+# if we later export them globally).
 cat >"${RUNNER_DIR}/run.sh" <<'EOF'
 #!/usr/bin/env bash
 set -eu
 echo "NODE_EXTRA_CA_CERTS=${NODE_EXTRA_CA_CERTS:-}" >"${TEMPERCI_WORKDIR}/node-ca.env"
+{
+  echo "DOTNET_gcServer=${DOTNET_gcServer:-}"
+  echo "DOTNET_GCHeapHardLimit=${DOTNET_GCHeapHardLimit:-}"
+} >"${TEMPERCI_WORKDIR}/dotnet.env"
 echo "Connected to GitHub"
 echo "Listening for Jobs"
 echo "Running job: protocol-smoke"
@@ -108,6 +114,12 @@ exit 0
 EOF
 chmod +x "${STUBS}/mount" "${STUBS}/umount"
 
+# Swap tools: record the call; do not allocate 2G during the protocol smoke.
+printf '#!/usr/bin/env bash\n: >"${TEMPERCI_SWAPFILE:-/tmp/swapfile}"\nexit 0\n' >"${STUBS}/fallocate"
+printf '#!/usr/bin/env bash\nexit 0\n' >"${STUBS}/mkswap"
+printf '#!/usr/bin/env bash\necho swapon >"${TEMPERCI_WORKDIR}/swap.on"\nexit 0\n' >"${STUBS}/swapon"
+chmod +x "${STUBS}/fallocate" "${STUBS}/mkswap" "${STUBS}/swapon"
+
 export PATH="${STUBS}:${PATH}"
 export TEMPERCI_MOUNT_STATE="${STATE}"
 export TEMPERCI_INJECT_DEV="${INJECT}"
@@ -116,6 +128,8 @@ export TEMPERCI_RUNNER_DIR="${RUNNER_DIR}"
 export TEMPERCI_RUNNER="${RUNNER_DIR}/run.sh"
 export TEMPERCI_POLL_SEC=0.1
 export TEMPERCI_WORKDIR="${WORKDIR}/run"
+export TEMPERCI_SWAP_MIB=1
+export TEMPERCI_SWAPFILE="${WORKDIR}/swapfile"
 
 # Agent exits with the runner code; that is success for this protocol.
 set +e
@@ -177,6 +191,27 @@ if [[ ! -f "${TEMPERCI_WORKDIR}/node-ca.env" ]] || ! grep -q 'TESTCA\|temperci-c
     echo "FAIL: NODE_EXTRA_CA_CERTS not exported to runner" >&2
     exit 1
   fi
+fi
+
+if [[ ! -f "${TEMPERCI_WORKDIR}/swap.on" ]] && \
+   ! grep -qE 'swap enabled|swap already on' "${TEMPERCI_WORKDIR}/agent.log" 2>/dev/null; then
+  echo "FAIL: guest agent did not enable swap" >&2
+  cat "${TEMPERCI_WORKDIR}/agent.log" >&2 || true
+  exit 1
+fi
+if [[ ! -f "${TEMPERCI_WORKDIR}/dotnet.env" ]]; then
+  echo "FAIL: runner did not record DOTNET env" >&2
+  exit 1
+fi
+if ! grep -qx 'DOTNET_gcServer=0' "${TEMPERCI_WORKDIR}/dotnet.env"; then
+  echo "FAIL: DOTNET_gcServer not 0:" >&2
+  cat "${TEMPERCI_WORKDIR}/dotnet.env" >&2
+  exit 1
+fi
+if ! grep -qx 'DOTNET_GCHeapHardLimit=1073741824' "${TEMPERCI_WORKDIR}/dotnet.env"; then
+  echo "FAIL: DOTNET_GCHeapHardLimit not 1GiB:" >&2
+  cat "${TEMPERCI_WORKDIR}/dotnet.env" >&2
+  exit 1
 fi
 
 echo "protocol_test: OK (jitconfig in → runner.exit=${got})"

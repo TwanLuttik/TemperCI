@@ -23,6 +23,9 @@ type ControlConfig struct {
 	// AgentToken is the shared bearer secret for control↔agent APIs.
 	// Prefer combining with TLS (and optional mTLS) in production.
 	AgentToken string `toml:"agent_token"`
+	// MCPToken is the shared bearer secret for the read-only Streamable HTTP
+	// MCP endpoint at /mcp. Empty disables the endpoint (404).
+	MCPToken string `toml:"mcp_token"`
 
 	// Optional HTTPS for the control-plane listener.
 	TLSCertFile string `toml:"tls_cert_file"`

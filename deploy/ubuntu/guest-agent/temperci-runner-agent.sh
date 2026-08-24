@@ -81,8 +81,48 @@ if ! grep -q 'tempercicache.blob.core.windows.net' /etc/hosts 2>/dev/null; then
   echo "10.231.255.254 tempercicache.blob.core.windows.net" >>/etc/hosts 2>/dev/null || true
 fi
 
+# 2 GiB swapfile so a Node/Docker spike does not SIGABRT Runner.Listener.
+# Created on the overlay at boot (not baked into the base image — that would
+# add 2G to every sparse copy). TEMPERCI_SWAP_MIB=0 disables.
+ensure_swap() {
+  local mib="${TEMPERCI_SWAP_MIB:-2048}"
+  local file="${TEMPERCI_SWAPFILE:-/swapfile}"
+  if ! [ "${mib}" -gt 0 ] 2>/dev/null; then
+    log "swap disabled (TEMPERCI_SWAP_MIB=${mib})"
+    return 0
+  fi
+  local kb=0
+  if [ -r /proc/meminfo ]; then
+    kb=$(awk '/^SwapTotal:/{print $2}' /proc/meminfo 2>/dev/null || echo 0)
+  fi
+  if [ "${kb:-0}" -gt 0 ]; then
+    log "swap already on (${kb} kB)"
+    return 0
+  fi
+  mkdir -p "$(dirname "$file")" 2>/dev/null || true
+  if command -v fallocate >/dev/null 2>&1 && fallocate -l "${mib}M" "$file" 2>/dev/null; then
+    :
+  elif dd if=/dev/zero of="$file" bs=1M count="$mib" status=none 2>/dev/null; then
+    :
+  else
+    log "swapfile create failed (${mib} MiB at $file)"
+    return 0
+  fi
+  chmod 600 "$file" 2>/dev/null || true
+  if ! mkswap "$file" >/dev/null 2>&1; then
+    log "mkswap failed for $file"
+    return 0
+  fi
+  if swapon "$file" 2>/dev/null; then
+    log "swap enabled (${mib} MiB at $file)"
+  else
+    log "swapon failed for $file"
+  fi
+}
+
 log "starting; waiting for JIT (ip=$(hostname -I 2>/dev/null | tr -d '\n' || true); gw=$(ip route 2>/dev/null | awk '/default/{print $3; exit}' || true))"
 log "devices: $(ls /dev/vd* 2>/dev/null | tr '\n' ' ' || true)"
+ensure_swap
 
 publish_ready() {
   echo "ready $(date -u +%Y-%m-%dT%H:%M:%SZ)" >"$WORKDIR/agent.ready" 2>/dev/null || true
@@ -359,9 +399,13 @@ publish_live_logs() {
   fi
 }
 
+# Workstation GC + 1 GiB hard cap so Listener does not size its heap off
+# guest RAM (8g boxes were aborting sooner than 6g). Scoped to the runner
+# process so job steps do not inherit the limit.
 log "starting $RUNNER --jitconfig <${#JIT_B64} bytes> (as root, RUNNER_ALLOW_RUNASROOT=1)"
 set +e
-"$RUNNER" --jitconfig "$JIT_B64" >"$WORKDIR/runner.log" 2>&1 &
+env DOTNET_gcServer=0 DOTNET_GCHeapHardLimit=1073741824 \
+  "$RUNNER" --jitconfig "$JIT_B64" >"$WORKDIR/runner.log" 2>&1 &
 rpid=$!
 while kill -0 "$rpid" 2>/dev/null; do
   publish_live_logs
@@ -384,6 +428,13 @@ if grep -qiE "is deprecated and cannot receive messages|Runner version .+ is dep
     log "runner.log tail: $(tail -c 500 "$WORKDIR/runner.log" | tr '\n' ' ')"
   fi
   code=96
+elif ! grep -qiE "completed with result: succeeded" "$WORKDIR/runner.log" 2>/dev/null && \
+     grep -qiE "out of memory|unknown error code: 134|Aborted.+Runner\.Listener" "$WORKDIR/runner.log" 2>/dev/null; then
+  log "runner aborted (OOM/134); marking as 97"
+  if [ -s "$WORKDIR/runner.log" ]; then
+    log "runner.log tail: $(tail -c 500 "$WORKDIR/runner.log" | tr '\n' ' ')"
+  fi
+  code=97
 elif [ "$code" -eq 0 ]; then
   if ! grep -qiE "Running job:|Job .+ completed" "$WORKDIR/runner.log" 2>/dev/null; then
     log "runner exit 0 without running a job; marking as 95"

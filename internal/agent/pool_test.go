@@ -125,10 +125,17 @@ func TestBindWarmThenJobFinishedReplenish(t *testing.T) {
 		t.Fatal("empty vm id")
 	}
 
-	waitFor(t, 2*time.Second, func() bool {
+	deadline := time.Now().Add(400 * time.Millisecond)
+	for time.Now().Before(deadline) {
 		c := p.Counts()
-		return c.Busy == 1 && c.Warm >= 1 // replenished
-	})
+		if c.Busy != 1 {
+			t.Fatalf("busy=%d want 1: %+v", c.Busy, c)
+		}
+		if c.Warm+c.PoolBoot != 0 {
+			t.Fatalf("replenished while busy: %+v", c)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
 
 	snap := p.Metrics()
 	if snap.WarmBinds != 1 {
@@ -356,6 +363,64 @@ func TestAgentRestart_OrphanSweepThenRebuild(t *testing.T) {
 
 	// Pool rebuilt.
 	waitFor(t, 2*time.Second, func() bool { return p.Counts().Warm >= 1 })
+}
+
+func TestReplenishSkipsWhileBusy(t *testing.T) {
+	p := testPool(t, agent.PoolConfig{
+		MinReady: 1,
+		MaxReady: 4,
+		Shapes: []agent.VMShape{
+			{Label: "temperci-4vcpu-6g-ubuntu-2404", VCPUs: 4, MemoryMiB: 6144, MinReady: 1},
+			{Label: "temperci-4vcpu-ubuntu-2404", VCPUs: 4, MemoryMiB: 8192, MinReady: 1},
+		},
+	})
+	waitFor(t, 3*time.Second, func() bool { return p.Counts().Warm >= 2 })
+	if n := p.Counts().Warm; n != 2 {
+		t.Fatalf("warm=%d want 2 before bind", n)
+	}
+
+	ctx := context.Background()
+	res, err := p.Bind(ctx, agent.JobPayload{
+		JobID:     "e2e-8g",
+		JITConfig: "jit",
+		Labels:    []string{"temperci-4vcpu-8g-ubuntu-2404"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bound8g := false
+	for _, u := range p.ListUsage() {
+		if u.ID == string(res.VMID) && u.MemoryMiB == 8192 && u.State == string(agent.StateBusy) {
+			bound8g = true
+		}
+	}
+	if !bound8g {
+		t.Fatalf("expected busy 8g VM %s in usage: %+v", res.VMID, p.ListUsage())
+	}
+
+	// Do not boot a replacement 8g (or extra 6g) while the job is running.
+	deadline := time.Now().Add(400 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		c := p.Counts()
+		if c.Busy != 1 {
+			t.Fatalf("busy=%d want 1: %+v", c.Busy, c)
+		}
+		if c.Warm+c.PoolBoot > 1 {
+			t.Fatalf("refilled while busy: %+v", c)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if c := p.Counts(); c.Warm != 1 || c.PoolBoot != 0 {
+		t.Fatalf("while busy want warm=1 pool_boot=0: %+v", c)
+	}
+
+	if err := p.JobFinished(ctx, res.VMID, "success"); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, 3*time.Second, func() bool {
+		c := p.Counts()
+		return c.Busy == 0 && c.Destroying == 0 && c.Warm >= 2
+	})
 }
 
 func TestIdleRecycle(t *testing.T) {

@@ -41,6 +41,33 @@ cd web && npm install && npm run dev
 
 Prefer **Funnel for GitHub webhooks only**; put the **UI on Tailscale Serve** (tailnet) when using open mode.
 
+## MCP (AI / agent access)
+
+`temperci-control` serves a **read-only** [Model Context Protocol](https://modelcontextprotocol.io) endpoint at `POST /mcp` (Streamable HTTP JSON-RPC). It exposes the same fleet data as the dashboard: overview, hosts, jobs, logs (last 8KiB per stream), VMs, cache, and system status. There are no cancel/kill/restart tools.
+
+1. Set `mcp_token` in `/etc/temperci/control.toml` (or Settings → Host → MCP token). Empty disables `/mcp` (404).
+2. Restart is not required if you save from the dashboard; a file-only edit needs `systemctl restart temperci-control`.
+3. Point the MCP client at `https://<control-host>:8080/mcp` with `Authorization: Bearer <mcp_token>`.
+
+`mcp_token` is a different secret from `agent_token`. Open dashboard auth does not unlock `/mcp`. The token is never returned by settings APIs (only a set/not-set hint).
+
+Example Grok / Claude / Cursor remote server:
+
+```json
+{
+  "mcpServers": {
+    "temperci": {
+      "url": "https://<control-host>:8080/mcp",
+      "headers": {
+        "Authorization": "Bearer <mcp_token>"
+      }
+    }
+  }
+}
+```
+
+Tools: `fleet_overview`, `list_hosts`, `list_jobs`, `get_job`, `list_vms`, `get_vm`, `get_cache`, `get_system_status`.
+
 ## Install / upgrade
 
 On a new Ubuntu/KVM host, prefer the one-liner (prints the wizard URL):

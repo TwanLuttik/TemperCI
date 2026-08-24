@@ -140,6 +140,59 @@ func TestHandleSystemStatus_WithFakeHostctl(t *testing.T) {
 	}
 }
 
+func TestHandleSystemStatus_SudoErrorIsNotStopped(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "temperci-hostctl")
+	script := "#!/bin/sh\n" +
+		"echo 'sudo: The \"no new privileges\" flag is set, which prevents sudo from running as root.' >&2\n" +
+		"echo 'sudo: If sudo is running in a container, you may need to adjust the container configuration to disable the flag.' >&2\n" +
+		"exit 1\n"
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	srv := settingsTestServer(t, dir)
+	srv.dash.Config.HostctlPath = path
+	srv.agents.Register(api.RegisterRequest{AgentID: "pve", Capacity: 1})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/system/status", nil)
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	var resp struct {
+		Overall string `json:"overall"`
+		Control struct {
+			Status string `json:"status"`
+			Unit   string `json:"unit"`
+		} `json:"control"`
+		Agent struct {
+			Status     string `json:"status"`
+			Unit       string `json:"unit"`
+			Registered bool   `json:"registered"`
+			Ready      bool   `json:"ready"`
+		} `json:"agent"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Control.Unit == "inactive" || resp.Control.Status == svcStopped {
+		t.Fatalf("control sudo failure must not look stopped: %+v", resp.Control)
+	}
+	if resp.Control.Unit != "unknown" || resp.Control.Status != svcRunning {
+		t.Fatalf("control=%+v want unit=unknown status=running", resp.Control)
+	}
+	if resp.Agent.Unit == "inactive" || resp.Agent.Status == svcStopped {
+		t.Fatalf("agent sudo failure must not look stopped: %+v", resp.Agent)
+	}
+	if resp.Agent.Unit != "unknown" || resp.Agent.Status != svcRunning || !resp.Agent.Registered {
+		t.Fatalf("agent=%+v want unit=unknown status=running registered", resp.Agent)
+	}
+	if resp.Overall != svcRunning {
+		t.Fatalf("overall=%q want running", resp.Overall)
+	}
+}
+
 func writeFakeHostctl(t *testing.T, dir, controlState, agentState string) string {
 	t.Helper()
 	path := filepath.Join(dir, "temperci-hostctl")

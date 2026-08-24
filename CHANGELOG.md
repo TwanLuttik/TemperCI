@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Guest VMs enable a 2 GiB swapfile at boot so a Node/Docker spike does not SIGABRT `Runner.Listener`.
+- Read-only MCP server on the control plane at `POST /mcp`. Set `mcp_token` in `control.toml` (or Settings). Tools cover fleet overview, hosts, jobs, truncated logs, VMs, cache, and system status. Empty token disables the endpoint.
+
+### Changed
+
+- Official runner starts with workstation GC and a 1 GiB `DOTNET_GCHeapHardLimit` so Listener does not size its heap off guest RAM.
+- Warm pool does not refill while any VM is busy (avoids packing busy 8g+6g plus two replacement warms on a 32 GiB host).
+
+### Fixed
+
+- Mid-job runner OOM / abort 134 is reported as `failure` instead of `success` (upstream `run-helper.sh` maps unknown codes to exit 0).
+
 ## [0.1.6] - 2026-08-23
 
 ### Added
