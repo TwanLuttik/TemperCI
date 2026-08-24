@@ -153,6 +153,19 @@ func TestGuestAgentScript_Protocol(t *testing.T) {
 	t.Logf("%s", out)
 }
 
+func TestGuestAgentScript_IdlePoll(t *testing.T) {
+	script := filepath.Join(repoRoot(t), "deploy", "ubuntu", "guest-agent", "idle_poll_test.sh")
+	if _, err := os.Stat(script); err != nil {
+		t.Fatalf("idle_poll_test.sh missing: %v", err)
+	}
+	cmd := exec.Command("bash", script)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("idle_poll_test.sh: %v\n%s", err, out)
+	}
+	t.Logf("%s", out)
+}
+
 func TestGuestAgentScript_OOMRemap(t *testing.T) {
 	script := filepath.Join(repoRoot(t), "deploy", "ubuntu", "guest-agent", "remap_exit_test.sh")
 	if _, err := os.Stat(script); err != nil {

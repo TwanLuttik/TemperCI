@@ -68,6 +68,7 @@ test-sh:
 	bash deploy/ubuntu/docker-cache-wrapper_test.sh
 	bash deploy/ubuntu/guest-agent/protocol_test.sh
 	bash deploy/ubuntu/guest-agent/remap_exit_test.sh
+	bash deploy/ubuntu/guest-agent/idle_poll_test.sh
 
 test: $(UI_STAMP) test-go test-sh
 

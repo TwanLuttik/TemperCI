@@ -44,7 +44,7 @@ The guest agent also:
 
 ## Protocol
 
-1. Warm VM boots; guest unit starts and polls `/dev/vdb` for `jitconfig`.
+1. Warm VM boots; guest unit signals `agent.ready`, then checks `/dev/vdb` for `jitconfig` every `TEMPERCI_IDLE_POLL_SEC` (default 2s). Fast 50ms polls are only used until ready.
 2. Host binds job → writes `instances/<id>/guest/jitconfig` → syncs into `inject.ext4`.
 3. Guest mounts inject, runs `run.sh --jitconfig …`, writes `runner.exit`.
 4. Host polls inject disk for `runner.exit`, then destroys the VM.

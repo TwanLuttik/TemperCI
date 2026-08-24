@@ -9,6 +9,9 @@ MNT="${TEMPERCI_INJECT_MNT:-/mnt/temperci}"
 RUNNER_DIR="${TEMPERCI_RUNNER_DIR:-/opt/actions-runner}"
 RUNNER="${TEMPERCI_RUNNER:-$RUNNER_DIR/run.sh}"
 POLL_SEC="${TEMPERCI_POLL_SEC:-0.05}"
+# After agent.ready, do not remount inject at 20Hz (that burned ~70% of a
+# host core per warm VM). Bind still sees jitconfig within this window.
+IDLE_POLL_SEC="${TEMPERCI_IDLE_POLL_SEC:-2}"
 WORKDIR="${TEMPERCI_WORKDIR:-/run/temperci}"
 MAILBOX_PORT="${TEMPERCI_MAILBOX_PORT:-9876}"
 
@@ -198,7 +201,11 @@ while true; do
       log "waiting for inject device (poll=$polls)"
     fi
   fi
-  sleep "$POLL_SEC"
+  if [ "${ready_written}" -eq 1 ]; then
+    sleep "$IDLE_POLL_SEC"
+  else
+    sleep "$POLL_SEC"
+  fi
 done
 
 # Remount read-write to copy JIT off the disk.
