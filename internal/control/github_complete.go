@@ -2,10 +2,40 @@ package control
 
 import (
 	"context"
+	"strconv"
 	"strings"
 
 	"github.com/TwanLuttik/TemperCI/internal/github"
 )
+
+// recoverStolenRunner remints the assignment that minted runner_name when
+// GitHub starts a different job on that runner (label-FIFO JIT).
+func (s *Server) recoverStolenRunner(ctx context.Context, ev *github.WorkflowJobEvent) *HandleResult {
+	if ev == nil || ev.WorkflowJob.ID == 0 {
+		return &HandleResult{Ignored: true, Reason: "no_job"}
+	}
+	runnerName := strings.TrimSpace(ev.WorkflowJob.RunnerName)
+	if runnerName == "" || s.handler == nil {
+		return &HandleResult{Ignored: true, Reason: "no_runner"}
+	}
+	minted := s.store.GetByRunnerName(runnerName)
+	if minted == nil {
+		return &HandleResult{Ignored: true, Reason: "unknown_runner"}
+	}
+	if minted.JobID == ev.WorkflowJob.ID {
+		return &HandleResult{Ignored: true, Reason: "runner_matches_job"}
+	}
+	reason := "runner " + runnerName + " accepted job " +
+		strconv.FormatInt(ev.WorkflowJob.ID, 10) + " (" + ev.WorkflowJob.Name + ")"
+	got, err := s.handler.Remint(ctx, minted.JobID, reason)
+	if err != nil {
+		s.log.Error("remint stolen runner", "job_id", minted.JobID, "err", err)
+		return &HandleResult{Ignored: true, Reason: "remint_failed"}
+	}
+	s.recordJobEvent(minted.JobID, "control", "warn", reason+"; reminted JIT")
+	s.PublishSnapshot()
+	return &HandleResult{Assignment: got}
+}
 
 func githubJobOutcome(action, conclusion string) string {
 	if c := strings.ToLower(strings.TrimSpace(conclusion)); c != "" {

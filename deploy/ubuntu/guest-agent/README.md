@@ -36,11 +36,13 @@ job_simulate_seconds = 0
 # job_deadline_seconds = 7200
 ```
 
+While a job is running the guest snapshots `_diag/pages/*.log` — that is the action stdout GitHub streams in the Actions UI. The runner deletes each page after upload; TemperCI keeps a copy so finished steps stay visible. Worker `_diag` is only used before the first page exists.
+
 The guest agent also:
 
 - Enables a 2 GiB `/swapfile` at boot (`TEMPERCI_SWAP_MIB=0` disables).
-- Starts `run.sh` with `DOTNET_gcServer=0` and `DOTNET_GCHeapHardLimit=1073741824` so Listener does not eat extra guest RAM.
-- Remaps runner abort / `Out of memory` / exit 134 to `runner.exit=97` (upstream `run.sh` otherwise exits 0).
+- Wraps `bin/Runner.Listener` and `bin/Runner.Worker` with workstation GC and `DOTNET_GCConserveMemory=7`. Worker is capped at 2 GiB. Listener is 2 GiB on guests under 8 GiB and 3 GiB on 8g+, with `DOTNET_GCHighMemPercent=60` so it GCs when the guest is under pressure. Job steps do not inherit those variables.
+- Remaps runner abort / `Out of memory` / exit 134 to `runner.exit=97`, and remaps exit 0 after `Running job:` without `completed with result: succeeded` to `runner.exit=98`.
 
 ## Protocol
 

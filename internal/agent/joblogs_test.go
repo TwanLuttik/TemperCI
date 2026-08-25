@@ -43,6 +43,31 @@ func TestCollectJobLogs(t *testing.T) {
 	}
 }
 
+func TestCollectJobLogs_KeepsLongWorkflowLog(t *testing.T) {
+	root := t.TempDir()
+	layout := vmm.NewLayout(root)
+	id := vmm.ID("vm-wflong")
+	arch := filepath.Join(root, "job-logs", string(id))
+	if err := os.MkdirAll(arch, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Larger than the 128KiB diag cap; official step logs must survive live upload.
+	body := "##[group]Run pnpm install\n" + strings.Repeat("lockfile line\n", 20_000)
+	if len(body) < maxUploadedLogBytes*2 {
+		t.Fatalf("fixture too small: %d", len(body))
+	}
+	if err := os.WriteFile(filepath.Join(arch, "workflow.log"), []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got := CollectJobLogs(layout, id)
+	if !strings.HasPrefix(got.WorkflowLog, "##[group]Run pnpm install") {
+		t.Fatalf("workflow head = %q", got.WorkflowLog[:min(80, len(got.WorkflowLog))])
+	}
+	if len(got.WorkflowLog) < maxUploadedLogBytes {
+		t.Fatalf("workflow clipped to diag cap: %d", len(got.WorkflowLog))
+	}
+}
+
 func TestClipLogKeepsTail(t *testing.T) {
 	s := strings.Repeat("a", 200) + "END"
 	got := clipLog(s, 10)

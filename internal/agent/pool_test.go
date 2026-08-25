@@ -423,6 +423,127 @@ func TestReplenishSkipsWhileBusy(t *testing.T) {
 	})
 }
 
+func TestBindExclusiveBlocksSmallWarm(t *testing.T) {
+	p := testPool(t, agent.PoolConfig{
+		MinReady: 1,
+		MaxReady: 2,
+		BindWait: 150 * time.Millisecond,
+		Shapes: []agent.VMShape{
+			{Label: "temperci-4vcpu-6g-ubuntu-2404", VCPUs: 4, MemoryMiB: 6144, MinReady: 1},
+		},
+	})
+	waitFor(t, 3*time.Second, func() bool { return p.Counts().Warm >= 1 })
+
+	ctx := context.Background()
+	e2e, err := p.Bind(ctx, agent.JobPayload{
+		JobID: "e2e-12g", JITConfig: "jit",
+		Labels: []string{"temperci-4vcpu-12g-ubuntu-2404"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = p.Bind(ctx, agent.JobPayload{
+		JobID: "api-6g", JITConfig: "jit",
+		Labels: []string{"temperci-4vcpu-6g-ubuntu-2404"},
+	})
+	if !errors.Is(err, agent.ErrNoCapacity) {
+		t.Fatalf("6g bind while 12g busy: %v want ErrNoCapacity", err)
+	}
+	if c := p.Counts(); c.Busy != 1 {
+		t.Fatalf("busy=%d want 1 after refused 6g bind: %+v", c.Busy, c)
+	}
+
+	if err := p.JobFinished(ctx, e2e.VMID, "success"); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, 2*time.Second, func() bool { return p.Counts().Busy == 0 })
+
+	if _, err := p.Bind(ctx, agent.JobPayload{
+		JobID: "api-6g-after", JITConfig: "jit",
+		Labels: []string{"temperci-4vcpu-6g-ubuntu-2404"},
+	}); err != nil {
+		t.Fatalf("6g bind after 12g finished: %v", err)
+	}
+}
+
+func TestBindSmallBlocksExclusiveUntilDone(t *testing.T) {
+	p := testPool(t, agent.PoolConfig{
+		MinReady: 1,
+		MaxReady: 2,
+		BindWait: 80 * time.Millisecond,
+		Shapes: []agent.VMShape{
+			{Label: "temperci-4vcpu-6g-ubuntu-2404", VCPUs: 4, MemoryMiB: 6144, MinReady: 1},
+		},
+	})
+	waitFor(t, 3*time.Second, func() bool { return p.Counts().Warm >= 1 })
+
+	ctx := context.Background()
+	small, err := p.Bind(ctx, agent.JobPayload{
+		JobID: "api-6g", JITConfig: "jit",
+		Labels: []string{"temperci-4vcpu-6g-ubuntu-2404"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := p.Bind(ctx, agent.JobPayload{
+			JobID: "e2e-12g", JITConfig: "jit",
+			Labels: []string{"temperci-4vcpu-12g-ubuntu-2404"},
+		})
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		t.Fatalf("12g bind returned while 6g still busy: %v", err)
+	case <-time.After(120 * time.Millisecond):
+	}
+
+	if err := p.JobFinished(ctx, small.VMID, "success"); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("12g bind after 6g finished: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("12g bind did not proceed after 6g finished")
+	}
+}
+
+func TestBindTwoSmallJobsStillPack(t *testing.T) {
+	p := testPool(t, agent.PoolConfig{
+		MinReady: 2,
+		MaxReady: 2,
+		BindWait: 500 * time.Millisecond,
+		Shapes: []agent.VMShape{
+			{Label: "temperci-4vcpu-6g-ubuntu-2404", VCPUs: 4, MemoryMiB: 6144, MinReady: 2},
+		},
+	})
+	waitFor(t, 3*time.Second, func() bool { return p.Counts().Warm >= 2 })
+
+	ctx := context.Background()
+	if _, err := p.Bind(ctx, agent.JobPayload{
+		JobID: "api-1", JITConfig: "jit",
+		Labels: []string{"temperci-4vcpu-6g-ubuntu-2404"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.Bind(ctx, agent.JobPayload{
+		JobID: "api-2", JITConfig: "jit",
+		Labels: []string{"temperci-4vcpu-6g-ubuntu-2404"},
+	}); err != nil {
+		t.Fatalf("second 6g bind: %v", err)
+	}
+	if c := p.Counts(); c.Busy != 2 {
+		t.Fatalf("busy=%d want 2: %+v", c.Busy, c)
+	}
+}
+
 func TestIdleRecycle(t *testing.T) {
 	start := time.Now()
 	var clock atomic.Int64

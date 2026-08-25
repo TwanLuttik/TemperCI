@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strconv"
+	"time"
 
 	"github.com/TwanLuttik/TemperCI/internal/github"
 )
@@ -146,4 +147,50 @@ func (h *Handler) HandleWorkflowJob(ctx context.Context, body []byte) (*HandleRe
 	)
 
 	return &HandleResult{Assignment: a}, nil
+}
+
+// Remint issues a new JIT config for an existing assignment and re-queues it.
+// Used when GitHub gave the previous runner to a different same-label job.
+func (h *Handler) Remint(ctx context.Context, jobID int64, reason string) (*Assignment, error) {
+	if h == nil || h.store == nil || h.minter == nil {
+		return nil, fmt.Errorf("control: remint: handler not configured")
+	}
+	a := h.store.Get(jobID)
+	if a == nil {
+		return nil, fmt.Errorf("control: remint: unknown job %d", jobID)
+	}
+	if a.Org == "" || len(a.Labels) == 0 {
+		return nil, fmt.Errorf("control: remint: job %d missing org/labels", jobID)
+	}
+	runnerName := "temperci-job-" + strconv.FormatInt(a.JobID, 10)
+	jit, err := h.minter.GenerateJITConfig(ctx, github.GenerateJITConfigRequest{
+		Org:            a.Org,
+		Name:           runnerName,
+		RunnerGroupID:  h.cfg.RunnerGroupID,
+		Labels:         append([]string(nil), a.Labels...),
+		InstallationID: a.InstallationID,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("control: remint job %d: %w", jobID, err)
+	}
+	next := *a
+	next.RunnerName = runnerName
+	next.RunnerID = jit.Runner.ID
+	next.EncodedJITConfig = jit.EncodedJITConfig
+	next.Status = AssignmentMinted
+	next.AssignedAgentID = ""
+	next.VMID = ""
+	next.WarmBind = false
+	next.Outcome = ""
+	next.Error = reason
+	next.AssignedAt = time.Time{}
+	next.StartedAt = time.Time{}
+	next.FinishedAt = time.Time{}
+	h.store.Put(&next)
+	h.log.Info("reminted JIT config",
+		"job_id", next.JobID,
+		"runner_id", next.RunnerID,
+		"reason", reason,
+	)
+	return h.store.Get(jobID), nil
 }

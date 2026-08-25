@@ -6,6 +6,18 @@ import (
 	"time"
 )
 
+func TestAssignmentStore_GetByRunnerName(t *testing.T) {
+	s := NewAssignmentStore()
+	s.Put(&Assignment{JobID: 10, Status: AssignmentStarted, RunnerName: "temperci-job-10"})
+	got := s.GetByRunnerName("temperci-job-10")
+	if got == nil || got.JobID != 10 {
+		t.Fatalf("GetByRunnerName = %+v", got)
+	}
+	if s.GetByRunnerName("missing") != nil {
+		t.Fatal("expected nil for unknown runner")
+	}
+}
+
 func TestAssignmentStore_ClaimNextFIFO(t *testing.T) {
 	s := NewAssignmentStore()
 	s.Put(&Assignment{JobID: 1, Status: AssignmentMinted, EncodedJITConfig: "jit-1"})

@@ -32,8 +32,7 @@ printf '%s\n' '-----BEGIN CERTIFICATE-----' 'TESTCA' '-----END CERTIFICATE-----'
 
 # Stub runner: official run.sh prints connect markers and exits 0.
 # Also record NODE_EXTRA_CA_CERTS so we know the guest agent exported the CA.
-# Record DOTNET_* so we know Listener heap is capped (not inherited by accident
-# if we later export them globally).
+# Record DOTNET_* so we know run.sh / job steps do not inherit a heap cap.
 cat >"${RUNNER_DIR}/run.sh" <<'EOF'
 #!/usr/bin/env bash
 set -eu
@@ -45,7 +44,7 @@ echo "NODE_EXTRA_CA_CERTS=${NODE_EXTRA_CA_CERTS:-}" >"${TEMPERCI_WORKDIR}/node-c
 echo "Connected to GitHub"
 echo "Listening for Jobs"
 echo "Running job: protocol-smoke"
-echo "Job protocol-smoke completed"
+echo "Job protocol-smoke completed with result: Succeeded"
 exit 0
 EOF
 chmod +x "${RUNNER_DIR}/run.sh"
@@ -130,6 +129,8 @@ export TEMPERCI_POLL_SEC=0.1
 export TEMPERCI_WORKDIR="${WORKDIR}/run"
 export TEMPERCI_SWAP_MIB=1
 export TEMPERCI_SWAPFILE="${WORKDIR}/swapfile"
+# Isolation: run.sh / job steps must not inherit a heap cap from this test shell.
+unset DOTNET_gcServer DOTNET_GCHeapHardLimit DOTNET_GCConserveMemory || true
 
 # Agent exits with the runner code; that is success for this protocol.
 set +e
@@ -203,13 +204,13 @@ if [[ ! -f "${TEMPERCI_WORKDIR}/dotnet.env" ]]; then
   echo "FAIL: runner did not record DOTNET env" >&2
   exit 1
 fi
-if ! grep -qx 'DOTNET_gcServer=0' "${TEMPERCI_WORKDIR}/dotnet.env"; then
-  echo "FAIL: DOTNET_gcServer not 0:" >&2
+if ! grep -qx 'DOTNET_gcServer=' "${TEMPERCI_WORKDIR}/dotnet.env"; then
+  echo "FAIL: DOTNET_gcServer leaked to run.sh:" >&2
   cat "${TEMPERCI_WORKDIR}/dotnet.env" >&2
   exit 1
 fi
-if ! grep -qx 'DOTNET_GCHeapHardLimit=1073741824' "${TEMPERCI_WORKDIR}/dotnet.env"; then
-  echo "FAIL: DOTNET_GCHeapHardLimit not 1GiB:" >&2
+if ! grep -qx 'DOTNET_GCHeapHardLimit=' "${TEMPERCI_WORKDIR}/dotnet.env"; then
+  echo "FAIL: DOTNET_GCHeapHardLimit leaked to run.sh:" >&2
   cat "${TEMPERCI_WORKDIR}/dotnet.env" >&2
   exit 1
 fi

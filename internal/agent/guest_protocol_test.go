@@ -178,3 +178,29 @@ func TestGuestAgentScript_OOMRemap(t *testing.T) {
 	}
 	t.Logf("%s", out)
 }
+
+func TestGuestAgentScript_RemapIncomplete(t *testing.T) {
+	script := filepath.Join(repoRoot(t), "deploy", "ubuntu", "guest-agent", "remap_incomplete_test.sh")
+	if _, err := os.Stat(script); err != nil {
+		t.Fatalf("remap_incomplete_test.sh missing: %v", err)
+	}
+	cmd := exec.Command("bash", script)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("remap_incomplete_test.sh: %v\n%s", err, out)
+	}
+	t.Logf("%s", out)
+}
+
+func TestGuestAgentScript_HeapWrap(t *testing.T) {
+	script := filepath.Join(repoRoot(t), "deploy", "ubuntu", "guest-agent", "heap_wrap_test.sh")
+	if _, err := os.Stat(script); err != nil {
+		t.Fatalf("heap_wrap_test.sh missing: %v", err)
+	}
+	cmd := exec.Command("bash", script)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("heap_wrap_test.sh: %v\n%s", err, out)
+	}
+	t.Logf("%s", out)
+}

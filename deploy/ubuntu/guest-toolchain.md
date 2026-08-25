@@ -43,6 +43,9 @@ there).
 |---------|------|
 | `docker.io` | Docker CLI + `dockerd` (moby). Not NodeSource / Docker CE. |
 | `docker-compose-v2` | `docker compose` plugin (`docker compose -f … up`) |
+
+Operators can pre-load arbitrary image refs into the guest Docker store with
+`preseed-docker-images.sh` (see [guest-image.md](guest-image.md)).
 | `nodejs`, `npm` | System Node **18.x** + npm **9.x** from noble apt |
 | `python3`, `python3-pip`, `python3-venv` | System Python **3.12** |
 | `build-essential`, `gcc`, `g++`, `make`, `pkg-config` | Native builds / node-gyp |

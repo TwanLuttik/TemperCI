@@ -7,18 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.7] - 2026-08-24
+
 ### Added
 
+- Job page workflow steps expand to show the official GitHub step log (same `##[group]` output as Actions), with the live/failed step open by default. Step output sits flush under the step name.
+- Live jobs stream the official step stdout from `_diag/pages` (the same files the runner uploads to GitHub). Worker `_diag` is only a fallback before the first page appears. Each `Run`/`Post` group is its own step so later steps do not stay empty while the first step holds the whole blob.
 - Guest VMs enable a 2 GiB swapfile at boot so a Node/Docker spike does not SIGABRT `Runner.Listener`.
 - Read-only MCP server on the control plane at `POST /mcp`. Set `mcp_token` in `control.toml` (or Settings). Tools cover fleet overview, hosts, jobs, truncated logs, VMs, cache, and system status. Empty token disables the endpoint.
 
 ### Changed
 
-- Official runner starts with workstation GC and a 1 GiB `DOTNET_GCHeapHardLimit` so Listener does not size its heap off guest RAM.
+- Guest image can pre-load operator-supplied Docker images (`TEMPERCI_PRESEED_IMAGES` / CLI refs) so jobs do not pull those tags on a fresh VM.
+- Official runner Listener GC heap is 2 GiB on guests under 8 GiB and 3 GiB on 8g+ (`MemTotal` at exec). `DOTNET_GCHighMemPercent=60` so Listener GCs when the guest is under pressure. A 4 GiB cap plus `docker compose` filled a 10g guest (job 97642154783). Worker stays 2 GiB.
 - Warm pool does not refill while any VM is busy (avoids packing busy 8g+6g plus two replacement warms on a 32 GiB host).
+- Guests of 12 GiB or more run alone on the host. A 6g API test can no longer warm-bind next to a 12g/16g e2e (that packing produced exit 143 on job 97648498475). Two 6g jobs still share the host.
 
 ### Fixed
 
+- Guest `/usr/local/bin/docker` no longer runs `docker buildx version` to detect BuildKit. That called the wrapper itself and fork-bombed the process namespace (host preseed and guest `docker compose` jobs).
+- A JIT runner minted for one job that GitHub assigns to an older same-label job remints the original job instead of reporting success for work it never ran.
+- Exit 0 after a job started but never completed is reported as `failure` (`runner.exit=98`), even when the OOM line was not flushed.
 - Mid-job runner OOM / abort 134 is reported as `failure` instead of `success` (upstream `run-helper.sh` maps unknown codes to exit 0).
 - Warm guests no longer remount the inject disk 20 times per second while waiting for JIT (was ~70% of a host core per idle VM). Idle poll is 2s after `agent.ready`.
 - GitHub `workflow_job` completed/cancelled finishes the assignment and kills the guest (OOM-dead runners no longer sit `started` until the one-hour stuck timer). Host `WaitRunner` treats a quiet aborting `runner.log` as exit 97. Stuck reconcile also enqueues a VM kill.
@@ -101,7 +110,8 @@ Initial tagged release.
 - Control plane + host agent, Firecracker warm pool, official `actions/runner` via JIT.
 - Operator dashboard, host-local Actions cache, OCI pull-through, and host resource admission.
 
-[Unreleased]: https://github.com/TwanLuttik/TemperCI/compare/v0.1.6...HEAD
+[Unreleased]: https://github.com/TwanLuttik/TemperCI/compare/v0.1.7...HEAD
+[0.1.7]: https://github.com/TwanLuttik/TemperCI/compare/v0.1.6...v0.1.7
 [0.1.6]: https://github.com/TwanLuttik/TemperCI/compare/v0.1.5...v0.1.6
 [0.1.5]: https://github.com/TwanLuttik/TemperCI/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/TwanLuttik/TemperCI/compare/v0.1.3...v0.1.4

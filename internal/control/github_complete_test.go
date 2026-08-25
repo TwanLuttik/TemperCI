@@ -6,10 +6,69 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/TwanLuttik/TemperCI/internal/api"
 	"github.com/TwanLuttik/TemperCI/internal/config"
+	"github.com/TwanLuttik/TemperCI/internal/github"
 )
+
+func TestWebhookInProgress_RemintsWhenRunnerTookDifferentJob(t *testing.T) {
+	store := NewAssignmentStore()
+	store.Put(&Assignment{
+		JobID:            991001,
+		Org:              "acme",
+		Name:             "e2e",
+		Labels:           []string{"temperci-4vcpu-ubuntu-2404"},
+		InstallationID:   12345,
+		RunnerName:       "temperci-job-991001",
+		RunnerID:         7,
+		EncodedJITConfig: "old-jit",
+		Status:           AssignmentStarted,
+		AssignedAgentID:  "host-1",
+		VMID:             "vm-busy",
+	})
+	m := &mockMinter{resp: &github.GenerateJITConfigResponse{
+		Runner:           github.RunnerInfo{ID: 99, Name: "temperci-job-991001"},
+		EncodedJITConfig: "jit-after-steal",
+	}}
+	h := NewHandler(m, store, HandlerConfig{RunnerGroupID: 1})
+	srv := NewServer(ServerConfig{
+		Handler:       h,
+		Store:         store,
+		WebhookSecret: "super-secret",
+		AgentToken:    "tok",
+	})
+
+	body := fixture(t, "workflow_job_in_progress_stolen.json")
+	req := httptest.NewRequest(http.MethodPost, "/webhooks/github", bytes.NewReader(body))
+	req.Header.Set("X-Hub-Signature-256", sign("super-secret", body))
+	req.Header.Set("X-GitHub-Event", "workflow_job")
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("webhook %d %s", rr.Code, rr.Body.String())
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	var got *Assignment
+	for time.Now().Before(deadline) {
+		got = store.Get(991001)
+		if got != nil && got.Status == AssignmentMinted && got.EncodedJITConfig == "jit-after-steal" {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if got == nil || got.Status != AssignmentMinted || got.EncodedJITConfig != "jit-after-steal" {
+		t.Fatalf("assignment after steal = %+v", got)
+	}
+	if got.VMID != "" || got.AssignedAgentID != "" {
+		t.Fatalf("remint left bind in place: %+v", got)
+	}
+	if len(m.calls) != 1 {
+		t.Fatalf("JIT calls=%d want 1", len(m.calls))
+	}
+}
 
 func TestWebhookCompleted_FinishesStartedJobAndQueuesKill(t *testing.T) {
 	store := NewAssignmentStore()

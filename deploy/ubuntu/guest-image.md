@@ -48,7 +48,17 @@ The script:
 6. Unpacks official `actions/runner` **v2.336.0** at `/opt/actions-runner`. Does **not** run `config.sh`.
 7. Sources `guest-packages.sh` when that hook exists (toolchain packages; owned separately).
 8. Installs the TemperCI guest agent via `guest-agent/install-into-rootfs.sh`.
-9. Downloads a Firecracker-compatible `vmlinux` via `fetch-kernel.sh`.
+9. Optionally pre-loads Docker images listed in `TEMPERCI_PRESEED_IMAGES` or `TEMPERCI_PRESEED_IMAGES_FILE` into the guest Docker store (`preseed-docker-images.sh`).
+10. Downloads a Firecracker-compatible `vmlinux` via `fetch-kernel.sh`.
+
+To load images into an existing rootfs (stop `temperci-agent` first so warm clones are not taken mid-write):
+
+```bash
+sudo mount -o loop /var/lib/temperci/images/ubuntu-2404-runner.ext4 /mnt
+sudo TEMPERCI_PRESEED_IMAGES=$'registry.example/app:1\nredis:7-alpine' \
+  ./deploy/ubuntu/preseed-docker-images.sh /mnt
+sudo umount /mnt
+```
 
 Rebuilds replace the previous artifacts atomically (`*.tmp` then `mv`).
 

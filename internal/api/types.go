@@ -197,6 +197,7 @@ type JobAssignment struct {
 	RunID            int64    `json:"run_id"`
 	Org              string   `json:"org"`
 	RepoFullName     string   `json:"repo_full_name"`
+	Name             string   `json:"name,omitempty"`
 	Labels           []string `json:"labels"`
 	RunnerName       string   `json:"runner_name"`
 	RunnerID         int64    `json:"runner_id"`

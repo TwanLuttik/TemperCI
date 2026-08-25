@@ -104,6 +104,46 @@ func TestHandleWorkflowJob_NonTemperCIIgnoredNoJIT(t *testing.T) {
 	}
 }
 
+func TestRemint_RequeuesFinishedJobWithNewJIT(t *testing.T) {
+	m := &mockMinter{resp: &github.GenerateJITConfigResponse{
+		Runner:           github.RunnerInfo{ID: 88, Name: "temperci-job-991001"},
+		EncodedJITConfig: "jit-remint",
+	}}
+	store := NewAssignmentStore()
+	store.Put(&Assignment{
+		JobID:            991001,
+		Org:              "acme",
+		Name:             "e2e",
+		Labels:           []string{"temperci-4vcpu-ubuntu-2404"},
+		InstallationID:   12345,
+		RunnerName:       "temperci-job-991001",
+		RunnerID:         7,
+		EncodedJITConfig: "old-jit",
+		Status:           AssignmentFinished,
+		Outcome:          "success",
+		AssignedAgentID:  "pve",
+		VMID:             "vm-old",
+	})
+	h := NewHandler(m, store, HandlerConfig{RunnerGroupID: 1})
+	got, err := h.Remint(context.Background(), 991001, "runner accepted different GitHub job")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != AssignmentMinted || got.EncodedJITConfig != "jit-remint" || got.RunnerID != 88 {
+		t.Fatalf("remint assignment = %+v", got)
+	}
+	if got.AssignedAgentID != "" || got.VMID != "" || got.Outcome != "" {
+		t.Fatalf("remint did not clear bind: %+v", got)
+	}
+	if store.PendingLen() != 1 {
+		t.Fatalf("pending=%d want 1", store.PendingLen())
+	}
+	claim := store.ClaimNext("pve", nil)
+	if claim == nil || claim.EncodedJITConfig != "jit-remint" {
+		t.Fatalf("claim after remint = %+v", claim)
+	}
+}
+
 func TestHandleWorkflowJob_MintError(t *testing.T) {
 	m := &mockMinter{err: errors.New("api down")}
 	store := NewAssignmentStore()

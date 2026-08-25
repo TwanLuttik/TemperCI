@@ -6,6 +6,7 @@ import { useRealtime } from "../hooks/useRealtime";
 import { Button } from "@/components/ui/button";
 import { useNow } from "../hooks/useNow";
 import { liveJobTimings } from "../lib/job-duration";
+import { stepLogsByNumber } from "../lib/job-step-logs";
 import { formatStepClock, jobStepProgress, lastWorkflowGroup, parseStepTime, settleSteps, stepElapsedMs } from "../lib/job-steps";
 import { suggestJobTab } from "../lib/job-tabs";
 import { EmptyState } from "../components/empty-state";
@@ -15,7 +16,7 @@ import { StatusBadge } from "../components/status-badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Check, Circle, LoaderCircle, Minus, X } from "lucide-react";
+import { Check, ChevronRight, Circle, LoaderCircle, Minus, X } from "lucide-react";
 
 function fmt(ts?: string) {
   if (!ts) return "—";
@@ -65,7 +66,7 @@ export function JobDetailPage() {
     };
     load();
     // Live job rows arrive over WS. Poll REST for logs; slow down when finished or WS is live.
-    const ms = jobDone ? 30_000 : rt.status === "live" ? 5_000 : 2_000;
+    const ms = jobDone ? 30_000 : 2_000;
     const t = setInterval(load, ms);
     return () => {
       stop = true;
@@ -198,7 +199,9 @@ export function JobDetailPage() {
 
       {j.error ? <p className="mb-4 text-sm text-destructive">{j.error}</p> : null}
 
-      {progress.total > 0 ? <WorkflowSteps job={j} running={running} now={now} /> : null}
+      {progress.total > 0 ? (
+        <WorkflowSteps job={j} running={running} now={now} workflowLog={logs.workflow_log} />
+      ) : null}
 
       <Card>
         <CardContent>
@@ -276,10 +279,22 @@ export function JobDetailPage() {
   );
 }
 
-function WorkflowSteps({ job, running, now }: { job: Job; running: boolean; now: number }) {
+function WorkflowSteps({
+  job,
+  running,
+  now,
+  workflowLog,
+}: {
+  job: Job;
+  running: boolean;
+  now: number;
+  workflowLog?: string;
+}) {
   const steps = job.steps || [];
   const progress = jobStepProgress(steps);
   const pct = progress.total ? Math.round((progress.done / progress.total) * 100) : 0;
+  const logsByNumber = stepLogsByNumber(steps, workflowLog);
+  const [open, setOpen] = useState<Record<number, boolean>>({});
   const seenStart = useRef<Map<number, number>>(new Map());
   for (const step of steps) {
     if (String(step.status || "").toLowerCase() !== "in_progress") continue;
@@ -325,6 +340,21 @@ function WorkflowSteps({ job, running, now }: { job: Job; running: boolean; now:
               step={step}
               now={now}
               fallbackStart={seenStart.current.get(step.number)}
+              log={logsByNumber[step.number] || ""}
+              open={
+                open[step.number] ??
+                (String(step.status).toLowerCase() === "in_progress" ||
+                  String(step.conclusion).toLowerCase() === "failure")
+              }
+              onToggle={() =>
+                setOpen((prev) => {
+                  const next =
+                    prev[step.number] ??
+                    (String(step.status).toLowerCase() === "in_progress" ||
+                      String(step.conclusion).toLowerCase() === "failure");
+                  return { ...prev, [step.number]: !next };
+                })
+              }
             />
           ))}
         </ol>
@@ -337,32 +367,57 @@ function StepRow({
   step,
   now,
   fallbackStart,
+  log,
+  open,
+  onToggle,
 }: {
   step: JobStep;
   now: number;
   fallbackStart?: number;
+  log: string;
+  open: boolean;
+  onToggle: () => void;
 }) {
   const status = String(step.status || "").toLowerCase();
   const conclusion = String(step.conclusion || "").toLowerCase();
   const active = status === "in_progress";
   const label = status === "completed" ? conclusion || "completed" : status || "queued";
   const elapsed = stepElapsedMs(step, now, fallbackStart);
+  const canOpen = Boolean(log) || active;
   return (
     <li
-      className={`flex items-center gap-2.5 border-b border-border py-2 text-sm last:border-0 ${
+      className={`border-b border-border last:border-0 ${
         active ? "text-foreground" : status === "completed" ? "text-foreground/90" : "text-muted-foreground"
       }`}
     >
-      <StepMark status={status} conclusion={conclusion} />
-      <span className={`min-w-0 flex-1 truncate ${active ? "font-medium" : ""}`}>{step.name}</span>
-      <span
-        className={`w-[4.75rem] shrink-0 text-right font-mono text-xs tabular-nums ${
-          active ? "text-emerald-400" : "text-muted-foreground"
-        }`}
+      <button
+        type="button"
+        onClick={canOpen ? onToggle : undefined}
+        className={`flex w-full items-center gap-2.5 py-2 text-left text-sm ${canOpen ? "cursor-pointer" : "cursor-default"}`}
       >
-        {status === "pending" || status === "queued" ? "" : formatStepClock(elapsed)}
-      </span>
-      <StatusBadge status={label}>{label.replaceAll("_", " ")}</StatusBadge>
+        <ChevronRight
+          className={`size-3.5 shrink-0 text-muted-foreground transition-transform ${
+            open && canOpen ? "rotate-90" : canOpen ? "" : "opacity-0"
+          }`}
+        />
+        <StepMark status={status} conclusion={conclusion} />
+        <span className={`min-w-0 flex-1 truncate ${active ? "font-medium" : ""}`}>{step.name}</span>
+        <span
+          className={`w-[4.75rem] shrink-0 text-right font-mono text-xs tabular-nums ${
+            active ? "text-emerald-400" : "text-muted-foreground"
+          }`}
+        >
+          {status === "pending" || status === "queued" ? "" : formatStepClock(elapsed)}
+        </span>
+        <StatusBadge status={label}>{label.replaceAll("_", " ")}</StatusBadge>
+      </button>
+      {open && canOpen ? (
+        log ? (
+          <LiveLog text={log} live={active} flush />
+        ) : (
+          <p className="mb-3 pl-9 font-mono text-[11px] text-muted-foreground">Waiting for step output…</p>
+        )
+      ) : null}
     </li>
   );
 }
@@ -383,7 +438,7 @@ function StepMark({ status, conclusion }: { status: string; conclusion: string }
   return <Circle className="size-3 shrink-0 text-muted-foreground/70" />;
 }
 
-function LiveLog({ text, live }: { text: string; live: boolean }) {
+function LiveLog({ text, live, flush }: { text: string; live: boolean; flush?: boolean }) {
   const ref = useRef<HTMLPreElement>(null);
   const stick = useRef(true);
   useEffect(() => {
@@ -399,7 +454,11 @@ function LiveLog({ text, live }: { text: string; live: boolean }) {
         if (!el) return;
         stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
       }}
-      className="m-0 max-h-[28rem] overflow-auto rounded-lg border bg-background p-3 font-mono text-[11px] leading-relaxed whitespace-pre-wrap text-zinc-300"
+      className={
+        flush
+          ? "m-0 mb-3 max-h-[24rem] overflow-auto pl-9 pr-1 font-mono text-[11px] leading-[1.55] whitespace-pre-wrap text-muted-foreground"
+          : "m-0 max-h-[28rem] overflow-auto rounded-lg border bg-background p-3 font-mono text-[11px] leading-relaxed whitespace-pre-wrap text-zinc-300"
+      }
     >
       {text}
       {live ? <span className="mt-2 block animate-pulse text-[10px] text-muted-foreground">● live</span> : null}

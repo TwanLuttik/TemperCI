@@ -14,9 +14,7 @@ temperci_have_buildx() {
   if [[ -x /usr/libexec/docker/cli-plugins/docker-buildx ]] || [[ -x /usr/lib/docker/cli-plugins/docker-buildx ]]; then
     return 0
   fi
-  if command -v docker >/dev/null 2>&1 && docker buildx version >/dev/null 2>&1; then
-    return 0
-  fi
+  # Never call `docker` on PATH here — this file *is* /usr/local/bin/docker.
   return 1
 }
 

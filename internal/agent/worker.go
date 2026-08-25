@@ -183,6 +183,9 @@ func (w *Worker) snapshot() CapacitySnapshot {
 	if free < 0 {
 		free = 0
 	}
+	if w.Pool.ExclusiveBusy() {
+		free = 0
+	}
 	repos, cache := w.cachedInventory()
 	return CapacitySnapshot{
 		MaxCapacity: w.Capacity,
@@ -313,7 +316,7 @@ func (w *Worker) handleJob(ctx context.Context, job *api.JobAssignment) error {
 	outcome, waitErr := w.waitForJob(jobCtx, res.VMID, job.JobID)
 	logs := w.collectLogs(res.VMID)
 	reported := outcome
-	outcome = RefineOutcome(outcome, logs.RunnerLog)
+	outcome = RefineOutcomeForJob(outcome, logs.RunnerLog, job.Name)
 	if waitErr != nil && !errors.Is(waitErr, context.DeadlineExceeded) {
 		_ = w.Pool.JobFinished(jobCtx, res.VMID, "cancelled")
 		_ = w.finish(jobCtx, job.JobID, job.RepoFullName, "cancelled", string(res.VMID), res.WarmStart, waitErr.Error(), logs)
@@ -337,8 +340,17 @@ func (w *Worker) handleJob(ctx context.Context, job *api.JobAssignment) error {
 
 	// outcome success | failure from runner exit code (and OOM log refine)
 	errMsg := ""
-	if reported == "success" && outcome == "failure" {
-		errMsg = "runner aborted (OOM/134)"
+	if reported == "success" && outcome == "error" {
+		errMsg = "runner accepted different GitHub job"
+		if started := runningJobName(logs.RunnerLog); started != "" {
+			errMsg += ": " + started
+		}
+	} else if reported == "success" && outcome == "failure" {
+		if runnerLogIndicatesAbort(logs.RunnerLog) {
+			errMsg = "runner aborted (OOM/134)"
+		} else {
+			errMsg = "runner exited without completing job"
+		}
 	}
 	if err := w.Pool.JobFinished(jobCtx, res.VMID, outcome); err != nil && !errors.Is(err, ErrNotBusy) {
 		_ = w.finish(jobCtx, job.JobID, job.RepoFullName, "error", string(res.VMID), res.WarmStart, err.Error(), logs)

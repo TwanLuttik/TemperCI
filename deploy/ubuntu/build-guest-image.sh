@@ -206,6 +206,9 @@ mkdir -p "${MNT}/etc/systemd/system/multi-user.target.wants"
 if [[ -x "${SCRIPT_DIR}/install-cache-ca.sh" ]]; then
   "${SCRIPT_DIR}/install-cache-ca.sh" "$MNT" || echo "build-guest-image: warning: install-cache-ca.sh failed" >&2
 fi
+if [[ -x "${SCRIPT_DIR}/preseed-docker-images.sh" ]]; then
+  "${SCRIPT_DIR}/preseed-docker-images.sh" "$MNT"
+fi
 
 if [[ ! -x "${MNT}/opt/actions-runner/run.sh" ]]; then
   echo "build-guest-image: /opt/actions-runner/run.sh missing after unpack" >&2

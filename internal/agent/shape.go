@@ -11,6 +11,15 @@ import (
 
 const defaultImageToken = "ubuntu-2404"
 
+// ExclusiveJobMiB is the guest RAM at which a job must run alone on the host.
+// A 12g e2e packed with a 6g API test OOM'd a 31 GiB box (job 97648498475).
+const ExclusiveJobMiB = 12 * 1024
+
+// ExclusiveShape reports whether this guest size must not share the host.
+func ExclusiveShape(memoryMiB int) bool {
+	return memoryMiB >= ExclusiveJobMiB
+}
+
 var shapeLabelRe = regexp.MustCompile(`(?i)^temperci-(\d+)vcpu(?:-(\d+)g)?(?:-([a-z0-9.-]+))?$`)
 
 // VMShape is one guest size the pool can warm or cold-boot.

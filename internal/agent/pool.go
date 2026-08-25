@@ -62,6 +62,8 @@ type Pool struct {
 	// createInFlight counts cold-bind provisions not yet registered in vms.
 	createInFlight    int
 	createInFlightMem int
+	// exclusiveCreateInFlight is cold-binds of ExclusiveJobMiB+ not yet in vms.
+	exclusiveCreateInFlight int
 
 	inventory     InventorySource
 	configuredMax int
@@ -306,6 +308,20 @@ func (p *Pool) Bind(ctx context.Context, job JobPayload) (*BindResult, error) {
 			p.mu.Unlock()
 			return nil, ErrPoolStopped
 		}
+		if p.exclusiveConflictLocked(shape.MemoryMiB) {
+			waitForSmall := !ExclusiveShape(shape.MemoryMiB)
+			p.mu.Unlock()
+			if waitForSmall && p.now().After(bindDeadline) {
+				return nil, fmt.Errorf("%w: exclusive job running", ErrNoCapacity)
+			}
+			p.kick()
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(50 * time.Millisecond):
+			}
+			continue
+		}
 		if id, ok := p.pickWarmLocked(shape.VCPUs, shape.MemoryMiB); ok {
 			selected = id
 			warmStart = true
@@ -330,13 +346,20 @@ func (p *Pool) Bind(ctx context.Context, job JobPayload) (*BindResult, error) {
 		}
 		// No matching warm: try cold boot of the requested size if capacity allows.
 		if p.canCreateLocked(shape.MemoryMiB) {
+			exclusive := ExclusiveShape(shape.MemoryMiB)
 			p.createInFlight++
 			p.createInFlightMem += shape.MemoryMiB
+			if exclusive {
+				p.exclusiveCreateInFlight++
+			}
 			p.mu.Unlock()
 			id, err := p.createAndBoot(ctx, shape)
 			p.mu.Lock()
 			p.createInFlight--
 			p.createInFlightMem -= shape.MemoryMiB
+			if exclusive {
+				p.exclusiveCreateInFlight--
+			}
 			if err != nil {
 				p.mu.Unlock()
 				return nil, fmt.Errorf("agent: cold boot: %w", err)
@@ -986,6 +1009,38 @@ func (p *Pool) countsLocked() Counts {
 		}
 	}
 	return c
+}
+
+// ExclusiveBusy reports whether a 12g+ guest is busy or being created.
+func (p *Pool) ExclusiveBusy() bool {
+	if p == nil {
+		return false
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.exclusivePresentLocked()
+}
+
+func (p *Pool) exclusivePresentLocked() bool {
+	if p.exclusiveCreateInFlight > 0 {
+		return true
+	}
+	for _, vm := range p.vms {
+		if ExclusiveShape(vm.memoryMiB) && (vm.state == StateBusy || vm.state == StatePoolBoot) {
+			return true
+		}
+	}
+	return false
+}
+
+// exclusiveConflictLocked is true when nextMem must not share the host with
+// what is already running (12g+ vs anything, or anything vs 12g+).
+func (p *Pool) exclusiveConflictLocked(nextMem int) bool {
+	if ExclusiveShape(nextMem) {
+		c := p.countsLocked()
+		return c.Busy > 0 || p.createInFlight > 0
+	}
+	return p.exclusivePresentLocked()
 }
 
 // canCreateLocked reports whether a new instance may be provisioned.

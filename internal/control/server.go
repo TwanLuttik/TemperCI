@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/TwanLuttik/TemperCI/internal/agent"
 	"github.com/TwanLuttik/TemperCI/internal/api"
 	"github.com/TwanLuttik/TemperCI/internal/github"
 	"github.com/TwanLuttik/TemperCI/internal/store"
@@ -205,6 +206,25 @@ func (s *Server) handleGitHubWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if ev.Action == "in_progress" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"ok":true,"accepted":true}`))
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		go func() {
+			result := s.recoverStolenRunner(context.Background(), ev)
+			if result != nil && !result.Ignored && result.Assignment != nil {
+				s.log.Info("recovered stolen runner",
+					"minted_job_id", result.Assignment.JobID,
+					"taken_by", ev.WorkflowJob.ID,
+				)
+			}
+		}()
+		return
+	}
+
 	if ev.Action != "queued" || !IsOwned(ev.WorkflowJob.Labels, s.handler.cfg.LabelPrefix) {
 		result, herr := s.handler.HandleWorkflowJob(r.Context(), body)
 		if herr != nil {
@@ -374,6 +394,7 @@ func (s *Server) handleJobClaim(w http.ResponseWriter, r *http.Request) {
 			RunID:            a.RunID,
 			Org:              a.Org,
 			RepoFullName:     a.RepoFullName,
+			Name:             a.Name,
 			Labels:           append([]string(nil), a.Labels...),
 			RunnerName:       a.RunnerName,
 			RunnerID:         a.RunnerID,
@@ -427,6 +448,29 @@ func (s *Server) handleJobFinished(w http.ResponseWriter, r *http.Request) {
 	outcome := req.Outcome
 	if outcome == "" {
 		outcome = "unknown"
+	}
+	if a := s.store.Get(req.JobID); a != nil && a.Name != "" &&
+		agent.RefineOutcomeForJob("success", req.RunnerLog, a.Name) == "error" {
+		reason := "runner accepted different GitHub job"
+		if started := agent.RunningJobName(req.RunnerLog); started != "" {
+			reason += ": " + started
+		}
+		if s.handler != nil {
+			if _, rerr := s.handler.Remint(r.Context(), req.JobID, reason); rerr != nil {
+				s.log.Error("remint after wrong job", "job_id", req.JobID, "err", rerr)
+			} else {
+				s.mergeJobLogs(req.JobID, req.RunnerLog, req.AgentLog, req.ConsoleLog, req.WorkflowLog)
+				s.agents.Touch(req.AgentID)
+				s.recordJobEvent(req.JobID, "control", "warn", reason+"; reminted JIT")
+				s.PublishSnapshot()
+				writeJSON(w, http.StatusOK, api.JobFinishedResponse{OK: true})
+				return
+			}
+		}
+		outcome = "error"
+		if req.Error == "" {
+			req.Error = reason
+		}
 	}
 	if err := s.store.MarkFinished(req.JobID, req.AgentID, outcome, req.VMID, req.WarmBind, req.Error); err != nil {
 		writeAPIError(w, http.StatusConflict, err.Error())

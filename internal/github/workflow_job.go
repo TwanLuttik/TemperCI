@@ -33,6 +33,8 @@ type WorkflowJob struct {
 	Conclusion   string   `json:"conclusion"`
 	Labels       []string `json:"labels"`
 	HTMLURL      string   `json:"html_url"`
+	RunnerID     int64    `json:"runner_id"`
+	RunnerName   string   `json:"runner_name"`
 }
 
 // EventWorkflowName is the human workflow title (e.g. "E2E"), not the job name.

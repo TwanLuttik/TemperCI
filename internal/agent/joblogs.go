@@ -13,6 +13,9 @@ const maxVMConsoleTail = 64 * 1024
 
 const maxUploadedLogBytes = 128 * 1024
 
+// Official step logs (same text GitHub streams) can be a few MiB on a long job.
+const maxUploadedWorkflowLogBytes = 2 << 20
+
 // JobLogs is guest diagnostic text uploaded to the control plane (no secrets).
 type JobLogs struct {
 	RunnerLog     string
@@ -45,7 +48,8 @@ func CollectJobLogs(layout vmm.Layout, id vmm.ID) JobLogs {
 		filepath.Join(arch, "console.log"),
 		filepath.Join(layout.LogDir(id), "console.log"),
 	)
-	out.WorkflowLog = readLogFile(
+	out.WorkflowLog = readLogFileN(
+		maxUploadedWorkflowLogBytes,
 		filepath.Join(arch, "workflow.log"),
 		filepath.Join(layout.GuestDir(id), "workflow.log"),
 	)
@@ -69,12 +73,16 @@ func ArchiveConsole(layout vmm.Layout, id vmm.ID) {
 }
 
 func readLogFile(paths ...string) string {
+	return readLogFileN(maxUploadedLogBytes, paths...)
+}
+
+func readLogFileN(max int, paths ...string) string {
 	for _, p := range paths {
 		b, err := os.ReadFile(p)
 		if err != nil || len(b) == 0 {
 			continue
 		}
-		return clipLog(string(b), maxUploadedLogBytes)
+		return clipLog(string(b), max)
 	}
 	return ""
 }

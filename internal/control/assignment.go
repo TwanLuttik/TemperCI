@@ -173,6 +173,23 @@ func (s *AssignmentStore) Get(jobID int64) *Assignment {
 	return &cp
 }
 
+// GetByRunnerName returns a copy of the assignment whose RunnerName matches.
+func (s *AssignmentStore) GetByRunnerName(name string) *Assignment {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return nil
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, a := range s.byID {
+		if a.RunnerName == name {
+			cp := *a
+			return &cp
+		}
+	}
+	return nil
+}
+
 // Len returns the number of stored assignments.
 func (s *AssignmentStore) Len() int {
 	s.mu.RLock()

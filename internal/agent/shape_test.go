@@ -6,6 +6,15 @@ import (
 	"github.com/TwanLuttik/TemperCI/internal/config"
 )
 
+func TestExclusiveShape(t *testing.T) {
+	if ExclusiveShape(6144) || ExclusiveShape(8192) || ExclusiveShape(10*1024) {
+		t.Fatal("6g/8g/10g must still share the host")
+	}
+	if !ExclusiveShape(ExclusiveJobMiB) || !ExclusiveShape(16*1024) {
+		t.Fatal("12g+ must be exclusive")
+	}
+}
+
 func TestParseShapeLabel(t *testing.T) {
 	cases := []struct {
 		in         string

@@ -64,6 +64,27 @@ func TestParseWorkflowJobEvent_CompletedFailure(t *testing.T) {
 	}
 }
 
+func TestParseWorkflowJobEvent_InProgressStolenRunner(t *testing.T) {
+	path := filepath.Join("..", "..", "testdata", "webhooks", "workflow_job_in_progress_stolen.json")
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read fixture: %v", err)
+	}
+	ev, err := ParseWorkflowJobEvent(body)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if ev.Action != "in_progress" {
+		t.Fatalf("action=%q", ev.Action)
+	}
+	if ev.WorkflowJob.ID != 992002 || ev.WorkflowJob.Name != "test" {
+		t.Fatalf("job=%d name=%q", ev.WorkflowJob.ID, ev.WorkflowJob.Name)
+	}
+	if ev.WorkflowJob.RunnerName != "temperci-job-991001" {
+		t.Fatalf("runner_name=%q", ev.WorkflowJob.RunnerName)
+	}
+}
+
 func TestParseWorkflowJobEvent_InvalidJSON(t *testing.T) {
 	_, err := ParseWorkflowJobEvent([]byte(`not-json`))
 	if err == nil {

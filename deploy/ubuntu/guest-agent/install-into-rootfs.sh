@@ -8,6 +8,8 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 install -d -m 0755 "$ROOT/usr/local/sbin"
 install -m 0755 "$SCRIPT_DIR/temperci-runner-agent.sh" "$ROOT/usr/local/sbin/temperci-runner-agent.sh"
+install -m 0755 "$SCRIPT_DIR/extract-worker-workflow.sh" "$ROOT/usr/local/sbin/extract-worker-workflow.sh"
+install -m 0755 "$SCRIPT_DIR/collect-page-logs.sh" "$ROOT/usr/local/sbin/collect-page-logs.sh"
 install -d -m 0755 "$ROOT/etc/systemd/system"
 install -m 0644 "$SCRIPT_DIR/temperci-runner-agent.service" "$ROOT/etc/systemd/system/temperci-runner-agent.service"
 
@@ -25,6 +27,11 @@ install -d -m 0755 "$ROOT/mnt/temperci"
 if [ -d "$ROOT/opt/actions-runner" ]; then
   chown -R root:root "$ROOT/opt/actions-runner" || true
   chmod -R u+rwX "$ROOT/opt/actions-runner" || true
+fi
+
+# Pin Listener/Worker GC heap via exec wrappers. Job steps stay uncapped.
+if [ -d "$ROOT/opt/actions-runner/bin" ]; then
+  "$SCRIPT_DIR/wrap-runner-dotnet.sh" "$ROOT"
 fi
 
 # Ensure work dir for JIT copy

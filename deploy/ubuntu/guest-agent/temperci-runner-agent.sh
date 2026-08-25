@@ -43,6 +43,7 @@ write_exit() {
     echo "$code" >"$MNT/runner.exit"
     cp -a "$WORKDIR/agent.log" "$MNT/agent.log" 2>/dev/null || true
     cp -a "$WORKDIR/runner.log" "$MNT/runner.log" 2>/dev/null || true
+    cp -a "$WORKDIR/workflow.log" "$MNT/workflow.log" 2>/dev/null || true
     sync
     umount "$MNT" 2>/dev/null || true
   fi
@@ -397,22 +398,56 @@ if [ -z "$JIT_B64" ]; then
   write_exit 90
 fi
 ensure_docker || true
+guest_sbin() {
+  local name="$1"
+  if [ -x "/usr/local/sbin/${name}" ]; then
+    echo "/usr/local/sbin/${name}"
+  elif [ -x "$(dirname "$0")/${name}" ]; then
+    echo "$(dirname "$0")/${name}"
+  fi
+}
+
+# Official step stdout lives in _diag/pages (same files GitHub streams).
+# Worker_*.log is only diagnostic; use it when pages have not appeared yet.
+collect_live_workflow() {
+  local diag="${TEMPERCI_RUNNER_DIR:-$RUNNER_DIR}/_diag"
+  local pages="$diag/pages"
+  local collect latest extract=""
+  mkdir -p "$WORKDIR/pages"
+  collect="$(guest_sbin collect-page-logs.sh)"
+  if [ -n "$collect" ] && "$collect" "$pages" "$WORKDIR/pages" "$WORKDIR/workflow.log" 2>/dev/null; then
+    return 0
+  fi
+  [ ! -s "$WORKDIR/workflow.log" ] || return 0
+  latest=$(ls -t "$diag"/Worker_*.log 2>/dev/null | head -1 || true)
+  [ -n "$latest" ] || return 0
+  extract="$(guest_sbin extract-worker-workflow.sh)"
+  [ -n "$extract" ] || return 0
+  "$extract" "$latest" >"$WORKDIR/workflow.log" 2>/dev/null || true
+  if [ ! -s "$WORKDIR/workflow.log" ]; then
+    {
+      echo "##[group]Run (live)"
+      tail -c 12000 "$latest" 2>/dev/null || true
+    } >"$WORKDIR/workflow.log"
+  fi
+}
+
 publish_live_logs() {
+  collect_live_workflow
   umount "$MNT" 2>/dev/null || true
   if mount "$INJECT_DEV" "$MNT" 2>/dev/null || mount -o rw "$INJECT_DEV" "$MNT" 2>/dev/null; then
     cp -a "$WORKDIR/agent.log" "$MNT/agent.log" 2>/dev/null || true
     cp -a "$WORKDIR/runner.log" "$MNT/runner.log" 2>/dev/null || true
+    cp -a "$WORKDIR/workflow.log" "$MNT/workflow.log" 2>/dev/null || true
     umount "$MNT" 2>/dev/null || true
   fi
 }
 
-# Workstation GC + 1 GiB hard cap so Listener does not size its heap off
-# guest RAM (8g boxes were aborting sooner than 6g). Scoped to the runner
-# process so job steps do not inherit the limit.
+# Heap caps live on bin/Runner.Listener and bin/Runner.Worker wrappers.
+# Do not export DOTNET_* here — job steps inherit run.sh's environment.
 log "starting $RUNNER --jitconfig <${#JIT_B64} bytes> (as root, RUNNER_ALLOW_RUNASROOT=1)"
 set +e
-env DOTNET_gcServer=0 DOTNET_GCHeapHardLimit=1073741824 \
-  "$RUNNER" --jitconfig "$JIT_B64" >"$WORKDIR/runner.log" 2>&1 &
+"$RUNNER" --jitconfig "$JIT_B64" >"$WORKDIR/runner.log" 2>&1 &
 rpid=$!
 while kill -0 "$rpid" 2>/dev/null; do
   publish_live_logs
@@ -425,10 +460,11 @@ publish_live_logs
 log "runner exited code=$code"
 
 # Upstream run.sh exits 0 for almost every helper failure (only code 2 restarts).
-# Treat exit 0 without actually running a job as failure so TemperCI does not
-# report success while GitHub still shows "Waiting for a runner…".
+# Treat exit 0 without a completed job as failure so TemperCI does not report
+# success while GitHub still shows "Waiting for a runner…" or a failed job.
 # Connecting + "Listening for Jobs" is not enough: a deprecated runner does
-# that and then exits without receiving the JIT job.
+# that and then exits without receiving the JIT job. A started job that never
+# writes "completed with result: succeeded" is remapped to 98.
 if grep -qiE "is deprecated and cannot receive messages|Runner version .+ is deprecated" "$WORKDIR/runner.log" 2>/dev/null; then
   log "runner rejected as deprecated; marking as 96"
   if [ -s "$WORKDIR/runner.log" ]; then
@@ -443,7 +479,15 @@ elif ! grep -qiE "completed with result: succeeded" "$WORKDIR/runner.log" 2>/dev
   fi
   code=97
 elif [ "$code" -eq 0 ]; then
-  if ! grep -qiE "Running job:|Job .+ completed" "$WORKDIR/runner.log" 2>/dev/null; then
+  if grep -qiE "completed with result: succeeded" "$WORKDIR/runner.log" 2>/dev/null; then
+    :
+  elif grep -qiE "Running job:" "$WORKDIR/runner.log" 2>/dev/null; then
+    log "runner exit 0 after starting a job without completion; marking as 98"
+    if [ -s "$WORKDIR/runner.log" ]; then
+      log "runner.log tail: $(tail -c 500 "$WORKDIR/runner.log" | tr '\n' ' ')"
+    fi
+    code=98
+  else
     log "runner exit 0 without running a job; marking as 95"
     if [ -s "$WORKDIR/runner.log" ]; then
       log "runner.log tail: $(tail -c 500 "$WORKDIR/runner.log" | tr '\n' ' ')"

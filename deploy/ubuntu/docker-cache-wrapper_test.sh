@@ -50,4 +50,20 @@ got="$(temperci_docker_rewrite build -t x .)"
 want=""
 expect_eq "$got" "$want" "no buildx leaves docker build alone"
 
+# have_buildx must never invoke `docker` on PATH (that is this wrapper).
+unset TEMPERCI_DISABLE_BUILDX TEMPERCI_FORCE_BUILDX
+hit="$(mktemp)"
+trap 'rm -f "$hit"' EXIT
+fakebin="$(mktemp -d)"
+cat >"${fakebin}/docker" <<EOF
+#!/usr/bin/env bash
+echo invoked >>"$hit"
+exit 0
+EOF
+chmod +x "${fakebin}/docker"
+PATH="${fakebin}:$PATH" temperci_have_buildx || true
+if [[ -s "$hit" ]]; then
+  fail "temperci_have_buildx invoked PATH docker (would recurse as the wrapper)"
+fi
+
 echo "ok"

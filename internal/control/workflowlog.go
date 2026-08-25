@@ -18,6 +18,10 @@ func officialWorkflowLog(s string) bool {
 	return strings.Contains(s, "##[group]") || strings.Contains(s, "##[section]")
 }
 
+func fullOfficialJobLog(s string) bool {
+	return officialWorkflowLog(s) && strings.Contains(s, "Current runner version:")
+}
+
 func (s *Server) ensureWorkflowLog(r *http.Request, a *Assignment, logs *store.JobLog) {
 	if s == nil || logs == nil || a == nil || s.jobLogs == nil {
 		return
@@ -31,7 +35,9 @@ func (s *Server) ensureWorkflowLog(r *http.Request, a *Assignment, logs *store.J
 	if !finished && !started {
 		return
 	}
-	if finished && officialWorkflowLog(logs.WorkflowLog) {
+	// A live guest extract also uses ##[group]. After the job finishes,
+	// prefer GitHub's full download (it starts with "Current runner version").
+	if finished && fullOfficialJobLog(logs.WorkflowLog) {
 		return
 	}
 	if !s.allowWorkflowFetch(a.JobID, started) {
