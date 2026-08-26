@@ -27,6 +27,7 @@ job_simulate_seconds = 0
 # job_deadline_seconds = 7200
 
 # Warm pool sizing. max_ready is also the max concurrent job capacity reported to control.
+# min_ready = 0 (and no [[shapes]] rows) means no warm VMs; jobs cold-boot on claim.
 min_ready = 1
 max_ready = 2
 

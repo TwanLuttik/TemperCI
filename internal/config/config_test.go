@@ -157,6 +157,33 @@ func TestAgentConfig_MaxReadyBelowMin(t *testing.T) {
 	}
 }
 
+func TestAgentConfig_MinReadyZeroAllowed(t *testing.T) {
+	cfg := AgentConfig{ImagePath: "/img", MinReady: 0, MaxReady: 2, AgentToken: "t"}
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.MinReady != 0 {
+		t.Fatalf("MinReady = %d want 0", cfg.MinReady)
+	}
+	if cfg.MaxReady != 2 {
+		t.Fatalf("MaxReady = %d want 2 (job capacity stays)", cfg.MaxReady)
+	}
+	if got := cfg.EffectiveShapes(); len(got) != 0 {
+		t.Fatalf("EffectiveShapes = %+v want empty (no warm catalog)", got)
+	}
+}
+
+func TestEffectiveShapes_LegacyMinReadyStillSynthesizes(t *testing.T) {
+	cfg := AgentConfig{ImagePath: "/img", MinReady: 1, MaxReady: 2, VCPU: 4, MemoryMiB: 8192, AgentToken: "t"}
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	got := cfg.EffectiveShapes()
+	if len(got) != 1 || got[0].MinReady != 1 || got[0].MemoryMiB != 8192 {
+		t.Fatalf("EffectiveShapes = %+v", got)
+	}
+}
+
 func TestLoadAgentFile_FirecrackerRequiresKernel(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "agent.toml")

@@ -151,6 +151,105 @@ func TestWebhookCompleted_FinishesStartedJobAndQueuesKill(t *testing.T) {
 	}
 }
 
+func TestWebhookCompleted_CorrectsAgentCancelledToGitHubSuccess(t *testing.T) {
+	// Agent tear-down (GitHub completed → kill VM → WaitRunner cancelled)
+	// often reports before, or races with, the webhook. GitHub is source of truth.
+	store := NewAssignmentStore()
+	store.Put(&Assignment{
+		JobID:           991001,
+		Status:          AssignmentStarted,
+		AssignedAgentID: "host-1",
+		VMID:            "vm-1",
+		Name:            "e2e",
+	})
+	srv := NewServer(ServerConfig{
+		Handler:       NewHandler(&mockMinter{}, store, HandlerConfig{RunnerGroupID: 1}),
+		Store:         store,
+		WebhookSecret: "super-secret",
+		AgentToken:    "tok",
+	})
+
+	req := agentReq(t, http.MethodPost, "/v1/agent/jobs/finished", "tok", api.JobFinishedRequest{
+		AgentID: "host-1",
+		JobID:   991001,
+		Outcome: "cancelled",
+		VMID:    "vm-1",
+		Error:   "agent: runner stopped",
+	})
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("agent finished %d %s", rr.Code, rr.Body.String())
+	}
+	if got := store.Get(991001); got == nil || got.Outcome != "cancelled" {
+		t.Fatalf("after agent = %+v", got)
+	}
+
+	body := fixture(t, "workflow_job_completed_success.json")
+	wreq := httptest.NewRequest(http.MethodPost, "/webhooks/github", bytes.NewReader(body))
+	wreq.Header.Set("X-Hub-Signature-256", sign("super-secret", body))
+	wreq.Header.Set("X-GitHub-Event", "workflow_job")
+	rr = httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, wreq)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("webhook %d %s", rr.Code, rr.Body.String())
+	}
+	got := store.Get(991001)
+	if got == nil || got.Status != AssignmentFinished || got.Outcome != "success" {
+		t.Fatalf("after github = %+v want finished/success", got)
+	}
+}
+
+func TestWebhookCompleted_ThenAgentFailureKeepsGitHubSuccess(t *testing.T) {
+	// Host runner.log is often stale (mailbox unblocks before inject copy).
+	// Agent RefineOutcome then reports "failure" after GitHub already said success.
+	store := NewAssignmentStore()
+	store.Put(&Assignment{
+		JobID:           991001,
+		Status:          AssignmentStarted,
+		AssignedAgentID: "host-1",
+		VMID:            "vm-1",
+		Name:            "test",
+	})
+	srv := NewServer(ServerConfig{
+		Handler:       NewHandler(&mockMinter{}, store, HandlerConfig{RunnerGroupID: 1}),
+		Store:         store,
+		WebhookSecret: "super-secret",
+		AgentToken:    "tok",
+	})
+
+	body := fixture(t, "workflow_job_completed_success.json")
+	wreq := httptest.NewRequest(http.MethodPost, "/webhooks/github", bytes.NewReader(body))
+	wreq.Header.Set("X-Hub-Signature-256", sign("super-secret", body))
+	wreq.Header.Set("X-GitHub-Event", "workflow_job")
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, wreq)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("webhook %d %s", rr.Code, rr.Body.String())
+	}
+	if got := store.Get(991001); got == nil || got.Outcome != "success" {
+		t.Fatalf("after github = %+v", got)
+	}
+
+	req := agentReq(t, http.MethodPost, "/v1/agent/jobs/finished", "tok", api.JobFinishedRequest{
+		AgentID:   "host-1",
+		JobID:     991001,
+		Outcome:   "failure",
+		VMID:      "vm-1",
+		Error:     "runner exited without completing job",
+		RunnerLog: "Running job: test\n",
+	})
+	rr = httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("agent finished %d %s", rr.Code, rr.Body.String())
+	}
+	got := store.Get(991001)
+	if got == nil || got.Status != AssignmentFinished || got.Outcome != "success" {
+		t.Fatalf("after agent = %+v want finished/success (github wins)", got)
+	}
+}
+
 func TestWebhookCompleted_UnknownJobIgnored(t *testing.T) {
 	store := NewAssignmentStore()
 	h := NewHandler(&mockMinter{}, store, HandlerConfig{RunnerGroupID: 1})

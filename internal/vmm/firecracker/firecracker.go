@@ -62,6 +62,7 @@ type Manager struct {
 	cfg    Config
 	layout vmm.Layout
 	mu     sync.Mutex
+	waits  map[vmm.ID]func() error
 }
 
 // New validates the host environment and returns a Firecracker Manager.
@@ -307,8 +308,12 @@ func (m *Manager) Boot(ctx context.Context, id vmm.ID) error {
 
 	if err := vmm.WritePIDFile(m.layout.PIDPath(id), pid); err != nil {
 		_ = vmm.StopProcess(pid, m.cfg.StopGrace)
+		if waitFn != nil {
+			_ = waitFn()
+		}
 		return err
 	}
+	m.storeWait(id, waitFn)
 	meta.State = vmm.StateRunning
 	meta.PID = pid
 	return vmm.WriteMeta(m.layout.MetaPath(id), meta)
@@ -349,6 +354,9 @@ func (m *Manager) destroyLocked(id vmm.ID) error {
 		pid = p
 	}
 	_ = vmm.StopProcess(pid, m.cfg.StopGrace)
+	if wait := m.takeWait(id); wait != nil {
+		_ = wait()
+	}
 	_ = os.Remove(m.layout.PIDPath(id))
 	_ = os.Remove(m.layout.APISockPath(id))
 
@@ -441,6 +449,29 @@ func (m *Manager) List(ctx context.Context) ([]vmm.Info, error) {
 		out = append(out, meta.ToInfo())
 	}
 	return out, nil
+}
+
+func (m *Manager) storeWait(id vmm.ID, wait func() error) {
+	if wait == nil || id == "" {
+		return
+	}
+	m.mu.Lock()
+	if m.waits == nil {
+		m.waits = make(map[vmm.ID]func() error)
+	}
+	m.waits[id] = wait
+	m.mu.Unlock()
+}
+
+func (m *Manager) takeWait(id vmm.ID) func() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.waits == nil {
+		return nil
+	}
+	wait := m.waits[id]
+	delete(m.waits, id)
+	return wait
 }
 
 func (m *Manager) startProcess(ctx context.Context, id vmm.ID, sock string) (int, func() error, error) {

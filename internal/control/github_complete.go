@@ -48,7 +48,8 @@ func githubJobOutcome(action, conclusion string) string {
 }
 
 // finishFromGitHub applies a workflow_job completed/cancelled webhook.
-// Already-terminal assignments are a no-op so GitHub retries do not re-kill.
+// GitHub's conclusion is authoritative. Already-terminal assignments still
+// take that outcome (agent kill/stale-log races) but do not re-kill.
 func (s *Server) finishFromGitHub(ctx context.Context, ev *github.WorkflowJobEvent) *HandleResult {
 	if ev == nil || ev.WorkflowJob.ID == 0 {
 		return &HandleResult{Ignored: true, Reason: "no_job"}
@@ -57,13 +58,22 @@ func (s *Server) finishFromGitHub(ctx context.Context, ev *github.WorkflowJobEve
 	if a == nil {
 		return &HandleResult{Ignored: true, Reason: "unknown_job"}
 	}
-	if a.Status == AssignmentFinished || a.Status == AssignmentFailed {
-		return &HandleResult{Ignored: true, Reason: "already_terminal"}
-	}
 	outcome := githubJobOutcome(ev.Action, ev.WorkflowJob.Conclusion)
 	msg := "github workflow_job " + ev.Action
 	if ev.WorkflowJob.Conclusion != "" {
 		msg += ": " + ev.WorkflowJob.Conclusion
+	}
+	// Already terminal: still apply GitHub's conclusion (agent may have
+	// reported cancelled/failure from a kill race or stale runner.log).
+	// Do not re-kill — retries must stay idempotent.
+	if a.Status == AssignmentFinished || a.Status == AssignmentFailed {
+		if err := s.store.ApplyGitHubOutcome(a.JobID, outcome, msg); err != nil {
+			s.log.Warn("github complete apply outcome", "job_id", a.JobID, "err", err)
+			return &HandleResult{Ignored: true, Reason: "apply_outcome"}
+		}
+		s.recordJobEvent(a.JobID, "control", "warn", msg)
+		s.PublishSnapshot()
+		return &HandleResult{Ignored: true, Reason: "already_terminal", Assignment: s.store.Get(a.JobID)}
 	}
 	switch a.Status {
 	case AssignmentMinted:

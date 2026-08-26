@@ -183,9 +183,6 @@ func (w *Worker) snapshot() CapacitySnapshot {
 	if free < 0 {
 		free = 0
 	}
-	if w.Pool.ExclusiveBusy() {
-		free = 0
-	}
 	repos, cache := w.cachedInventory()
 	return CapacitySnapshot{
 		MaxCapacity: w.Capacity,

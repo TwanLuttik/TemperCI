@@ -275,9 +275,12 @@ func (f *FirecrackerGuestExec) WaitRunner(ctx context.Context, id vmm.ID) (int, 
 	slowAt := time.Now().Add(2 * time.Second)
 	for {
 		if code, done, err := runnerWaitStatus(layout, id); done {
+			// Mailbox "exit 0" unblocks before the last inject copy. Pull logs
+			// on every completion so RefineOutcome / the dashboard see the
+			// "completed with result" line, not a stale "Running job:" prefix.
+			files, _ := firecracker.CopyInjectFiles(layout, id, layout.GuestDir(id),
+				[]string{"runner.log", "agent.log", "workflow.log"})
 			if err == nil && code != 0 {
-				files, _ := firecracker.CopyInjectFiles(layout, id, layout.GuestDir(id),
-					[]string{"runner.log", "agent.log", "workflow.log"})
 				slog.Default().Warn("guest runner failed",
 					"vm_id", string(id),
 					"exit_code", code,

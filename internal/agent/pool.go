@@ -62,8 +62,6 @@ type Pool struct {
 	// createInFlight counts cold-bind provisions not yet registered in vms.
 	createInFlight    int
 	createInFlightMem int
-	// exclusiveCreateInFlight is cold-binds of ExclusiveJobMiB+ not yet in vms.
-	exclusiveCreateInFlight int
 
 	inventory     InventorySource
 	configuredMax int
@@ -308,20 +306,6 @@ func (p *Pool) Bind(ctx context.Context, job JobPayload) (*BindResult, error) {
 			p.mu.Unlock()
 			return nil, ErrPoolStopped
 		}
-		if p.exclusiveConflictLocked(shape.MemoryMiB) {
-			waitForSmall := !ExclusiveShape(shape.MemoryMiB)
-			p.mu.Unlock()
-			if waitForSmall && p.now().After(bindDeadline) {
-				return nil, fmt.Errorf("%w: exclusive job running", ErrNoCapacity)
-			}
-			p.kick()
-			select {
-			case <-ctx.Done():
-				return nil, ctx.Err()
-			case <-time.After(50 * time.Millisecond):
-			}
-			continue
-		}
 		if id, ok := p.pickWarmLocked(shape.VCPUs, shape.MemoryMiB); ok {
 			selected = id
 			warmStart = true
@@ -346,20 +330,13 @@ func (p *Pool) Bind(ctx context.Context, job JobPayload) (*BindResult, error) {
 		}
 		// No matching warm: try cold boot of the requested size if capacity allows.
 		if p.canCreateLocked(shape.MemoryMiB) {
-			exclusive := ExclusiveShape(shape.MemoryMiB)
 			p.createInFlight++
 			p.createInFlightMem += shape.MemoryMiB
-			if exclusive {
-				p.exclusiveCreateInFlight++
-			}
 			p.mu.Unlock()
 			id, err := p.createAndBoot(ctx, shape)
 			p.mu.Lock()
 			p.createInFlight--
 			p.createInFlightMem -= shape.MemoryMiB
-			if exclusive {
-				p.exclusiveCreateInFlight--
-			}
 			if err != nil {
 				p.mu.Unlock()
 				return nil, fmt.Errorf("agent: cold boot: %w", err)
@@ -383,6 +360,18 @@ func (p *Pool) Bind(ctx context.Context, job JobPayload) (*BindResult, error) {
 			warmStart = false
 			p.mu.Unlock()
 			break
+		}
+		// Another job is holding RAM/slots that will free — wait instead of
+		// failing the claimed GitHub job after BindWait.
+		if p.reclaimableLocked() {
+			p.mu.Unlock()
+			p.kick()
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(50 * time.Millisecond):
+			}
+			continue
 		}
 		p.mu.Unlock()
 
@@ -1011,36 +1000,22 @@ func (p *Pool) countsLocked() Counts {
 	return c
 }
 
-// ExclusiveBusy reports whether a 12g+ guest is busy or being created.
+// ExclusiveBusy is kept for older dashboards. Packing is RAM-based now.
 func (p *Pool) ExclusiveBusy() bool {
-	if p == nil {
-		return false
-	}
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	return p.exclusivePresentLocked()
+	return false
 }
 
-func (p *Pool) exclusivePresentLocked() bool {
-	if p.exclusiveCreateInFlight > 0 {
+func (p *Pool) reclaimableLocked() bool {
+	if p.createInFlight > 0 {
 		return true
 	}
 	for _, vm := range p.vms {
-		if ExclusiveShape(vm.memoryMiB) && (vm.state == StateBusy || vm.state == StatePoolBoot) {
+		switch vm.state {
+		case StateBusy, StatePoolBoot, StateDestroying:
 			return true
 		}
 	}
 	return false
-}
-
-// exclusiveConflictLocked is true when nextMem must not share the host with
-// what is already running (12g+ vs anything, or anything vs 12g+).
-func (p *Pool) exclusiveConflictLocked(nextMem int) bool {
-	if ExclusiveShape(nextMem) {
-		c := p.countsLocked()
-		return c.Busy > 0 || p.createInFlight > 0
-	}
-	return p.exclusivePresentLocked()
 }
 
 // canCreateLocked reports whether a new instance may be provisioned.
@@ -1175,9 +1150,15 @@ func (p *Pool) HostResources() *api.HostResources {
 	if p.inventory == nil {
 		return nil
 	}
+	p.mu.Lock()
+	allocated := p.allocatedRAMLocked()
+	reserve := p.cfg.ReserveRAMMiB
+	p.mu.Unlock()
 	return &api.HostResources{
 		RAMTotalMiB:        inv.RAMTotalMiB,
 		RAMAvailMiB:        inv.RAMAvailMiB,
+		AllocatedRAMMiB:    allocated,
+		ReserveRAMMiB:      reserve,
 		DiskTotalMiB:       inv.DiskTotalMiB,
 		DiskFreeMiB:        inv.DiskFreeMiB,
 		NumCPU:             inv.NumCPU,

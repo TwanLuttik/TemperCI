@@ -76,6 +76,42 @@ func TestAssignmentStore_Lifecycle(t *testing.T) {
 	}
 }
 
+func TestAssignmentStore_MarkFinishedDoesNotOverwriteOutcome(t *testing.T) {
+	s := NewAssignmentStore()
+	s.Put(&Assignment{JobID: 10, Status: AssignmentStarted, AssignedAgentID: "host-1"})
+	if err := s.MarkFinished(10, "host-1", "success", "vm-1", false, "github workflow_job completed: success"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.MarkFinished(10, "host-1", "failure", "vm-1", false, "runner exited without completing job"); err != nil {
+		t.Fatal(err)
+	}
+	got := s.Get(10)
+	if got.Outcome != "success" {
+		t.Fatalf("outcome = %q want success (first finish wins)", got.Outcome)
+	}
+	if got.Error != "github workflow_job completed: success" {
+		t.Fatalf("error = %q want github message", got.Error)
+	}
+}
+
+func TestAssignmentStore_ApplyGitHubOutcomeOverwritesAgent(t *testing.T) {
+	s := NewAssignmentStore()
+	s.Put(&Assignment{JobID: 10, Status: AssignmentStarted, AssignedAgentID: "host-1"})
+	if err := s.MarkFinished(10, "host-1", "cancelled", "vm-1", false, "agent: runner stopped"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ApplyGitHubOutcome(10, "success", "github workflow_job completed: success"); err != nil {
+		t.Fatal(err)
+	}
+	got := s.Get(10)
+	if got.Status != AssignmentFinished || got.Outcome != "success" {
+		t.Fatalf("after github = %+v want finished/success", got)
+	}
+	if got.Error != "github workflow_job completed: success" {
+		t.Fatalf("error = %q", got.Error)
+	}
+}
+
 func TestAssignmentStore_WrongAgentRejected(t *testing.T) {
 	s := NewAssignmentStore()
 	s.Put(&Assignment{JobID: 5, Status: AssignmentMinted})

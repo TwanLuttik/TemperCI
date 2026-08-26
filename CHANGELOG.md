@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Dashboard outcome now follows GitHub's `workflow_job` conclusion. A later agent report (stale `runner.log` "incomplete" or kill-race `cancelled`) no longer overwrites a GitHub success, and a GitHub success corrects an earlier agent failure/cancel.
+- A finished job no longer leaves its microVM on the dashboard as `busy`. An empty heartbeat now clears the last VM snapshot (`vms` was omitted by `omitempty`), and Destroy waits the Firecracker child so it does not stay `<defunct>`.
+- Hosts page shows how RAM is split (guest committed, host reserve, leftover). Assigned jobs waiting on host RAM say so on the jobs list.
+- Jobs pack on a host until admission says there is not enough RAM (or disk); then Bind waits. 12g+ guests no longer take the host exclusively.
+
 ## [0.1.7] - 2026-08-24
 
 ### Added

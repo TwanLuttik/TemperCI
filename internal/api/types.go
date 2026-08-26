@@ -61,6 +61,8 @@ type VMUsage struct {
 type HostResources struct {
 	RAMTotalMiB        int    `json:"ram_total_mib"`
 	RAMAvailMiB        int    `json:"ram_avail_mib"`
+	AllocatedRAMMiB    int    `json:"allocated_ram_mib"`
+	ReserveRAMMiB      int    `json:"reserve_ram_mib"`
 	DiskTotalMiB       int    `json:"disk_total_mib"`
 	DiskFreeMiB        int    `json:"disk_free_mib"`
 	NumCPU             int    `json:"num_cpu"`
@@ -68,6 +70,8 @@ type HostResources struct {
 	EffectiveMaxReady  int    `json:"effective_max_ready"`
 	ClampReason        string `json:"clamp_reason,omitempty"`
 	LastAdmitReason    string `json:"last_admit_reason,omitempty"`
+	// ExclusiveBusy is unused (packing is RAM-based). Kept so old UIs still parse.
+	ExclusiveBusy bool `json:"exclusive_busy,omitempty"`
 }
 
 // RegisterRequest is sent by an agent on startup (or heartbeat re-register).
@@ -85,8 +89,10 @@ type RegisterRequest struct {
 	Busy int `json:"busy,omitempty"`
 	// Labels optional host capability labels (reserved).
 	Labels []string `json:"labels,omitempty"`
-	// VMs is optional per-microVM usage for the dashboard (realtime).
-	VMs []VMUsage `json:"vms,omitempty"`
+	// VMs is the live microVM list. Must not be omitempty: an empty
+	// slice has to reach control so a finished job does not leave a
+	// stale "busy" guest on the dashboard.
+	VMs []VMUsage `json:"vms"`
 	// CachedRepos is org/repo namespaces present in this agent's local cache.
 	CachedRepos []string `json:"cached_repos,omitempty"`
 	// Cache is the latest host-local Actions cache inventory.

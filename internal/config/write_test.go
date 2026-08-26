@@ -140,6 +140,46 @@ min_ready = 0
 	}
 }
 
+func TestWriteAgentShapes_EmptyClearsWarmPool(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "agent.toml")
+	orig := `agent_token = "tok"
+image_path = "/img"
+vcpu = 4
+memory_mib = 6144
+min_ready = 1
+max_ready = 2
+
+[[shapes]]
+label = "temperci-4vcpu-6g-ubuntu-2404"
+vcpu = 4
+memory_mib = 6144
+min_ready = 1
+`
+	if err := os.WriteFile(path, []byte(orig), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteAgentShapes(path, nil); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadAgentFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.MinReady != 0 {
+		t.Fatalf("MinReady = %d want 0", cfg.MinReady)
+	}
+	if cfg.MaxReady != 2 {
+		t.Fatalf("MaxReady = %d want 2", cfg.MaxReady)
+	}
+	if len(cfg.Shapes) != 0 {
+		t.Fatalf("Shapes = %+v want empty", cfg.Shapes)
+	}
+	if strings.Contains(mustRead(t, path), "[[shapes]]") {
+		t.Fatal("shape tables should be removed")
+	}
+}
+
 func mustRead(t *testing.T, path string) string {
 	t.Helper()
 	b, err := os.ReadFile(path)

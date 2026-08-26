@@ -276,11 +276,16 @@ func (c *AgentConfig) Validate() error {
 	if c.JobDeadlineSeconds < 0 {
 		return fmt.Errorf("config: job_deadline_seconds must be >= 0")
 	}
-	if c.MinReady <= 0 {
-		c.MinReady = 1
+	if c.MinReady < 0 {
+		return fmt.Errorf("config: min_ready must be >= 0")
 	}
 	if c.MaxReady <= 0 {
-		c.MaxReady = c.MinReady
+		if c.MinReady > 0 {
+			c.MaxReady = c.MinReady
+		} else {
+			// No warm pool still needs job slots so cold-boots can be claimed.
+			c.MaxReady = 2
+		}
 	}
 	if c.MaxReady < c.MinReady {
 		return fmt.Errorf("config: max_ready (%d) must be >= min_ready (%d)", c.MaxReady, c.MinReady)
@@ -417,7 +422,9 @@ func defaultShapeLabel(vcpus, memoryMiB int) string {
 	return fmt.Sprintf("temperci-%dvcpu-%dg-ubuntu-2404", vcpus, g)
 }
 
-// EffectiveShapes is the warm catalog. Empty [[shapes]] becomes the legacy single size.
+// EffectiveShapes is the warm catalog. Empty [[shapes]] with min_ready>0
+// becomes the legacy single size. Empty [[shapes]] with min_ready=0 means
+// no warm pool; jobs still cold-boot from the workflow runs-on label.
 func (c *AgentConfig) EffectiveShapes() []VMShapeConfig {
 	if c == nil {
 		return nil
@@ -426,6 +433,9 @@ func (c *AgentConfig) EffectiveShapes() []VMShapeConfig {
 		out := make([]VMShapeConfig, len(c.Shapes))
 		copy(out, c.Shapes)
 		return out
+	}
+	if c.MinReady <= 0 {
+		return []VMShapeConfig{}
 	}
 	return []VMShapeConfig{{
 		Label:     defaultShapeLabel(c.VCPU, c.MemoryMiB),

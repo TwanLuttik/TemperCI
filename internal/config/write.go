@@ -131,9 +131,6 @@ func WriteAgentShapes(path string, shapes []VMShapeConfig) error {
 	if path == "" {
 		return fmt.Errorf("config: empty path")
 	}
-	if len(shapes) == 0 {
-		return fmt.Errorf("config: at least one runner shape is required")
-	}
 	for i := range shapes {
 		if err := normalizeShape(&shapes[i], 4, 8192); err != nil {
 			return err
@@ -144,19 +141,26 @@ func WriteAgentShapes(path string, shapes []VMShapeConfig) error {
 		return fmt.Errorf("config: read %s: %w", path, err)
 	}
 	text := stripTOMLTables(string(raw), "shapes")
-	text = upsertTOMLInt(text, "vcpu", shapes[0].VCPU)
-	text = upsertTOMLInt(text, "memory_mib", shapes[0].MemoryMiB)
-	text = upsertTOMLInt(text, "min_ready", shapes[0].MinReady)
+	if len(shapes) == 0 {
+		// No catalog: keep existing vcpu/memory_mib defaults, drop warm target.
+		text = upsertTOMLInt(text, "min_ready", 0)
+	} else {
+		text = upsertTOMLInt(text, "vcpu", shapes[0].VCPU)
+		text = upsertTOMLInt(text, "memory_mib", shapes[0].MemoryMiB)
+		text = upsertTOMLInt(text, "min_ready", shapes[0].MinReady)
+	}
 	if !strings.HasSuffix(text, "\n") {
 		text += "\n"
 	}
-	text += "\n"
-	for _, s := range shapes {
-		text += "[[shapes]]\n"
-		text += fmt.Sprintf("label = %q\n", s.Label)
-		text += fmt.Sprintf("vcpu = %d\n", s.VCPU)
-		text += fmt.Sprintf("memory_mib = %d\n", s.MemoryMiB)
-		text += fmt.Sprintf("min_ready = %d\n\n", s.MinReady)
+	if len(shapes) > 0 {
+		text += "\n"
+		for _, s := range shapes {
+			text += "[[shapes]]\n"
+			text += fmt.Sprintf("label = %q\n", s.Label)
+			text += fmt.Sprintf("vcpu = %d\n", s.VCPU)
+			text += fmt.Sprintf("memory_mib = %d\n", s.MemoryMiB)
+			text += fmt.Sprintf("min_ready = %d\n\n", s.MinReady)
+		}
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err

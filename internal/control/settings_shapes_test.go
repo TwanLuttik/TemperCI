@@ -59,3 +59,50 @@ func TestSettingsShapes_GetDefaultAndSave(t *testing.T) {
 		t.Fatalf("saved shapes = %+v", cfg.Shapes)
 	}
 }
+
+func TestSettingsShapes_SaveEmptyClearsWarmPool(t *testing.T) {
+	dir := t.TempDir()
+	agentPath := filepath.Join(dir, "agent.toml")
+	if err := os.WriteFile(agentPath, []byte("agent_token = \"tok\"\nimage_path = \"/img\"\nvmm_backend = \"fake\"\nvcpu = 4\nmemory_mib = 8192\nmin_ready = 1\nmax_ready = 2\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	srv := NewServer(ServerConfig{
+		AgentToken: "tok",
+		Dashboard: &DashboardConfig{
+			Config:          &config.ControlConfig{AuthMode: "open", SetupCompleted: true, GitHubOrg: "acme"},
+			ConfigPath:      filepath.Join(dir, "control.toml"),
+			AgentConfigPath: agentPath,
+		},
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/settings/shapes", strings.NewReader(`{"shapes":[]}`))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("POST empty %d %s", rr.Code, rr.Body.String())
+	}
+	cfg, err := config.LoadAgentFile(agentPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.MinReady != 0 || len(cfg.Shapes) != 0 {
+		t.Fatalf("want no warm pool, got min_ready=%d shapes=%+v", cfg.MinReady, cfg.Shapes)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/settings/shapes", nil)
+	rr = httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET %d %s", rr.Code, rr.Body.String())
+	}
+	var got struct {
+		Shapes []config.VMShapeConfig `json:"shapes"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Shapes) != 0 {
+		t.Fatalf("GET after empty save = %+v want []", got.Shapes)
+	}
+}

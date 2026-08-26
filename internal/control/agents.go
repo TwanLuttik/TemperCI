@@ -41,9 +41,10 @@ func (r *AgentRegistry) Register(req api.RegisterRequest) api.AgentInfo {
 	if len(req.Labels) > 0 {
 		info.Labels = append([]string(nil), req.Labels...)
 	}
-	if req.VMs != nil {
-		info.VMs = append([]api.VMUsage(nil), req.VMs...)
-	}
+	// Always replace. json omitempty drops an empty list, so req.VMs is
+	// nil after a heartbeat with no live VMs — keeping the previous
+	// slice left destroyed guests on the dashboard as "busy".
+	info.VMs = append([]api.VMUsage(nil), req.VMs...)
 	if req.CachedRepos != nil {
 		info.CachedRepos = append([]string(nil), req.CachedRepos...)
 	}

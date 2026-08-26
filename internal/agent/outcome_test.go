@@ -35,12 +35,16 @@ func TestRefineOutcome_KeepsNonSuccess(t *testing.T) {
 	}
 }
 
-func TestRefineOutcome_StartedJobWithoutCompletionIsFailure(t *testing.T) {
+func TestRefineOutcome_StartedJobWithoutCompletionKeepsGuestSuccess(t *testing.T) {
+	// Host runner.log is often missing the completion line (mailbox unblocks
+	// WaitRunner before the inject copy). The guest already remaps a truly
+	// incomplete job to exit 98. Do not second-guess a guest exit 0 from a
+	// stale host-side log — that is how GitHub-success jobs were marked failure.
 	log := "\n√ Connected to GitHub\n\nCurrent runner version: '2.336.0'\n" +
 		"2026-08-24 07:58:17Z: Listening for Jobs\n" +
 		"2026-08-24 07:58:20Z: Running job: e2e\n"
-	if got := RefineOutcome("success", log); got != "failure" {
-		t.Fatalf("RefineOutcome = %q want failure (incomplete job)", got)
+	if got := RefineOutcome("success", log); got != "success" {
+		t.Fatalf("RefineOutcome = %q want success (stale host log, guest said 0)", got)
 	}
 }
 

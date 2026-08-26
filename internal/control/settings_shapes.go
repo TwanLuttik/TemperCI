@@ -40,10 +40,6 @@ func (s *Server) handleSettingsShapesSave(w http.ResponseWriter, r *http.Request
 		writeAPIError(w, http.StatusBadRequest, "invalid json")
 		return
 	}
-	if len(req.Shapes) == 0 {
-		writeAPIError(w, http.StatusBadRequest, "at least one runner shape is required")
-		return
-	}
 	path := s.dash.agentConfigPath()
 	if _, err := os.Stat(path); err != nil {
 		writeAPIError(w, http.StatusNotFound, "agent.toml not found at "+path)
@@ -57,7 +53,7 @@ func (s *Server) handleSettingsShapesSave(w http.ResponseWriter, r *http.Request
 		"ok":         true,
 		"agent_path": path,
 		"restart":    req.Restart,
-		"note":       "Shapes written to agent.toml. Restart the agent to refill the warm pool.",
+		"note":       "Shapes written to agent.toml. Restart the agent to apply the warm pool (empty list = no warm VMs).",
 	}
 	if req.Restart {
 		resp["reconnect"] = true

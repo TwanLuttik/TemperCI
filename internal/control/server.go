@@ -450,6 +450,7 @@ func (s *Server) handleJobFinished(w http.ResponseWriter, r *http.Request) {
 		outcome = "unknown"
 	}
 	if a := s.store.Get(req.JobID); a != nil && a.Name != "" &&
+		a.Status != AssignmentFinished && a.Status != AssignmentFailed &&
 		agent.RefineOutcomeForJob("success", req.RunnerLog, a.Name) == "error" {
 		reason := "runner accepted different GitHub job"
 		if started := agent.RunningJobName(req.RunnerLog); started != "" {

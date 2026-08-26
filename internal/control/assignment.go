@@ -390,11 +390,16 @@ func (s *AssignmentStore) MarkFinished(jobID int64, agentID, outcome, vmID strin
 		s.mu.Unlock()
 		return fmt.Errorf("control: job %d cannot finish from status %s", jobID, st)
 	}
+	// First terminal outcome wins. GitHub may later correct via ApplyGitHubOutcome;
+	// the agent must not overwrite a GitHub success with a stale-log "failure".
+	already := a.Status == AssignmentFinished
 	a.Status = AssignmentFinished
 	a.AssignedAgentID = agentID
-	a.Outcome = outcome
-	if errMsg != "" {
-		a.Error = errMsg
+	if !already {
+		a.Outcome = outcome
+		if errMsg != "" {
+			a.Error = errMsg
+		}
 	}
 	if vmID != "" {
 		a.VMID = vmID
@@ -404,6 +409,30 @@ func (s *AssignmentStore) MarkFinished(jobID int64, agentID, outcome, vmID strin
 		a.FinishedAt = time.Now().UTC()
 	}
 	// Drop secret after finish so long-lived process memory holds less JIT material.
+	a.EncodedJITConfig = ""
+	cp := *a
+	p := s.persister
+	s.mu.Unlock()
+	return flushPersist(p, &cp)
+}
+
+// ApplyGitHubOutcome sets the official workflow_job conclusion. GitHub is
+// authoritative, including when the agent already finished (kill race / stale log).
+func (s *AssignmentStore) ApplyGitHubOutcome(jobID int64, outcome, errMsg string) error {
+	s.mu.Lock()
+	a, ok := s.byID[jobID]
+	if !ok {
+		s.mu.Unlock()
+		return fmt.Errorf("control: unknown job %d", jobID)
+	}
+	a.Status = AssignmentFinished
+	a.Outcome = outcome
+	if errMsg != "" {
+		a.Error = errMsg
+	}
+	if a.FinishedAt.IsZero() {
+		a.FinishedAt = time.Now().UTC()
+	}
 	a.EncodedJITConfig = ""
 	cp := *a
 	p := s.persister

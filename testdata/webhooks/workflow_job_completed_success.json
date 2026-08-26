@@ -1,0 +1,32 @@
+{
+  "action": "completed",
+  "workflow_job": {
+    "id": 991001,
+    "run_id": 55001,
+    "run_attempt": 1,
+    "name": "e2e",
+    "workflow_name": "E2E Tests",
+    "status": "completed",
+    "conclusion": "success",
+    "labels": ["temperci-4vcpu-ubuntu-2404"],
+    "html_url": "https://github.com/acme/demo/actions/runs/55001/job/991001"
+  },
+  "repository": {
+    "id": 1001,
+    "name": "demo",
+    "full_name": "acme/demo",
+    "private": true
+  },
+  "organization": {
+    "login": "acme",
+    "id": 2001
+  },
+  "workflow": {
+    "id": 77,
+    "name": "E2E Tests",
+    "path": ".github/workflows/e2e-tests.yml"
+  },
+  "installation": {
+    "id": 12345
+  }
+}

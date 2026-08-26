@@ -143,7 +143,7 @@ export function SettingsPage({ onOverview }: Props) {
     onOverview(overview);
     setCfg(settings);
     setForm(formFromConfig(settings));
-    setShapes(shapeCfg.shapes?.length ? shapeCfg.shapes : [{ vcpu: 4, memory_mib: 8192, min_ready: 1 }]);
+    setShapes(shapeCfg.shapes ?? []);
     setShapePath(shapeCfg.agent_path || "");
   }, [onOverview]);
 
@@ -618,10 +618,9 @@ function RunnerShapesCard({
       </CardHeader>
       <CardContent className="space-y-3">
         <p className="text-sm text-muted-foreground">
-          Keep one or more sizes warm. Workflows pick a size with{" "}
-          <code className="font-mono text-xs">runs-on: temperci-4vcpu-ubuntu-2404</code> or{" "}
-          <code className="font-mono text-xs">temperci-2vcpu-4g-ubuntu-2404</code>. A matching warm VM
-          is used when one exists; otherwise that size is cold-booted.
+          Keep sizes warm, or remove every row for no warm pool (jobs cold-boot from the
+          workflow <code className="font-mono text-xs">runs-on</code> label). Set Warm to 0 on a
+          row to keep the size listed without pre-booting it.
         </p>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
@@ -635,53 +634,61 @@ function RunnerShapesCard({
               </tr>
             </thead>
             <tbody>
-              {shapes.map((s, i) => (
-                <tr key={`${s.vcpu}-${s.memory_mib}-${i}`} className="border-t border-border">
-                  <td className="py-2 pr-3">
-                    <Input
-                      type="number"
-                      min={1}
-                      className="w-20 font-mono"
-                      value={s.vcpu || ""}
-                      onChange={(e) => patch(i, { vcpu: Number(e.target.value) || 0 })}
-                    />
-                  </td>
-                  <td className="py-2 pr-3">
-                    <Input
-                      type="number"
-                      min={1}
-                      className="w-20 font-mono"
-                      value={s.memory_mib ? Math.round(s.memory_mib / 1024) : ""}
-                      onChange={(e) =>
-                        patch(i, { memory_mib: Math.max(1, Number(e.target.value) || 0) * 1024 })
-                      }
-                    />
-                  </td>
-                  <td className="py-2 pr-3">
-                    <Input
-                      type="number"
-                      min={0}
-                      className="w-20 font-mono"
-                      value={s.min_ready}
-                      onChange={(e) => patch(i, { min_ready: Math.max(0, Number(e.target.value) || 0) })}
-                    />
-                  </td>
-                  <td className="py-2 pr-3 font-mono text-xs text-muted-foreground">
-                    {shapeLabel({ ...s, label: undefined })}
-                  </td>
-                  <td className="py-2 text-right">
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      disabled={shapes.length <= 1}
-                      onClick={() => onChange(shapes.filter((_, idx) => idx !== i))}
-                    >
-                      Remove
-                    </Button>
+              {shapes.length === 0 ? (
+                <tr className="border-t border-border">
+                  <td colSpan={5} className="py-4 text-sm text-muted-foreground">
+                    No sizes listed. Nothing is kept warm. Workflows still run by
+                    cold-booting the requested <code className="font-mono text-xs">runs-on</code> size.
                   </td>
                 </tr>
-              ))}
+              ) : (
+                shapes.map((s, i) => (
+                  <tr key={`${s.vcpu}-${s.memory_mib}-${i}`} className="border-t border-border">
+                    <td className="py-2 pr-3">
+                      <Input
+                        type="number"
+                        min={1}
+                        className="w-20 font-mono"
+                        value={s.vcpu || ""}
+                        onChange={(e) => patch(i, { vcpu: Number(e.target.value) || 0 })}
+                      />
+                    </td>
+                    <td className="py-2 pr-3">
+                      <Input
+                        type="number"
+                        min={1}
+                        className="w-20 font-mono"
+                        value={s.memory_mib ? Math.round(s.memory_mib / 1024) : ""}
+                        onChange={(e) =>
+                          patch(i, { memory_mib: Math.max(1, Number(e.target.value) || 0) * 1024 })
+                        }
+                      />
+                    </td>
+                    <td className="py-2 pr-3">
+                      <Input
+                        type="number"
+                        min={0}
+                        className="w-20 font-mono"
+                        value={s.min_ready}
+                        onChange={(e) => patch(i, { min_ready: Math.max(0, Number(e.target.value) || 0) })}
+                      />
+                    </td>
+                    <td className="py-2 pr-3 font-mono text-xs text-muted-foreground">
+                      {shapeLabel({ ...s, label: undefined })}
+                    </td>
+                    <td className="py-2 text-right">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => onChange(shapes.filter((_, idx) => idx !== i))}
+                      >
+                        Remove
+                      </Button>
+                    </td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
         </div>

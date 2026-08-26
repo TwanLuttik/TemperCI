@@ -4,8 +4,8 @@ import "strings"
 
 // RefineOutcome keeps timeout/cancelled/error, but upgrades a false "success"
 // when the official actions/runner aborted mid-job (OOM / SIGABRT / 134)
-// or started a job and never wrote "completed with result: succeeded".
-// Upstream run-helper.sh maps those unknown codes to exit 0.
+// or wrote "completed with result: Failed". A missing success line is not
+// enough: the host runner.log is often truncated. Guest remap covers that.
 func RefineOutcome(outcome, runnerLog string) string {
 	return RefineOutcomeForJob(outcome, runnerLog, "")
 }
@@ -24,9 +24,12 @@ func RefineOutcomeForJob(outcome, runnerLog, assignedName string) string {
 	if jobCompletedOK(runnerLog) {
 		return "success"
 	}
-	if runnerLogIndicatesAbort(runnerLog) || jobStartedButIncomplete(runnerLog) {
+	if jobCompletedFailed(runnerLog) || runnerLogIndicatesAbort(runnerLog) {
 		return "failure"
 	}
+	// Missing "completed with result: succeeded" is not enough: the host
+	// copy of runner.log is often truncated (mailbox unblocks before inject
+	// copy). The guest already remaps a truly incomplete exit 0 to 98.
 	return "success"
 }
 
@@ -49,14 +52,15 @@ func runningJobName(log string) string {
 	return strings.TrimSpace(rest)
 }
 
-func jobStartedButIncomplete(log string) bool {
-	low := strings.ToLower(log)
-	return strings.Contains(low, "running job:") &&
-		!strings.Contains(low, "completed with result: succeeded")
-}
-
 func jobCompletedOK(log string) bool {
 	return strings.Contains(strings.ToLower(log), "completed with result: succeeded")
+}
+
+func jobCompletedFailed(log string) bool {
+	low := strings.ToLower(log)
+	return strings.Contains(low, "completed with result: failed") ||
+		strings.Contains(low, "completed with result: cancelled") ||
+		strings.Contains(low, "completed with result: canceled")
 }
 
 func runnerLogIndicatesAbort(log string) bool {

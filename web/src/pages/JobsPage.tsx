@@ -8,6 +8,7 @@ import { PageHeader } from "../components/page-header";
 import { StatusBadge } from "../components/status-badge";
 import { useNow } from "../hooks/useNow";
 import { useRealtime } from "../hooks/useRealtime";
+import { jobWaitHint } from "../lib/host-memory";
 import { jobsNeedLiveClock, liveJobClockMs, liveJobTimings, mergeJobSnapshots } from "../lib/job-duration";
 import { jobStepProgress, settleSteps } from "../lib/job-steps";
 import { Card } from "@/components/ui/card";
@@ -86,13 +87,17 @@ export function JobsPage() {
                 </TableCell>
               </TableRow>
             ) : (
-              jobs.map((j) => (
+              jobs.map((j) => {
+                const host = (rt.last?.hosts || []).find((h) => h.agent_id === j.assigned_agent_id);
+                const wait = jobWaitHint(j.status, j.vm_id, host?.resources, host?.vms);
+                return (
                 <TableRow key={j.job_id}>
                   <TableCell>
                     <Link to={`/jobs/${j.job_id}`} className="text-primary">
                       <div className="font-medium">{j.name || `Job ${j.job_id}`}</div>
                       <code className="font-mono text-[11px] text-muted-foreground">{j.job_id}</code>
                     </Link>
+                    {wait ? <div className="mt-1 text-[11px] text-amber-500">{wait}</div> : null}
                   </TableCell>
                   <TableCell>
                     <div>{j.workflow_name || "—"}</div>
@@ -135,7 +140,8 @@ export function JobsPage() {
                     ) : null}
                   </TableCell>
                 </TableRow>
-              ))
+                );
+              })
             )}
           </TableBody>
         </Table>

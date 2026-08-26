@@ -11,11 +11,11 @@ import (
 
 const defaultImageToken = "ubuntu-2404"
 
-// ExclusiveJobMiB is the guest RAM at which a job must run alone on the host.
-// A 12g e2e packed with a 6g API test OOM'd a 31 GiB box (job 97648498475).
+// ExclusiveJobMiB is the historical "large guest" threshold (12g). Packing is
+// RAM-admission based now; this remains for label/docs helpers.
 const ExclusiveJobMiB = 12 * 1024
 
-// ExclusiveShape reports whether this guest size must not share the host.
+// ExclusiveShape is retained for tests/docs. The pool no longer isolates these.
 func ExclusiveShape(memoryMiB int) bool {
 	return memoryMiB >= ExclusiveJobMiB
 }

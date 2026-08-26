@@ -195,6 +195,8 @@ export type CacheClearResponse = {
 export type HostResources = {
   ram_total_mib?: number;
   ram_avail_mib?: number;
+  allocated_ram_mib?: number;
+  reserve_ram_mib?: number;
   disk_total_mib?: number;
   disk_free_mib?: number;
   num_cpu?: number;
@@ -202,6 +204,7 @@ export type HostResources = {
   effective_max_ready?: number;
   clamp_reason?: string;
   last_admit_reason?: string;
+  exclusive_busy?: boolean;
 };
 
 export type Host = {
