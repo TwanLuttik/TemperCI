@@ -16,6 +16,7 @@ type Hub struct {
 	clients map[*wsClient]struct{}
 	log     *slog.Logger
 	up      websocket.Upgrader
+	onSend  func([]byte) // tests
 }
 
 type wsClient struct {
@@ -45,6 +46,9 @@ func (h *Hub) BroadcastJSON(v any) {
 	raw, err := json.Marshal(v)
 	if err != nil {
 		return
+	}
+	if h.onSend != nil {
+		h.onSend(raw)
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()

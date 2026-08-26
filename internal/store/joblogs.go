@@ -87,6 +87,43 @@ func (s *Store) MergeJobLogs(jobID int64, runnerLog, agentLog, consoleLog string
 	return s.writeJobLog(cur)
 }
 
+// ApplyWorkflowAppend returns the updated log, or ok=false if the chunk is a gap/duplicate.
+func ApplyWorkflowAppend(cur string, offset int, chunk string) (string, bool) {
+	if chunk == "" || offset < 0 {
+		return cur, false
+	}
+	if cur == "" {
+		if offset != 0 || !AcceptWorkflowLog(chunk) {
+			return cur, false
+		}
+		return chunk, true
+	}
+	if offset == len(cur) {
+		return cur + chunk, true
+	}
+	if offset < len(cur) && offset+len(chunk) > len(cur) {
+		return cur[:offset] + chunk, true
+	}
+	return cur, false
+}
+
+// AppendWorkflowLog writes new bytes at offset. Gaps are ignored (inject heals).
+func (s *Store) AppendWorkflowLog(jobID int64, offset int, chunk string) error {
+	if jobID == 0 {
+		return fmt.Errorf("store: job_id required")
+	}
+	cur, err := s.GetJobLog(jobID)
+	if err != nil {
+		return err
+	}
+	next, ok := ApplyWorkflowAppend(cur.WorkflowLog, offset, chunk)
+	if !ok {
+		return nil
+	}
+	cur.WorkflowLog = next
+	return s.writeJobLog(cur)
+}
+
 // SetWorkflowLog stores the official GitHub Actions job log (step output).
 func (s *Store) SetWorkflowLog(jobID int64, text string) error {
 	if jobID == 0 {

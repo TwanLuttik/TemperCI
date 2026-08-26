@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"strconv"
 	"sync"
 	"time"
@@ -460,23 +462,58 @@ func (w *Worker) streamLogs(ctx context.Context, jobID int64, vmID vmm.ID) {
 	if w.Client == nil || jobID == 0 {
 		return
 	}
-	t := time.NewTicker(2 * time.Second)
-	defer t.Stop()
-	var last string
+	fast := time.NewTicker(LiveLogInterval)
+	defer fast.Stop()
+	slow := time.NewTicker(2 * time.Second)
+	defer slow.Stop()
+	var lastWF string
+	var lastSlow string
+	var lastSize int64 = -1
+	var lastMod time.Time
+	wfPath := ""
+	if w.Pool != nil && vmID != "" {
+		wfPath = filepath.Join(w.Pool.HostLayout().GuestDir(vmID), "workflow.log")
+	}
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-t.C:
+		case <-fast.C:
+			if wfPath == "" {
+				continue
+			}
+			st, err := os.Stat(wfPath)
+			if err != nil || (st.Size() == lastSize && st.ModTime().Equal(lastMod)) {
+				continue
+			}
+			lastSize = st.Size()
+			lastMod = st.ModTime()
+			wf := readLogFileN(maxUploadedWorkflowLogBytes, wfPath)
+			full, app, off, ok := nextWorkflowUpload(lastWF, wf)
+			if !ok {
+				continue
+			}
+			lastWF = wf
+			logs := JobLogs{WorkflowLog: full, WorkflowOffset: off, WorkflowAppend: app}
+			if err := w.Client.ReportLogs(ctx, jobID, logs); err != nil && w.Log != nil {
+				w.Log.Info("live log upload failed", "job_id", jobID, "err", err)
+			}
+		case <-slow.C:
 			logs := w.collectLogs(vmID)
 			if logs.RunnerLog == "" && logs.AgentLog == "" && logs.ConsoleLog == "" && logs.WorkflowLog == "" {
 				continue
 			}
 			sig := logs.RunnerLog + "\x00" + logs.AgentLog + "\x00" + logs.ConsoleLog + "\x00" + logs.WorkflowLog
-			if sig == last {
+			if sig == lastSlow {
 				continue
 			}
-			last = sig
+			lastSlow = sig
+			// Fast path already owns a longer workflow.log; do not regress it.
+			if lastWF != "" && len(logs.WorkflowLog) < len(lastWF) {
+				logs.WorkflowLog = ""
+			} else if logs.WorkflowLog != "" {
+				lastWF = logs.WorkflowLog
+			}
 			if err := w.Client.ReportLogs(ctx, jobID, logs); err != nil && w.Log != nil {
 				w.Log.Info("live log upload failed", "job_id", jobID, "err", err)
 			}

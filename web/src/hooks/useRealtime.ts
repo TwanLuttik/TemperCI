@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import type { Host, Job, Overview } from "../api";
+import type { Host, Job, JobLogs, Overview } from "../api";
+import { applyJobLogsFrame } from "../lib/job-log-live";
 
 export type VMRow = {
   agent_id: string;
@@ -34,6 +35,7 @@ export type RealtimeState = {
   connected: boolean;
   status: RealtimeStatus;
   last?: RealtimeSnapshot;
+  jobLogs: Record<string, JobLogs>;
   error?: string;
 };
 
@@ -50,6 +52,7 @@ export function useRealtime(enabled = true): RealtimeState {
   const [state, setState] = useState<RealtimeState>({
     connected: false,
     status: enabled ? "connecting" : "rest",
+    jobLogs: {},
   });
   const retryRef = useRef(0);
   const wsRef = useRef<WebSocket | null>(null);
@@ -77,10 +80,35 @@ export function useRealtime(enabled = true): RealtimeState {
 
         ws.onmessage = (ev) => {
           try {
-            const data = JSON.parse(String(ev.data)) as RealtimeSnapshot;
+            const data = JSON.parse(String(ev.data)) as RealtimeSnapshot & {
+              type?: string;
+              job_id?: number;
+              workflow_log?: string;
+              workflow_offset?: number;
+              workflow_append?: string;
+              runner_log?: string;
+              agent_log?: string;
+              console_log?: string;
+            };
+            const jobID = data.job_id;
+            if (data.type === "job_logs" && jobID) {
+              setState((s) => ({
+                ...s,
+                connected: true,
+                status: "live",
+                jobLogs: applyJobLogsFrame(s.jobLogs || {}, jobID, data),
+              }));
+              return;
+            }
             if (data.type === "snapshot" || data.type === "hello") {
               if (data.type === "snapshot") {
-                setState({ connected: true, status: "live", last: data });
+                setState((s) => ({
+                  ...s,
+                  connected: true,
+                  status: "live",
+                  last: data,
+                  jobLogs: s.jobLogs || {},
+                }));
               }
             }
           } catch {
@@ -101,7 +129,12 @@ export function useRealtime(enabled = true): RealtimeState {
           timer = setTimeout(connect, delay);
         };
       } catch (e) {
-        setState({ connected: false, status: "connecting", error: (e as Error).message });
+        setState((s) => ({
+          ...s,
+          connected: false,
+          status: "connecting",
+          error: (e as Error).message,
+        }));
         timer = setTimeout(connect, 2000);
       }
     };

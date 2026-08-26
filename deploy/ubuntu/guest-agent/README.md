@@ -38,6 +38,8 @@ job_simulate_seconds = 0
 
 While a job is running the guest snapshots `_diag/pages/*.log` — that is the action stdout GitHub streams in the Actions UI. The runner deletes each page after upload; TemperCI keeps a copy so finished steps stay visible. Worker `_diag` is only used before the first page exists.
 
+New page bytes go to the host as soon as they grow. UDP 9876 is the default (PVE already allows it). TCP 9877 is tried once with a 200ms timeout — a blocking `/dev/tcp` connect sat for ~130s on PVE INPUT DROP (job 98153016606). The dashboard WebSocket carries those bytes as `job_logs` frames; the 2s `snapshot` is only hosts/jobs/VMs. Inject remount stays an idle fallback. Do not remount inject to stream logs.
+
 The guest agent also:
 
 - Enables a 2 GiB `/swapfile` at boot (`TEMPERCI_SWAP_MIB=0` disables).

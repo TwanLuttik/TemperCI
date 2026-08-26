@@ -7,12 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.8] - 2026-08-26
+
+### Added
+
+- Job page live logs are WebSocket `job_logs` frames (~10 Hz). Fleet `snapshot` stays ~2s (hosts/jobs/VMs only). Job detail REST-polls only when the socket is down, plus one GET after finish for GitHub's official log.
+- Guest sends new `_diag/pages` bytes over the TAP mailbox as they grow (UDP 9876). TCP 9877 is optional and must not block; PVE INPUT drops TAP TCP unless punched. Inject remount stays an idle fallback.
+- Hosts page shows how RAM is split (guest committed, host reserve, leftover). Assigned jobs waiting on host RAM say so on the jobs list.
+
+### Changed
+
+- Jobs pack on a host until admission says there is not enough RAM (or disk); then Bind waits. 12g+ guests no longer take the host exclusively.
+- `min_ready = 0` / empty `[[shapes]]` means no warm pool (jobs cold-boot from the workflow `runs-on` label).
+
 ### Fixed
 
 - Dashboard outcome now follows GitHub's `workflow_job` conclusion. A later agent report (stale `runner.log` "incomplete" or kill-race `cancelled`) no longer overwrites a GitHub success, and a GitHub success corrects an earlier agent failure/cancel.
 - A finished job no longer leaves its microVM on the dashboard as `busy`. An empty heartbeat now clears the last VM snapshot (`vms` was omitted by `omitempty`), and Destroy waits the Firecracker child so it does not stay `<defunct>`.
-- Hosts page shows how RAM is split (guest committed, host reserve, leftover). Assigned jobs waiting on host RAM say so on the jobs list.
-- Jobs pack on a host until admission says there is not enough RAM (or disk); then Bind waits. 12g+ guests no longer take the host exclusively.
+- Guest `/dev/tcp` to the TAP host no longer blocks the log loop for ~130s when PVE drops TCP 9877 (job 98153016606). UDP is used immediately.
 
 ## [0.1.7] - 2026-08-24
 
@@ -117,7 +129,8 @@ Initial tagged release.
 - Control plane + host agent, Firecracker warm pool, official `actions/runner` via JIT.
 - Operator dashboard, host-local Actions cache, OCI pull-through, and host resource admission.
 
-[Unreleased]: https://github.com/TwanLuttik/TemperCI/compare/v0.1.7...HEAD
+[Unreleased]: https://github.com/TwanLuttik/TemperCI/compare/v0.1.8...HEAD
+[0.1.8]: https://github.com/TwanLuttik/TemperCI/compare/v0.1.7...v0.1.8
 [0.1.7]: https://github.com/TwanLuttik/TemperCI/compare/v0.1.6...v0.1.7
 [0.1.6]: https://github.com/TwanLuttik/TemperCI/compare/v0.1.5...v0.1.6
 [0.1.5]: https://github.com/TwanLuttik/TemperCI/compare/v0.1.4...v0.1.5

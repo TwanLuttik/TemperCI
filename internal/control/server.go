@@ -36,6 +36,9 @@ type Server struct {
 	wfFetchAt     map[int64]time.Time
 	jobMetaMu     sync.Mutex
 	jobMeta       map[int64]jobMetaCache
+	liveMu        sync.Mutex
+	liveWF        map[int64]string
+	liveWFAt      map[int64]time.Time
 }
 
 // ServerConfig configures the HTTP server.
@@ -93,6 +96,8 @@ func NewServer(cfg ServerConfig) *Server {
 		jobLogs:       cfg.JobLogs,
 		wfFetchAt:     make(map[int64]time.Time),
 		jobMeta:       make(map[int64]jobMetaCache),
+		liveWF:        make(map[int64]string),
+		liveWFAt:      make(map[int64]time.Time),
 	}
 	s.mux.HandleFunc("GET /healthz", s.handleHealthz)
 	s.mux.HandleFunc("GET /metrics", s.handleMetrics)
@@ -481,6 +486,12 @@ func (s *Server) handleJobFinished(w http.ResponseWriter, r *http.Request) {
 		_ = s.store.SetCacheStats(req.JobID, req.CacheHits, req.CacheMisses, req.CacheBytesIn, req.CacheBytesOut)
 	}
 	s.mergeJobLogs(req.JobID, req.RunnerLog, req.AgentLog, req.ConsoleLog, req.WorkflowLog)
+	if req.WorkflowLog != "" {
+		s.rememberWorkflow(req.JobID, req.WorkflowLog, true)
+	} else if live := s.liveWorkflow(req.JobID); live != "" {
+		s.rememberWorkflow(req.JobID, live, true)
+	}
+	s.PublishJobLogs(req.JobID, req.RunnerLog, req.AgentLog, req.ConsoleLog, req.WorkflowLog)
 	s.agents.Touch(req.AgentID)
 	s.log.Info("job finished",
 		"job_id", req.JobID,
@@ -513,7 +524,18 @@ func (s *Server) handleJobLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.mergeJobLogs(req.JobID, req.RunnerLog, req.AgentLog, req.ConsoleLog, req.WorkflowLog)
+	if req.WorkflowLog != "" {
+		s.rememberWorkflow(req.JobID, req.WorkflowLog, true)
+	}
+	if req.WorkflowAppend != "" {
+		s.applyLiveAppend(req.JobID, req.WorkflowOffset, req.WorkflowAppend)
+	}
 	s.agents.Touch(req.AgentID)
+	if req.WorkflowAppend != "" && req.WorkflowLog == "" {
+		s.PublishJobLogsDelta(req.JobID, req.WorkflowOffset, req.WorkflowAppend)
+	} else {
+		s.PublishJobLogs(req.JobID, req.RunnerLog, req.AgentLog, req.ConsoleLog, req.WorkflowLog)
+	}
 	writeJSON(w, http.StatusOK, api.JobLogsResponse{OK: true})
 }
 

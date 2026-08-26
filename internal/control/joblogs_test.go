@@ -297,3 +297,58 @@ func TestJobDetail_StepsFetchFailureIsIgnored(t *testing.T) {
 		t.Fatalf("body = %+v", body)
 	}
 }
+
+func TestJobLogs_LiveUploadBroadcastsWS(t *testing.T) {
+	dir := t.TempDir()
+	db, err := store.Open(filepath.Join(dir, "c.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	var last []byte
+	hub := NewHub(nil)
+	hub.onSend = func(b []byte) { last = append([]byte(nil), b...) }
+	srv := NewServer(ServerConfig{
+		Hub:        hub,
+		AgentToken: "tok",
+		Dashboard: &DashboardConfig{
+			Config: &config.ControlConfig{AuthMode: "open", SetupCompleted: true, GitHubOrg: "acme"},
+			Store:  db,
+		},
+	})
+
+	first := "##[group]Run checkout\n"
+	req := agentReq(t, http.MethodPost, "/v1/agent/jobs/logs", "tok", api.JobLogsRequest{
+		AgentID:        "h1",
+		JobID:          77,
+		WorkflowOffset: 0,
+		WorkflowAppend: first,
+	})
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("logs %d %s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(string(last), `"type":"job_logs"`) || !strings.Contains(string(last), "Run checkout") {
+		t.Fatalf("ws frame = %s", last)
+	}
+
+	req = agentReq(t, http.MethodPost, "/v1/agent/jobs/logs", "tok", api.JobLogsRequest{
+		AgentID:        "h1",
+		JobID:          77,
+		WorkflowOffset: len(first),
+		WorkflowAppend: "Synced\n",
+	})
+	rr = httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("append %d %s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(string(last), "Synced") || !strings.Contains(string(last), "workflow_append") {
+		t.Fatalf("ws delta frame = %s", last)
+	}
+	if srv.liveWorkflow(77) != first+"Synced\n" {
+		t.Fatalf("live = %q", srv.liveWorkflow(77))
+	}
+}

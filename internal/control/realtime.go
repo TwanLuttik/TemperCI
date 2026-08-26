@@ -212,6 +212,70 @@ func (s *Server) BuildSnapshot() RealtimeSnapshot {
 	}
 }
 
+type jobLogsWS struct {
+	Type           string    `json:"type"`
+	Time           time.Time `json:"time"`
+	JobID          int64     `json:"job_id"`
+	RunnerLog      string    `json:"runner_log,omitempty"`
+	AgentLog       string    `json:"agent_log,omitempty"`
+	ConsoleLog     string    `json:"console_log,omitempty"`
+	WorkflowLog    string    `json:"workflow_log,omitempty"`
+	WorkflowOffset int       `json:"workflow_offset,omitempty"`
+	WorkflowAppend string    `json:"workflow_append,omitempty"`
+}
+
+// PublishJobLogs pushes the current job log blob to dashboard sockets.
+// The frame is a full snapshot of the fields provided (plus stored
+// workflow_log when only an append arrived) so a dropped frame is safe.
+func (s *Server) PublishJobLogs(jobID int64, runner, agent, console, workflow string) {
+	if s == nil || s.hub == nil || jobID == 0 {
+		return
+	}
+	if s.hub.ClientCount() == 0 && s.hub.onSend == nil {
+		return
+	}
+	if live := s.liveWorkflow(jobID); live != "" && (workflow == "" || len(live) >= len(workflow)) {
+		workflow = live
+	}
+	if workflow == "" {
+		if db := s.jobDB(); db != nil {
+			if cur, err := db.GetJobLog(jobID); err == nil {
+				workflow = cur.WorkflowLog
+			}
+		}
+	}
+	if runner == "" && agent == "" && console == "" && workflow == "" {
+		return
+	}
+	s.hub.BroadcastJSON(jobLogsWS{
+		Type:        "job_logs",
+		Time:        time.Now().UTC(),
+		JobID:       jobID,
+		RunnerLog:   runner,
+		AgentLog:    agent,
+		ConsoleLog:  console,
+		WorkflowLog: workflow,
+	})
+}
+
+// PublishJobLogsDelta pushes new workflow bytes. Dropped frames are healed
+// by the next full snapshot (REST, persist tick, or finished upload).
+func (s *Server) PublishJobLogsDelta(jobID int64, offset int, chunk string) {
+	if s == nil || s.hub == nil || jobID == 0 || chunk == "" {
+		return
+	}
+	if s.hub.ClientCount() == 0 && s.hub.onSend == nil {
+		return
+	}
+	s.hub.BroadcastJSON(jobLogsWS{
+		Type:           "job_logs",
+		Time:           time.Now().UTC(),
+		JobID:          jobID,
+		WorkflowOffset: offset,
+		WorkflowAppend: chunk,
+	})
+}
+
 // PublishSnapshot pushes current state to all dashboard WebSocket clients.
 func (s *Server) PublishSnapshot() {
 	if s.hub == nil {

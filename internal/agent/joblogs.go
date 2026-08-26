@@ -4,10 +4,16 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/TwanLuttik/TemperCI/internal/vmm"
 )
+
+// LiveLogInterval is how often the host stats guest/workflow.log (~10 Hz).
+// The guest pushes new bytes over UDP/TCP; this only picks them up.
+const LiveLogInterval = 100 * time.Millisecond
 
 const maxVMConsoleTail = 64 * 1024
 
@@ -18,14 +24,27 @@ const maxUploadedWorkflowLogBytes = 2 << 20
 
 // JobLogs is guest diagnostic text uploaded to the control plane (no secrets).
 type JobLogs struct {
-	RunnerLog     string
-	AgentLog      string
-	ConsoleLog    string
-	WorkflowLog   string
-	CacheHits     int
-	CacheMisses   int
-	CacheBytesIn  int64
-	CacheBytesOut int64
+	RunnerLog      string
+	AgentLog       string
+	ConsoleLog     string
+	WorkflowLog    string
+	WorkflowOffset int
+	WorkflowAppend string
+	CacheHits      int
+	CacheMisses    int
+	CacheBytesIn   int64
+	CacheBytesOut  int64
+}
+
+// nextWorkflowUpload decides whether to POST a full replace or an append.
+func nextWorkflowUpload(prev, cur string) (full, append string, offset int, ok bool) {
+	if cur == "" || cur == prev {
+		return "", "", 0, false
+	}
+	if prev != "" && strings.HasPrefix(cur, prev) {
+		return "", cur[len(prev):], len(prev), true
+	}
+	return cur, "", 0, true
 }
 
 // CollectJobLogs reads archived + still-on-disk guest logs for a VM.

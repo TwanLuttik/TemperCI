@@ -43,8 +43,13 @@ export function JobsPage() {
         });
     };
     load();
-    // WebSocket already streams job rows. REST is a fallback only.
-    const ms = rt.status === "live" ? 30_000 : live ? 8_000 : 30_000;
+    // WebSocket already streams job rows. REST only if the socket is down.
+    if (rt.status === "live") {
+      return () => {
+        stop = true;
+      };
+    }
+    const ms = live ? 8_000 : 30_000;
     const t = setInterval(load, ms);
     return () => {
       stop = true;

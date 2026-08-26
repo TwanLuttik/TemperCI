@@ -1185,6 +1185,7 @@ func (s *Server) handleJobDetail(w http.ResponseWriter, r *http.Request, _ *uiPr
 	if logs == nil {
 		logs = &store.JobLog{JobID: id, Events: []store.JobEvent{}}
 	}
+	s.overlayLiveWorkflow(id, logs)
 	s.ensureWorkflowLog(r, a, logs)
 	tm := timingsFromAssignment(a, time.Now().UTC())
 	name := a.Name

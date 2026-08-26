@@ -57,6 +57,7 @@ func (s *Server) ensureWorkflowLog(r *http.Request, a *Assignment, logs *store.J
 		return
 	}
 	logs.WorkflowLog = text
+	s.rememberWorkflow(a.JobID, text, true)
 	if db := s.jobDB(); db != nil {
 		_ = db.SetWorkflowLog(a.JobID, text)
 	}

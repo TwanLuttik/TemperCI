@@ -109,6 +109,53 @@ func TestJobLogs_MergeIgnoresRunnerDiagWorkflow(t *testing.T) {
 	}
 }
 
+func TestApplyWorkflowAppend(t *testing.T) {
+	if _, ok := ApplyWorkflowAppend("", 0, ""); ok {
+		t.Fatal("empty chunk")
+	}
+	got, ok := ApplyWorkflowAppend("", 0, "##[group]a\n")
+	if !ok || got != "##[group]a\n" {
+		t.Fatalf("first = %q %v", got, ok)
+	}
+	got, ok = ApplyWorkflowAppend(got, len(got), "b\n")
+	if !ok || got != "##[group]a\nb\n" {
+		t.Fatalf("append = %q %v", got, ok)
+	}
+	if _, ok := ApplyWorkflowAppend(got, 99, "gap"); ok {
+		t.Fatal("gap")
+	}
+}
+
+func TestJobLogs_AppendWorkflowLog(t *testing.T) {
+	dir := t.TempDir()
+	s, err := Open(filepath.Join(dir, "c.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	first := "##[group]Run checkout\n"
+	if err := s.AppendWorkflowLog(3, 0, first); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AppendWorkflowLog(3, len(first), "Synced\n"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.GetJobLog(3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.WorkflowLog != first+"Synced\n" {
+		t.Fatalf("append = %q", got.WorkflowLog)
+	}
+	if err := s.AppendWorkflowLog(3, 99, "gap"); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = s.GetJobLog(3)
+	if got.WorkflowLog != first+"Synced\n" {
+		t.Fatalf("gap changed log: %q", got.WorkflowLog)
+	}
+}
+
 func TestJobLogs_WorkflowLogPersistsAcrossMerge(t *testing.T) {
 	dir := t.TempDir()
 	s, err := Open(filepath.Join(dir, "c.db"))

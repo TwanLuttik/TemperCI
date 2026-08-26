@@ -5,9 +5,10 @@ import { api, cancelJob, formatDuration, jobIsActive, type Job, type JobDetail, 
 import { useRealtime } from "../hooks/useRealtime";
 import { Button } from "@/components/ui/button";
 import { useNow } from "../hooks/useNow";
-import { liveJobTimings } from "../lib/job-duration";
+import { jobDetailPollMs, liveJobTimings, mergeJobRow } from "../lib/job-duration";
 import { stepLogsByNumber } from "../lib/job-step-logs";
 import { formatStepClock, jobStepProgress, lastWorkflowGroup, parseStepTime, settleSteps, stepElapsedMs } from "../lib/job-steps";
+import { mergeJobLogs } from "../lib/job-log-live";
 import { suggestJobTab } from "../lib/job-tabs";
 import { EmptyState } from "../components/empty-state";
 import { PageHeader } from "../components/page-header";
@@ -65,8 +66,13 @@ export function JobDetailPage() {
         });
     };
     load();
-    // Live job rows arrive over WS. Poll REST for logs; slow down when finished or WS is live.
-    const ms = jobDone ? 30_000 : 2_000;
+    // Live job + logs come over the dashboard socket. REST only if the socket is down.
+    const ms = jobDetailPollMs(rt.status === "live", jobDone);
+    if (ms == null) {
+      return () => {
+        stop = true;
+      };
+    }
     const t = setInterval(load, ms);
     return () => {
       stop = true;
@@ -75,17 +81,42 @@ export function JobDetailPage() {
   }, [id, jobDone, rt.status]);
 
   useEffect(() => {
+    if (!id || !rt.last?.jobs) return;
+    const row = rt.last.jobs.find((j) => String(j.job_id) === String(id));
+    if (!row) return;
+    setData((prev) => (prev ? { ...prev, job: mergeJobRow(prev.job, row) } : prev));
+  }, [id, rt.last]);
+
+  const seenDone = useRef(false);
+  useEffect(() => {
+    seenDone.current = false;
+  }, [id]);
+  useEffect(() => {
+    if (!jobDone || seenDone.current || !id) return;
+    seenDone.current = true;
+    // Official GitHub job log is filled on GET after finish.
+    api<JobDetail>(`/api/v1/jobs/${id}`)
+      .then((d) => {
+        setData(d);
+        setErr(null);
+      })
+      .catch(() => {
+        seenDone.current = false;
+      });
+  }, [jobDone, id]);
+
+  useEffect(() => {
     if (!follow || !data) return;
-    const next = suggestJobTab(data.job, data.logs || {});
+    const next = suggestJobTab(data.job, mergeJobLogs(data.logs || {}, (id && rt.jobLogs[id]) || {}));
     if (next !== tab) setTab(next, false);
-  }, [follow, data, tab]);
+  }, [follow, data, tab, id, rt.jobLogs]);
   const now = useNow(!jobDone && Boolean(data));
 
   if (err) return <p className="text-sm text-destructive">{err}</p>;
   if (!data) return <p className="text-sm text-muted-foreground">Loading job…</p>;
 
   const j = { ...data.job, steps: settleSteps(data.job.steps, data.job) };
-  const logs = data.logs || {};
+  const logs = mergeJobLogs(data.logs || {}, (id && rt.jobLogs[id]) || {});
   const events = logs.events || [];
   const running = !["finished", "failed"].includes(String(j.status || "").toLowerCase());
   const progress = jobStepProgress(j.steps);
@@ -256,7 +287,7 @@ export function JobDetailPage() {
                     <EmptyState title={key === "runner" ? "No workflow log yet" : `No ${key} log yet`}>
                       {key === "runner"
                         ? running
-                          ? "Waiting for GitHub step output (checkout, npm, compose…). Runner _diag is not shown here."
+                          ? "Waiting for GitHub step output (checkout, npm, compose…). Live lines arrive over the dashboard socket."
                           : "GitHub step logs appear after the job finishes (same text as the Actions run)."
                         : running
                           ? "Streaming from the guest as soon as this log appears."

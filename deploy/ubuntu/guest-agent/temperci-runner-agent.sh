@@ -14,6 +14,7 @@ POLL_SEC="${TEMPERCI_POLL_SEC:-0.05}"
 IDLE_POLL_SEC="${TEMPERCI_IDLE_POLL_SEC:-2}"
 WORKDIR="${TEMPERCI_WORKDIR:-/run/temperci}"
 MAILBOX_PORT="${TEMPERCI_MAILBOX_PORT:-9876}"
+LOG_STREAM_PORT="${TEMPERCI_LOG_STREAM_PORT:-9877}"
 
 mkdir -p "$MNT" "$WORKDIR"
 
@@ -443,20 +444,159 @@ publish_live_logs() {
   fi
 }
 
+# Fast path: if only the newest page grew, append those bytes. Otherwise
+# rebuild via collect_live_workflow (new page, first output, or Worker fallback).
+collect_live_workflow_fast() {
+  local diag="${TEMPERCI_RUNNER_DIR:-$RUNNER_DIR}/_diag"
+  local pages="$diag/pages"
+  local newest=""
+  if [ -d "$pages" ]; then
+    newest=$(ls -t "$pages"/*.log 2>/dev/null | head -1 || true)
+  fi
+  if [ -n "$newest" ] && [ -s "$WORKDIR/workflow.log" ]; then
+    local dest="$WORKDIR/pages/$(basename "$newest")"
+    local sz dest_sz=0
+    sz=$(wc -c <"$newest" 2>/dev/null | tr -d ' ' || echo 0)
+    if [ -f "$dest" ]; then
+      dest_sz=$(wc -c <"$dest" 2>/dev/null | tr -d ' ' || echo 0)
+    fi
+    if [ -f "$dest" ] && [ "${sz:-0}" -gt "${dest_sz:-0}" ]; then
+      mkdir -p "$WORKDIR/pages"
+      tail -c +$((dest_sz + 1)) "$newest" >>"$WORKDIR/workflow.log" || true
+      cp -f "$newest" "$dest" 2>/dev/null || true
+      return 0
+    fi
+    if [ -f "$dest" ] && [ "${sz:-0}" -eq "${dest_sz:-0}" ]; then
+      return 0
+    fi
+  fi
+  collect_live_workflow || true
+}
+
+# TCP stream: "wf <offset> <n>\n" + n raw bytes. No base64, no inject remount.
+# UDP wf <offset> <total> <b64> remains a fallback if the pipe is down.
+workflow_pending() {
+  [ -s "$WORKDIR/workflow.log" ] || return 1
+  local sz off
+  sz=$(wc -c <"$WORKDIR/workflow.log" | tr -d ' ')
+  off=${WF_SENT:-0}
+  if [ "$sz" -lt "$off" ]; then
+    off=0
+  fi
+  [ "$sz" -gt "$off" ]
+}
+
+# Never block the job loop on TCP. PVE INPUT DROP rejects TAP TCP unless
+# the host punched 9877; bash /dev/tcp then waits ~130s (seen on job 98153016606).
+# UDP 9876 is already allowed. Try TCP once with a short timeout.
+open_log_stream() {
+  [ -n "${TEMPERCI_MAILBOX_SINK:-}" ] && return 0
+  [ "${LOG_STREAM_OPEN:-0}" = 1 ] && return 0
+  [ "${LOG_STREAM_TRIED:-0}" = 1 ] && return 1
+  LOG_STREAM_TRIED=1
+  local ip
+  ip="$(host_ip)"
+  [ -n "$ip" ] || return 1
+  command -v timeout >/dev/null 2>&1 || return 1
+  timeout 0.2 bash -c "echo -n > /dev/tcp/${ip}/${LOG_STREAM_PORT}" 2>/dev/null || return 1
+  exec 3<>"/dev/tcp/${ip}/${LOG_STREAM_PORT}" || return 1
+  LOG_STREAM_OPEN=1
+}
+
+send_workflow_udp() {
+  workflow_pending || return 1
+  local sz off n
+  sz=$(wc -c <"$WORKDIR/workflow.log" | tr -d ' ')
+  off=${WF_SENT:-0}
+  if [ "$sz" -lt "$off" ]; then
+    off=0
+  fi
+  n=$((sz - off))
+  if [ "$n" -gt 32768 ]; then
+    n=32768
+  fi
+  local chunk
+  chunk=$(tail -c +$((off + 1)) "$WORKDIR/workflow.log" | head -c "$n" | base64 | tr -d '\n')
+  [ -n "$chunk" ] || return 1
+  if [ -n "${TEMPERCI_MAILBOX_SINK:-}" ]; then
+    printf 'wf %d %d %s\n' "$off" "$sz" "$chunk" >"${TEMPERCI_MAILBOX_SINK}"
+  else
+    local ip
+    ip="$(host_ip)"
+    [ -n "$ip" ] || return 1
+    printf 'wf %d %d %s\n' "$off" "$sz" "$chunk" >"/dev/udp/${ip}/${MAILBOX_PORT}"
+  fi
+  WF_SENT=$((off + n))
+}
+
+send_workflow_stream() {
+  workflow_pending || return 1
+  local sz off n
+  sz=$(wc -c <"$WORKDIR/workflow.log" | tr -d ' ')
+  off=${WF_SENT:-0}
+  if [ "$sz" -lt "$off" ]; then
+    off=0
+  fi
+  n=$((sz - off))
+  if [ "$n" -gt 1048576 ]; then
+    n=1048576
+  fi
+  if [ -n "${TEMPERCI_MAILBOX_SINK:-}" ]; then
+    {
+      printf 'wf %d %d\n' "$off" "$n"
+      tail -c +$((off + 1)) "$WORKDIR/workflow.log" | head -c "$n"
+    } >"${TEMPERCI_MAILBOX_SINK}"
+    WF_SENT=$((off + n))
+    return 0
+  fi
+  if [ "${LOG_STREAM_OPEN:-0}" != 1 ]; then
+    open_log_stream || true
+  fi
+  if [ "${LOG_STREAM_OPEN:-0}" != 1 ]; then
+    send_workflow_udp
+    return $?
+  fi
+  {
+    printf 'wf %d %d\n' "$off" "$n"
+    tail -c +$((off + 1)) "$WORKDIR/workflow.log" | head -c "$n"
+  } >&3 || {
+    LOG_STREAM_OPEN=0
+    exec 3>&- 3<&- || true
+    send_workflow_udp
+    return $?
+  }
+  WF_SENT=$((off + n))
+}
+
 # Heap caps live on bin/Runner.Listener and bin/Runner.Worker wrappers.
 # Do not export DOTNET_* here — job steps inherit run.sh's environment.
 log "starting $RUNNER --jitconfig <${#JIT_B64} bytes> (as root, RUNNER_ALLOW_RUNASROOT=1)"
 set +e
 "$RUNNER" --jitconfig "$JIT_B64" >"$WORKDIR/runner.log" 2>&1 &
 rpid=$!
+WF_SENT=0
+idle_ticks=0
+# UDP first (PVE already allows 9876). TCP 9877 is optional and must not
+# block this loop. Inject remount is only a ~2s idle fallback.
 while kill -0 "$rpid" 2>/dev/null; do
-  publish_live_logs
-  sleep 2
+  collect_live_workflow_fast
+  if send_workflow_stream; then
+    idle_ticks=0
+    sleep "${TEMPERCI_LOG_STREAM_BUSY_SEC:-0.1}"
+  else
+    idle_ticks=$((idle_ticks + 1))
+    if [ "$idle_ticks" -ge 8 ]; then
+      idle_ticks=0
+      publish_live_logs
+    fi
+    sleep "${TEMPERCI_LOG_STREAM_IDLE_SEC:-0.25}"
+  fi
 done
 wait "$rpid"
 code=$?
 set -e
 publish_live_logs
+send_workflow_stream || true
 log "runner exited code=$code"
 
 # Upstream run.sh exits 0 for almost every helper failure (only code 2 restarts).

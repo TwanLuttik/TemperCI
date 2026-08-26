@@ -70,8 +70,9 @@ func realSetupNetwork(id vmm.ID, netDir string) (vmm.NetworkState, error) {
 	if exec.Command("iptables", "-C", "FORWARD", "-o", tap, "-j", "ACCEPT").Run() != nil {
 		_ = exec.Command("iptables", "-A", "FORWARD", "-o", tap, "-j", "ACCEPT").Run()
 	}
-	// PVE/Tailscale INPUT DROP would swallow guest UDP ready/exit (mailbox).
-	if spec := mailboxInputSpec(tap); spec != nil {
+	// PVE/Tailscale INPUT DROP swallows guest packets to the TAP host IP.
+	// UDP 9876 = ready/exit + log chunks. TCP 9877 = optional log stream.
+	for _, spec := range mailboxInputSpecs(tap) {
 		if exec.Command("iptables", append([]string{"-C"}, spec...)...).Run() != nil {
 			_ = exec.Command("iptables", append([]string{"-I"}, spec...)...).Run()
 		}
@@ -92,12 +93,24 @@ func realSetupNetwork(id vmm.ID, netDir string) (vmm.NetworkState, error) {
 	}, nil
 }
 
-// mailboxInputSpec accepts guest UDP ready/exit on the TAP (must insert before PVE DROP).
-func mailboxInputSpec(tap string) []string {
+// mailboxInputSpecs accept guest mailbox traffic on the TAP (insert before PVE DROP).
+func mailboxInputSpecs(tap string) [][]string {
 	if tap == "" {
 		return nil
 	}
-	return []string{"INPUT", "-i", tap, "-p", "udp", "--dport", "9876", "-j", "ACCEPT"}
+	return [][]string{
+		{"INPUT", "-i", tap, "-p", "udp", "--dport", "9876", "-j", "ACCEPT"},
+		{"INPUT", "-i", tap, "-p", "tcp", "--dport", "9877", "-j", "ACCEPT"},
+	}
+}
+
+// mailboxInputSpec is the UDP ready/exit rule (tests).
+func mailboxInputSpec(tap string) []string {
+	specs := mailboxInputSpecs(tap)
+	if len(specs) == 0 {
+		return nil
+	}
+	return specs[0]
 }
 
 func realTeardownNetwork(id vmm.ID, net vmm.NetworkState) error {
@@ -108,7 +121,7 @@ func realTeardownNetwork(id vmm.ID, net vmm.NetworkState) error {
 	if runtime.GOOS == "linux" && net.TapDevice != "" {
 		_ = exec.Command("iptables", "-D", "FORWARD", "-i", net.TapDevice, "-j", "ACCEPT").Run()
 		_ = exec.Command("iptables", "-D", "FORWARD", "-o", net.TapDevice, "-j", "ACCEPT").Run()
-		if spec := mailboxInputSpec(net.TapDevice); spec != nil {
+		for _, spec := range mailboxInputSpecs(net.TapDevice) {
 			_ = exec.Command("iptables", append([]string{"-D"}, spec...)...).Run()
 		}
 		_ = exec.Command("ip", "link", "del", net.TapDevice).Run()

@@ -68,6 +68,27 @@ func TestCollectJobLogs_KeepsLongWorkflowLog(t *testing.T) {
 	}
 }
 
+func TestNextWorkflowUpload(t *testing.T) {
+	if _, _, _, ok := nextWorkflowUpload("", ""); ok {
+		t.Fatal("empty should not upload")
+	}
+	if _, _, _, ok := nextWorkflowUpload("a", "a"); ok {
+		t.Fatal("unchanged should not upload")
+	}
+	full, app, off, ok := nextWorkflowUpload("", "##[group]a\n")
+	if !ok || full != "##[group]a\n" || app != "" || off != 0 {
+		t.Fatalf("first = %q %q %d", full, app, off)
+	}
+	full, app, off, ok = nextWorkflowUpload("##[group]a\n", "##[group]a\nb\n")
+	if !ok || full != "" || app != "b\n" || off != len("##[group]a\n") {
+		t.Fatalf("append = %q %q %d", full, app, off)
+	}
+	full, app, off, ok = nextWorkflowUpload("old", "new")
+	if !ok || full != "new" || app != "" || off != 0 {
+		t.Fatalf("replace = %q %q %d", full, app, off)
+	}
+}
+
 func TestClipLogKeepsTail(t *testing.T) {
 	s := strings.Repeat("a", 200) + "END"
 	got := clipLog(s, 10)

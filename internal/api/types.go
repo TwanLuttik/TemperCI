@@ -263,6 +263,9 @@ type JobLogsRequest struct {
 	AgentLog    string `json:"agent_log,omitempty"`
 	ConsoleLog  string `json:"console_log,omitempty"`
 	WorkflowLog string `json:"workflow_log,omitempty"`
+	// WorkflowOffset + WorkflowAppend are a cheap 30Hz path: new bytes only.
+	WorkflowOffset int    `json:"workflow_offset,omitempty"`
+	WorkflowAppend string `json:"workflow_append,omitempty"`
 }
 
 // JobLogsResponse acknowledges a log upload.

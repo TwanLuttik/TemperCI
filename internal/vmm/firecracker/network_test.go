@@ -47,4 +47,12 @@ func TestMailboxInputSpec(t *testing.T) {
 	if mailboxInputSpec("") != nil {
 		t.Fatal("empty tap")
 	}
+	specs := mailboxInputSpecs("tc00aabbcc")
+	if len(specs) != 2 {
+		t.Fatalf("specs=%d", len(specs))
+	}
+	tcp := strings.Join(specs[1], " ")
+	if !strings.Contains(tcp, "-p tcp") || !strings.Contains(tcp, "--dport 9877") {
+		t.Fatalf("tcp spec=%q", tcp)
+	}
 }

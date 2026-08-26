@@ -175,12 +175,14 @@ func (c *ControlClient) ReportFinishedLogs(ctx context.Context, jobID int64, out
 // ReportLogs uploads incremental guest logs while a job is still running.
 func (c *ControlClient) ReportLogs(ctx context.Context, jobID int64, logs JobLogs) error {
 	req := api.JobLogsRequest{
-		AgentID:     c.AgentID,
-		JobID:       jobID,
-		RunnerLog:   logs.RunnerLog,
-		AgentLog:    logs.AgentLog,
-		ConsoleLog:  logs.ConsoleLog,
-		WorkflowLog: logs.WorkflowLog,
+		AgentID:        c.AgentID,
+		JobID:          jobID,
+		RunnerLog:      logs.RunnerLog,
+		AgentLog:       logs.AgentLog,
+		ConsoleLog:     logs.ConsoleLog,
+		WorkflowLog:    logs.WorkflowLog,
+		WorkflowOffset: logs.WorkflowOffset,
+		WorkflowAppend: logs.WorkflowAppend,
 	}
 	var resp api.JobLogsResponse
 	return c.post(ctx, "/v1/agent/jobs/logs", req, &resp)
